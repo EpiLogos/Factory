@@ -103,15 +103,20 @@ def execute(args):
     commission_ref = "central:source:project:factory-bounded-acceptance:ProjectCentral/user/commission.md"
     method_path = source / "factory-bounded-work/method.json"
     method = aikit("method", "resolve", "--source", str(method_path))
-    profile = {
-        "schema": "central.agent-profile/v1", "ref": "profile/factory-bounded-acceptance",
-        "revision": "commission-v1", "agent_ref": "agent/factory-bounded-acceptance",
+    definition_path = ROOT / "agents/factory-mode/profile.json"
+    expression_path = ROOT / "agents/factory-mode/intent.md"
+    definition = json.loads(definition_path.read_text())
+    assert expression_path.read_text().strip()
+    assert definition["skill_refs"] == ids and definition["method_refs"] == [method["method"]["id"]]
+    profile = {**definition,
+        "ref": "profile/factory-bounded-acceptance",
+        "revision": "commission-v1", "source_profile_ref": definition["ref"],
         "scope": "project", "world_ref": "project:factory-bounded-acceptance",
         "ratified_world_refs": ["project:factory-bounded-acceptance"],
-        "role": "Bounded repair proposer", "purpose": commissioned.strip(),
-        "governance_refs": [commission_ref], "knowledge_source_refs": [commission_ref],
-        "skill_refs": ids, "skill_set_refs": ["skill-set/factory-bounded-development"],
-        "method_refs": [method["method"]["id"]], "provenance_refs": [commission_ref],
+        "governance_refs": [*definition["governance_refs"], commission_ref],
+        "knowledge_source_refs": [*definition["knowledge_source_refs"], commission_ref],
+        "provenance_refs": [*definition["provenance_refs"],
+            "central:source:project:Software-Factory:agents/factory-mode/profile.json", commission_ref],
     }
     saved = subprocess.run([str(args.ctrl), "--json", "--root", str(central_root),
         "action", "run", "agent-profile.save", json.dumps({"scope": "project",
@@ -160,6 +165,9 @@ def execute(args):
     composition = aikit("compose")
     composed = composition["composed_inputs"]
     assert composed["authored_basis"]["profile_source"]["ref"] == profile["ref"], composed
+    assert composed["authored_basis"]["profile_source"]["source_profile_ref"] == definition["ref"], composed
+    assert composed["authored_basis"]["profile_source"]["purpose"] == definition["purpose"], composed
+    assert definition["knowledge_source_refs"][0] in composed["authored_basis"]["profile_source"]["knowledge_source_refs"], composed
     assert composed["selected_harness"] == "harness/pi" and composed["selected_model"] == model_ref, composed
     # Re-resolve after composition input exists, retaining the actual native
     # ContextResolution rather than promoting a METHOD description to evidence.
@@ -173,6 +181,10 @@ def execute(args):
     setup = {"fixture_root": str(work), "aikit_home": str(home), "central_root": str(central_root),
         "commission_path": str(commission), "authority_ref": commission_ref,
         "method_resolution": str(output / "method-resolution.json"),
+        "agent_definition": {"profile": str(definition_path), "expression": str(expression_path),
+            "source_profile_ref": definition["ref"], "agent_ref": definition["agent_ref"],
+            "profile_sha256": hashlib.sha256(definition_path.read_bytes()).hexdigest(),
+            "expression_sha256": hashlib.sha256(expression_path.read_bytes()).hexdigest()},
         "requested_model": args.model, "selected_model_ref": model_ref,
         "actual_provider_model_observed": False,
         "catalog_resolution": {name: composition["plan"][name]["state"] for name in ("agent", "agency", "model", "harness")},
@@ -187,7 +199,8 @@ def execute(args):
     profile_source.relative_to(work)
     primary_paths = [profile_source, binding_path, work / ".aikit/actuation-model-bearing.json",
                      work / "ProjectCentral/project.json"]
-    paths = [commission, *bodies, method_path, *primary_paths, *(output / name for name in receipts)]
+    paths = [commission, *bodies, method_path, definition_path, expression_path,
+             *primary_paths, *(output / name for name in receipts)]
     required = {
         "sources": [{
             "source": f"source/acceptance/{index}",

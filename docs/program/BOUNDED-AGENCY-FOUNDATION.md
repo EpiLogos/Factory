@@ -4,6 +4,8 @@ Standing: implementation account and remaining design obligations, 2026-09-06. T
 
 The Factory owns a reduced developmental Method in `skills/factory-bounded-work`. AIKit composes its three source-owned Skills and resolves the native Method. The desktop connection remains AIKit's resident ACP owner → `AgentSessionHost` → `pi-acp` → Pi. Workcell owns the material operation; Factory receives the Candidate and evidence. There is no pstack scheduler, independent agency ledger or competing direct Pi RPC client.
 
+[Factory Mode](../../agents/factory-mode/README.md) supplies the source expression and native `profile/factory-mode` for this foundation. Commissioned profiles derive from it with explicit lineage and situated bounds. Future QL–MEF Anima and Aletheia expressions can build on the same Method and source relations.
+
 [Circuit diagram](bounded-agency-circuit.svg) · [Mermaid source](bounded-agency-circuit.mmd). This is the implemented composition/acceptance route; dated receipts determine which passages were observed together. The human Recognition node is an authored return, never a test-generated verdict.
 
 ## The law in its operative form

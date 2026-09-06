@@ -7,6 +7,8 @@ description: "METHOD: Carry a commissioned Factory investigation, repair or chan
 
 Native owner: Software Factory. This Method composes **factory-development** (`factory:developer`) and **factory-operation** (`factory:operator`). Resolve their source-owned Skills through AIKit before consequential use. A missing required member is an unresolved composition, not permission to improvise its contract. SkillSet membership provides repertoire; Actuation authority and the selected material boundary govern effects.
 
+The source-owned **Factory Mode** expression and `profile/factory-mode` live in the Factory repository at `agents/factory-mode/`. A situated profile retains that lineage; the Method remains reusable by other commissioned agents.
+
 The [native Method declaration](method.json) relates those owner Skills and this bounded procedure through the existing AIKit Method contract. Resolve it against the actual commissioned Project/Focus. It describes praxis, not a schedule, an Action grant or a verification result.
 
 Recover the commissioned concern, its affected experience, Project/subject and current state. Keep the person's intended condition distinct from your proposed operationalisation. Use factory-development's Whole, Claim and verification obligations; do not create another ledger or let a convenient local success shrink the commission.

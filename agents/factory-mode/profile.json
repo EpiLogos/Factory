@@ -1,0 +1,30 @@
+{
+  "schema": "central.agent-profile/v1",
+  "ref": "profile/factory-mode",
+  "revision": "factory-mode-v1",
+  "agent_ref": "agent/factory-mode",
+  "scope": "project",
+  "world_ref": "project:Software-Factory",
+  "source_profile_ref": null,
+  "role": "Factory Mode",
+  "purpose": "Carry a commissioned developmental intention through coherent, bounded work, actual verification and attributable Return, in respect for the quality of lived experience.",
+  "governance_refs": [],
+  "skill_refs": [
+    "skill/factory-native/factory-development",
+    "skill/factory-native/factory-operation",
+    "skill/factory-native/factory-bounded-work"
+  ],
+  "skill_set_refs": ["skill-set/factory-bounded-development"],
+  "method_refs": ["method/factory/bounded-work"],
+  "routine_refs": [],
+  "ratified_world_refs": ["project:Software-Factory"],
+  "knowledge_source_refs": [
+    "central:source:project:Software-Factory:agents/factory-mode/intent.md"
+  ],
+  "computer_access_intent_refs": [],
+  "placement_intent_refs": [],
+  "provenance_refs": [
+    "central:source:project:Software-Factory:agents/factory-mode/intent.md",
+    "central:source:project:Software-Factory:skills/factory-bounded-work/method.json"
+  ]
+}
