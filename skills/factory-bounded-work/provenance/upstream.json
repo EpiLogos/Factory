@@ -1,0 +1,51 @@
+{
+  "repository": "https://github.com/cursor/plugins.git",
+  "revision": "93b00b89ef425a9c1bac0d0b317dfc49c930ac99",
+  "plugin_root": "pstack",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Lauren Tan",
+  "adaptation_owner": "Software Factory",
+  "standing": "Authored derivative under development; semantic reduction and live fitness are separate evidence",
+  "sources": [
+    {
+      "path": "skills/principle-experience-first/SKILL.md",
+      "sha256": "f8d643ddf2f6aa91d9607d1bb340fd2baf227d702e9738848b85312a312bb971"
+    },
+    {
+      "path": "skills/principle-prove-it-works/SKILL.md",
+      "sha256": "9bbe6138505be34d81e9395d95d3639b384f71d71d65cc1903075126e1da1508"
+    },
+    {
+      "path": "skills/principle-sequence-verifiable-units/SKILL.md",
+      "sha256": "7478f8160ba5701ca40c742a81e90aff12d45f53ac9191e80ad79b9763e4489f"
+    },
+    {
+      "path": "skills/principle-never-block-on-the-human/SKILL.md",
+      "sha256": "f656f3b7581df55e79f53cc47df93905c3a940b822c25071ba95f40e530d102a"
+    },
+    {
+      "path": "skills/principle-boundary-discipline/SKILL.md",
+      "sha256": "ab3c690ce361542ca00446b8406f5afd47776f544b8ce06a9ef2eaa2338bde6d"
+    },
+    {
+      "path": "skills/principle-make-operations-idempotent/SKILL.md",
+      "sha256": "540738217c3da7bf513b9886924ad6a2bc77e58be867f5bd2e1831c74bf2ce70"
+    },
+    {
+      "path": "skills/poteto-mode/playbooks/bug-fix.md",
+      "sha256": "283bd4013dc13bba1b80844b0aec9e078b9c175dcaa8fed14a08566856346515"
+    },
+    {
+      "path": "skills/poteto-mode/playbooks/feature.md",
+      "sha256": "a2a04c2e4b273c0c33e4e3a22940049b60b917b064202e39bd34018356aa0926"
+    },
+    {
+      "path": "skills/poteto-mode/SKILL.md",
+      "sha256": "7c4ba1987c39044947946f7cf8399acfcea156672e5ad92bbaacb448830ca954"
+    },
+    {
+      "path": "agents/poteto-agent.md",
+      "sha256": "c3850be1b97bc97cec0568ed8b26d04e7693c4e07868137c58fe546d37f288e9"
+    }
+  ]
+}

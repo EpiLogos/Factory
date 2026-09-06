@@ -2,6 +2,7 @@
 
 pub mod action_projection;
 pub mod agent_capability_intake;
+pub mod artifact_evidence;
 pub mod authority;
 pub mod build;
 pub mod build_cognitive;

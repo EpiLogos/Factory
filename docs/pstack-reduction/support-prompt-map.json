@@ -1,0 +1,454 @@
+{
+  "source_revision": "93b00b89ef425a9c1bac0d0b317dfc49c930ac99",
+  "count": 32,
+  "items": [
+    {
+      "source": "skills/architect/references/design-red-flags.md",
+      "source_lines": [
+        1,
+        33
+      ],
+      "purpose": "pre-synthesis rejection screen",
+      "inputs": "candidate design package",
+      "operation": "pre-synthesis rejection screen",
+      "output": "red-flag findings with evidence",
+      "caller": "architect synthesis",
+      "standing": "deferred-static: review aid, not an independent capability",
+      "sha256": "905066f9bbac81c573c2b325be47751d2c0f9325e0a0772bd4384e82dafe9336"
+    },
+    {
+      "source": "skills/architect/references/rationale-template.md",
+      "source_lines": [
+        1,
+        35
+      ],
+      "purpose": "rationale package schema",
+      "inputs": "problem, usage, shape and alternatives",
+      "operation": "rationale package schema",
+      "output": "completed rationale and open questions",
+      "caller": "architect candidate / arena synthesis",
+      "standing": "deferred-static: template constrains output only",
+      "sha256": "6645a0e5f68c003298ec95b85a23262bdda0c79f998b926060169b54d9f23fbb"
+    },
+    {
+      "source": "skills/architect/references/runner-prompt.md",
+      "source_lines": [
+        1,
+        20
+      ],
+      "purpose": "parallel architecture candidate brief",
+      "inputs": "task, grounding, worktree and output path",
+      "operation": "parallel architecture candidate brief",
+      "output": "candidate design package",
+      "caller": "architect orchestrator",
+      "standing": "deferred-static: host runner prompt; no direct agency authority",
+      "sha256": "3ef8c1452a0382a15b7601c7c94f2a16a00954170d705b7af8cc49ac78080ec9"
+    },
+    {
+      "source": "skills/create-verification-skill/references/feature-map-example/README.md",
+      "source_lines": [
+        1,
+        47
+      ],
+      "purpose": "verification map contract",
+      "inputs": "app baseline, entry points and proof rules",
+      "operation": "verification map contract",
+      "output": "feature map index and proof obligations",
+      "caller": "create-verification-skill",
+      "standing": "deferred-static: example domain; adapt only with commissioned target",
+      "sha256": "cb7bd782cf89968a4ba3d58a5151db837430db92d19a6f52a906973b77b516ba"
+    },
+    {
+      "source": "skills/create-verification-skill/references/feature-map-example/create-note.md",
+      "source_lines": [
+        1,
+        39
+      ],
+      "purpose": "Notes create behavior recipe",
+      "inputs": "disposable Notes instance and seeded state",
+      "operation": "Notes create behavior recipe",
+      "output": "browser/CLI action receipts and persistence proof",
+      "caller": "feature-map README",
+      "standing": "deferred-static: illustrative app procedure",
+      "sha256": "644a44c74f35d38c2feb7cd05a0121fdebbb623e8dc376c185b565a581d1ccf7"
+    },
+    {
+      "source": "skills/create-verification-skill/references/feature-map-example/search.md",
+      "source_lines": [
+        1,
+        45
+      ],
+      "purpose": "Notes search behavior recipe",
+      "inputs": "disposable Notes instance and query cases",
+      "operation": "Notes search behavior recipe",
+      "output": "match, empty, clear and CLI proof",
+      "caller": "feature-map README",
+      "standing": "deferred-static: illustrative app procedure",
+      "sha256": "6e87b9e7f2791a7776ba1bb83f371cd285c306c67f19d245cc4dd6ca3015c823"
+    },
+    {
+      "source": "skills/how/references/critic-prompt.md",
+      "source_lines": [
+        1,
+        59
+      ],
+      "purpose": "architectural critique prompt",
+      "inputs": "explanation, files and rubric",
+      "operation": "architectural critique prompt",
+      "output": "severity-weighted findings with evidence",
+      "caller": "how orchestrator",
+      "standing": "deferred-static: prompt carrier",
+      "sha256": "aa77a15590814c814bd5cb074842029ab7b790c2e8379050525bdbc20739d1bb"
+    },
+    {
+      "source": "skills/how/references/critique-rubric.md",
+      "source_lines": [
+        1,
+        58
+      ],
+      "purpose": "critique evaluation rubric",
+      "inputs": "candidate explanation and code evidence",
+      "operation": "critique evaluation rubric",
+      "output": "structural/concern/observation judgment",
+      "caller": "critic prompt",
+      "standing": "deferred-static: rubric is caller context",
+      "sha256": "5774ff2caf51796e54c4a61b63620a165de5801f23c8f47406e527abfbe9addc"
+    },
+    {
+      "source": "skills/how/references/explainer-prompt.md",
+      "source_lines": [
+        1,
+        55
+      ],
+      "purpose": "how explanation prompt",
+      "inputs": "question, code anchors and findings",
+      "operation": "how explanation prompt",
+      "output": "evidence-bounded explanation",
+      "caller": "how orchestrator",
+      "standing": "deferred-static: prompt carrier",
+      "sha256": "04336086e7c415394459ca2f461717d920e15339517dbf5a56ca042f8b4fead3"
+    },
+    {
+      "source": "skills/how/references/explorer-prompt.md",
+      "source_lines": [
+        1,
+        52
+      ],
+      "purpose": "how investigation prompt",
+      "inputs": "target and repository context",
+      "operation": "how investigation prompt",
+      "output": "raw architectural observations",
+      "caller": "how orchestrator",
+      "standing": "deferred-static: prompt carrier",
+      "sha256": "fd1218b8cf1f467c644d4ce6fa5e54e6089ede65a28fbbae61f6ee7a2d462f85"
+    },
+    {
+      "source": "skills/interrogate/references/code-quality-review.md",
+      "source_lines": [
+        1,
+        47
+      ],
+      "purpose": "code quality review lens",
+      "inputs": "changed code and local standards",
+      "operation": "code quality review lens",
+      "output": "review findings and evidence",
+      "caller": "interrogate lead",
+      "standing": "deferred-static: rubric context",
+      "sha256": "2462f1347b99b412b04fcb0577b96d8744c801f792f2651746f9409fd4465dc9"
+    },
+    {
+      "source": "skills/interrogate/references/lead-judgment.md",
+      "source_lines": [
+        1,
+        58
+      ],
+      "purpose": "review lead decision schema",
+      "inputs": "reviewer findings and disagreement",
+      "operation": "review lead decision schema",
+      "output": "accept/revise/escalate judgment",
+      "caller": "interrogate lead",
+      "standing": "deferred-static: decision aid; cannot grant merge authority",
+      "sha256": "d2cea6cc308758201c6b8b82baf780947645f1ab752707ddf97fab374bf473f9"
+    },
+    {
+      "source": "skills/interrogate/references/reviewer-prompt.md",
+      "source_lines": [
+        1,
+        72
+      ],
+      "purpose": "independent code review brief",
+      "inputs": "scope, diff and review question",
+      "operation": "independent code review brief",
+      "output": "attributed reviewer findings",
+      "caller": "interrogate orchestrator",
+      "standing": "deferred-static: prompt carrier",
+      "sha256": "a397cc61102add709803d917fb23d726920525bf23e7c06dc4ed0b5cbeb00e54"
+    },
+    {
+      "source": "skills/interrogate/references/rubric.md",
+      "source_lines": [
+        1,
+        77
+      ],
+      "purpose": "interrogate review rubric",
+      "inputs": "diff, tests and stated requirements",
+      "operation": "interrogate review rubric",
+      "output": "severity and evidence standard",
+      "caller": "reviewer prompt",
+      "standing": "deferred-static: caller context",
+      "sha256": "a67bf02426f88714634ff481d667db821d4b2cea7b335bcd165fe3126e427fb5"
+    },
+    {
+      "source": "skills/poteto-mode/references/bugbot-triage.md",
+      "source_lines": [
+        1,
+        142
+      ],
+      "purpose": "bugbot finding triage lens",
+      "inputs": "automated finding and code context",
+      "operation": "bugbot finding triage lens",
+      "output": "valid/invalid/defer classification",
+      "caller": "bug-fix or review playbook",
+      "standing": "deferred-static: external bot output requires human/owner authority",
+      "sha256": "b2d146c770d8d3593e1ef3d77b668039b8e1f78093ea1a86f1d45d7f99614309"
+    },
+    {
+      "source": "skills/reflect/references/divergent-reviewer.md",
+      "source_lines": [
+        1,
+        43
+      ],
+      "purpose": "divergence review role",
+      "inputs": "work result and intended outcome",
+      "operation": "divergence review role",
+      "output": "mismatches and alternative readings",
+      "caller": "reflect orchestrator",
+      "standing": "deferred-static: reviewer prompt",
+      "sha256": "823167d485c8fc424530ac4eff447f132a10e318a2db35380312c7e843f17683"
+    },
+    {
+      "source": "skills/reflect/references/judgment-reviewer.md",
+      "source_lines": [
+        1,
+        42
+      ],
+      "purpose": "judgment review role",
+      "inputs": "decisions, evidence and constraints",
+      "operation": "judgment review role",
+      "output": "quality and authority assessment",
+      "caller": "reflect orchestrator",
+      "standing": "deferred-static: reviewer prompt",
+      "sha256": "8db7a315ccf9280486b4df08b1277ba0fe4c4ac533ad3719945aa1aab2ebddea"
+    },
+    {
+      "source": "skills/reflect/references/synthesizer.md",
+      "source_lines": [
+        1,
+        56
+      ],
+      "purpose": "reflection synthesis role",
+      "inputs": "reviewer findings and original intent",
+      "operation": "reflection synthesis role",
+      "output": "attributed learning and unresolved questions",
+      "caller": "reflect orchestrator",
+      "standing": "deferred-static: synthesis prompt",
+      "sha256": "52767b4566c37df0adc6350fff1c5c7a919a1178c2be539e0efbf920f2803702"
+    },
+    {
+      "source": "skills/reflect/references/tooling-reviewer.md",
+      "source_lines": [
+        1,
+        57
+      ],
+      "purpose": "tooling review role",
+      "inputs": "commands, artifacts and receipts",
+      "operation": "tooling review role",
+      "output": "tool/process deviations",
+      "caller": "reflect orchestrator",
+      "standing": "deferred-static: reviewer prompt",
+      "sha256": "3a4dc9e87d0d74b46d0d0bc2c1af6acba10be7c95d1adafeab6ec5701e247933"
+    },
+    {
+      "source": "skills/typescript-best-practices/references/patterns.md",
+      "source_lines": [
+        1,
+        313
+      ],
+      "purpose": "TypeScript pattern reference",
+      "inputs": "target code and language constraints",
+      "operation": "TypeScript pattern reference",
+      "output": "applicable pattern guidance",
+      "caller": "typescript-best-practices",
+      "standing": "deferred-static: language context only",
+      "sha256": "eb73b5f3514c0c14d14bafca59ffb54b161422ea5fc5fe65e60c5b4d71c40178"
+    },
+    {
+      "source": "skills/why/references/epistemics.md",
+      "source_lines": [
+        1,
+        144
+      ],
+      "purpose": "why claim standing framework",
+      "inputs": "investigator evidence and source provenance",
+      "operation": "why claim standing framework",
+      "output": "Direct/Supported/Inferred/Speculative/Unknown classification",
+      "caller": "why synthesizer",
+      "standing": "deferred-static: epistemic rule set, no external effect",
+      "sha256": "ba99dcdc4fbce91a83b50fc0c9b2c5769febd95540b1722c6b87fe8f900bb60a"
+    },
+    {
+      "source": "skills/why/references/investigator-prompt.md",
+      "source_lines": [
+        1,
+        103
+      ],
+      "purpose": "why evidence investigator brief",
+      "inputs": "question, code anchor and assigned source",
+      "operation": "why evidence investigator brief",
+      "output": "cited findings plus search gaps",
+      "caller": "why orchestrator",
+      "standing": "deferred-static: external-source prompt",
+      "sha256": "e35d8eaea13f0a027dd35572d525e9f66e8f8918ca9e555237dc228f26278d5f"
+    },
+    {
+      "source": "skills/why/references/source-playbook.md",
+      "source_lines": [
+        1,
+        17
+      ],
+      "purpose": "why source search procedure",
+      "inputs": "target symbols, dates and available connectors",
+      "operation": "why source search procedure",
+      "output": "source-specific evidence or explicit gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: connector-dependent procedure",
+      "sha256": "3cfb0245d5b2019eeeaa7a0e023579d390f2cdcdff6942d2fe009b9efac0eb11"
+    },
+    {
+      "source": "skills/why/references/sources/code-archaeology.md",
+      "source_lines": [
+        1,
+        88
+      ],
+      "purpose": "git history evidence lens",
+      "inputs": "target files, symbols and dates",
+      "operation": "git history evidence lens",
+      "output": "commits, diffs and author rationale",
+      "caller": "why investigator",
+      "standing": "deferred-static: evidence source guidance",
+      "sha256": "8c14aa382f0de40829b2668d43e3f54814480bb93a486c9282ada4003f6b9dbd"
+    },
+    {
+      "source": "skills/why/references/sources/databricks.md",
+      "source_lines": [
+        1,
+        70
+      ],
+      "purpose": "analytics evidence lens",
+      "inputs": "error/user event terms and time window",
+      "operation": "analytics evidence lens",
+      "output": "product impact correlation or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "269a22032f027ee30a33c1b5e30443d13dd6d127ff20d8d1e8a20715b06a69cc"
+    },
+    {
+      "source": "skills/why/references/sources/datadog.md",
+      "source_lines": [
+        1,
+        99
+      ],
+      "purpose": "observability evidence lens",
+      "inputs": "logs, metrics, traces and incident window",
+      "operation": "observability evidence lens",
+      "output": "operational correlation or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "db80803f1635a5015e3190f4753c4228083e6cebf222c84e24fc3c3919aa5574"
+    },
+    {
+      "source": "skills/why/references/sources/incident-postmortem.md",
+      "source_lines": [
+        1,
+        15
+      ],
+      "purpose": "incident motivation evidence lens",
+      "inputs": "defensive code anchor and dates",
+      "operation": "incident motivation evidence lens",
+      "output": "postmortem/action-item correlation or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "486132457d3782eea64292ce7a2d3bbe3b24b372b20ca00de4329e820f74cd42"
+    },
+    {
+      "source": "skills/why/references/sources/linear.md",
+      "source_lines": [
+        1,
+        48
+      ],
+      "purpose": "ticket motivation evidence lens",
+      "inputs": "ticket IDs, terms and project context",
+      "operation": "ticket motivation evidence lens",
+      "output": "rationale, scope and decision evidence or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "7e1b72ba459089168efd701502f8c268d2481154aeeda1ddd84f840f7e974760"
+    },
+    {
+      "source": "skills/why/references/sources/notion.md",
+      "source_lines": [
+        1,
+        55
+      ],
+      "purpose": "long-form rationale evidence lens",
+      "inputs": "feature terms, authors and dates",
+      "operation": "long-form rationale evidence lens",
+      "output": "PRD/spec/ADR evidence or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "2ce336dd3052967187a56ec33d308c7a69e7ef3b04ba7b17386a8b3914a0f000"
+    },
+    {
+      "source": "skills/why/references/sources/sentry.md",
+      "source_lines": [
+        1,
+        100
+      ],
+      "purpose": "error history evidence lens",
+      "inputs": "exception, release and target symbols",
+      "operation": "error history evidence lens",
+      "output": "temporal error/fix correlation or gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "0eef902cb0f835f7fa9bd85a8e19ba1505d05e59a0173dfe852d8d52d828266d"
+    },
+    {
+      "source": "skills/why/references/sources/slack.md",
+      "source_lines": [
+        1,
+        54
+      ],
+      "purpose": "conversation evidence lens",
+      "inputs": "author, terms, channels and date window",
+      "operation": "conversation evidence lens",
+      "output": "thread decision evidence or retention/auth gap",
+      "caller": "why investigator",
+      "standing": "deferred-static: external connector guidance",
+      "sha256": "60e4c8dbb941f563c86aec7267cde66443b1dc651422569c8d112bc9da7551f6"
+    },
+    {
+      "source": "skills/why/references/synthesizer-prompt.md",
+      "source_lines": [
+        1,
+        135
+      ],
+      "purpose": "confidence-weighted why synthesis",
+      "inputs": "question, code anchor, findings and skipped sources",
+      "operation": "confidence-weighted why synthesis",
+      "output": "cited narrative with calibrated uncertainty",
+      "caller": "why orchestrator",
+      "standing": "deferred-static: output prompt; claims still require evidence",
+      "sha256": "fcdc69ede22f94da9e22f510bb0c4a75a63820f0b49b8d5fd54a196b4010bf2a"
+    }
+  ]
+}

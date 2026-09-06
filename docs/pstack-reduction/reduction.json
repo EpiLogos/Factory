@@ -1,0 +1,35 @@
+{
+  "source_revision": "93b00b89ef425a9c1bac0d0b317dfc49c930ac99",
+  "standing": "static accounting; not runtime acceptance",
+  "full_account_sha256": "e494d4c82e9b5752375e47a8b09a36701e8938cf82d4bee255ec8d4032f351ab",
+  "files": {
+    "source-accounting.json": {
+      "sha256": "e494d4c82e9b5752375e47a8b09a36701e8938cf82d4bee255ec8d4032f351ab",
+      "bytes": 545101
+    },
+    "edge-accounting.json": {
+      "sha256": "7cab15d3625549274c495c244646f96a54c2033761d7816943733c88364b2ef9",
+      "bytes": 432011
+    },
+    "edge-dispositions.json": {
+      "sha256": "0f5fad4144322cc5faaf49174e08746e5338fd159b3d1958cc290224f16f1599",
+      "bytes": 495692
+    },
+    "support-prompt-map.json": {
+      "sha256": "f65dbd78d76920d2cc9c6749e04e39d5e676855d5c21926af3dc1933b0cf2516",
+      "bytes": 17105
+    },
+    "core-semantic-review.json": {
+      "sha256": "d54c4637ab8ad0e28808c05f550719ccf592dd10c6a46b992583b7aebae1c87f",
+      "bytes": 180858
+    },
+    "reduced-map.mmd": {
+      "sha256": "88d37ca3932f53d7f2d9c50f9a14534879598e7c20c3a865d93aa7341c40cc19",
+      "bytes": 31001
+    },
+    "reduced-map.svg": {
+      "sha256": "5825d419e07d7c4a689dd1229c09ccd2d6f9fcb85ac21f67527818f10a435830",
+      "bytes": 524954
+    }
+  }
+}
