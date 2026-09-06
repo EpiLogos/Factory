@@ -1,3 +1,4 @@
+use crate::agent_capability_intake::{AgentCapabilityIntake, AgentCapabilityIntakeReading};
 use crate::core::run::RunRef;
 use crate::journey::{Journey, JourneyRef, JourneyStatus};
 use serde::{Deserialize, Serialize};
@@ -82,6 +83,10 @@ pub struct JourneyCommissionState {
     /// External O:I/native Attention refs. Factory does not create an Attention store.
     #[serde(default)]
     pub attention_refs: Vec<String>,
+    /// Composed agent capability admitted through stable refs (#188). Optional
+    /// and additive: commissions without it are unchanged. Never a config blob.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_intake: Option<AgentCapabilityIntake>,
 }
 
 impl JourneyCommissionState {
@@ -112,6 +117,7 @@ impl JourneyCommissionState {
             journey_revision: journey.revision.get(),
             handoffs: Vec::new(),
             attention_refs: Vec::new(),
+            capability_intake: None,
         })
     }
 
@@ -180,6 +186,29 @@ impl JourneyCommissionState {
         before != self.attention_refs.len()
     }
 
+    /// Attach the composed agent capability intake for this commission. The
+    /// intake's Run must already belong to the Journey: capability refs bind to
+    /// developmental use, not to a floating intention. Replacing an existing
+    /// intake for the same Run is an explicit refresh, not a duplication.
+    pub fn set_capability_intake(
+        &mut self,
+        journey: &Journey,
+        intake: AgentCapabilityIntake,
+    ) -> Result<(), JourneyCommissionError> {
+        self.ensure_journey(journey)?;
+        if !journey
+            .runs
+            .iter()
+            .any(|link| link.run_ref == intake.run_ref)
+        {
+            return Err(JourneyCommissionError::RunOutsideJourney(
+                intake.run_ref.to_string(),
+            ));
+        }
+        self.capability_intake = Some(intake);
+        Ok(())
+    }
+
     pub fn reading(
         &self,
         journey: &Journey,
@@ -205,6 +234,7 @@ impl JourneyCommissionState {
             agent_session_refs: journey.agent_session_refs.clone(),
             attention_refs: self.attention_refs.clone(),
             material_context_refs: journey.material_context_refs.clone(),
+            capability_intake: self.capability_intake.as_ref().map(Into::into),
             journey_revision: journey.revision.get(),
         })
     }
@@ -238,6 +268,8 @@ pub struct JourneyCommissionReading {
     pub agent_session_refs: Vec<String>,
     pub attention_refs: Vec<String>,
     pub material_context_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_intake: Option<AgentCapabilityIntakeReading>,
     pub journey_revision: u64,
 }
 
@@ -267,6 +299,7 @@ pub enum JourneyCommissionError {
     Schema(String),
     WrongJourney { expected: String, actual: String },
     CompletedCannotReopen,
+    RunOutsideJourney(String),
 }
 
 impl Display for JourneyCommissionError {
@@ -284,6 +317,9 @@ impl Display for JourneyCommissionError {
             }
             Self::CompletedCannotReopen => {
                 formatter.write_str("completed Journey Commission cannot reopen")
+            }
+            Self::RunOutsideJourney(run_ref) => {
+                write!(formatter, "Run {run_ref} is not part of this Journey")
             }
         }
     }

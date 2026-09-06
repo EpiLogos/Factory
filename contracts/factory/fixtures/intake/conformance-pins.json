@@ -1,0 +1,21 @@
+{
+  "schema": "factory.agent-capability-intake-pins/v1",
+  "observed_at": "2026-09-06",
+  "source_of_truth": {
+    "repository": "https://github.com/EpiLogos/O-I",
+    "path": "suite/mainline.json",
+    "observed_at": "2026-09-06"
+  },
+  "pins": {
+    "central": {
+      "repository": "https://github.com/EpiLogos/Central",
+      "revision": "616749373a60f55e9fd99e4f2b0bebf2c73a674b"
+    },
+    "ai-kit": {
+      "repository": "https://github.com/EpiLogos/ai-kit",
+      "revision": "7d7f827024a448c3466b750988a694354b47b225"
+    }
+  },
+  "purpose": "This repo's composed-agent-capability intake binds its recorded evidence envelopes to exactly these pinned owner revisions. Fixtures and tests must never chase live heads.",
+  "rebind_instructions": "When O-I suite/mainline.json moves a pinned revision past these values: (1) re-capture both envelopes by executing the NEW pinned revisions in an isolated temp capture (never a live checkout, never real ground), (2) update this file's revisions and observed_at, (3) update the captured_from.revision fields and the expected facts in factory/tests/agent_capability_intake.rs, (4) run scripts/validate_agent_capability_intake.py --live and the factory test suite before landing."
+}

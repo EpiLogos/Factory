@@ -1,0 +1,58 @@
+{
+  "schema": "factory.agent-capability-intake-fixture/v1",
+  "side": "authored-source",
+  "captured_from": {
+    "product": "central",
+    "repository": "https://github.com/EpiLogos/Central",
+    "revision": "616749373a60f55e9fd99e4f2b0bebf2c73a674b",
+    "surface": "ctrl agent-profile.read over AgentProfileStore::personal (save then read round-trip)",
+    "captured_by": "executing the pinned revision in an isolated temp capture crate; no live Central ground was read or written",
+    "captured_at": "2026-09-06"
+  },
+  "envelope": {
+    "handoff": {
+      "agent_ref": "agent:factory-researcher",
+      "materialisation_owner": "Workcell",
+      "operational_resolution_owner": "AIKit",
+      "profile_ref": "agent-profile:factory-researcher",
+      "revision": "profile-rev-1",
+      "semantic_identity_owner": "Actuation",
+      "source_profile_is_agent_identity": false,
+      "source_profile_is_effective_profile": false,
+      "source_profile_is_material_binding": false,
+      "source_world": "world:personal"
+    },
+    "profile": {
+      "agent_ref": "agent:factory-researcher",
+      "computer_access_intent_refs": [],
+      "governance_refs": [],
+      "knowledge_source_refs": [],
+      "method_refs": [
+        "method:verified-development"
+      ],
+      "placement_intent_refs": [],
+      "provenance_refs": [],
+      "purpose": "Carry Factory developmental runs with composed, evidence-backed capability.",
+      "ratified_world_refs": [
+        "world:personal"
+      ],
+      "ref": "agent-profile:factory-researcher",
+      "revision": "profile-rev-1",
+      "role": null,
+      "routine_refs": [
+        "routine:daily-orientation"
+      ],
+      "schema": "central.agent-profile/v1",
+      "scope": "personal",
+      "skill_refs": [
+        "skill:return-review"
+      ],
+      "skill_set_refs": [
+        "skill-set:factory-intake"
+      ],
+      "source_profile_ref": null,
+      "world_ref": "world:personal"
+    },
+    "surface": "central ctrl agent-profile.read (scope=personal, profile_ref=agent-profile:factory-researcher)"
+  }
+}

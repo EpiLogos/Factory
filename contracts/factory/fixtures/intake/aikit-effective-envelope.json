@@ -1,0 +1,57 @@
+{
+  "schema": "factory.agent-capability-intake-fixture/v1",
+  "side": "effective-composition",
+  "captured_from": {
+    "product": "ai-kit",
+    "repository": "https://github.com/EpiLogos/ai-kit",
+    "revision": "7d7f827024a448c3466b750988a694354b47b225",
+    "surface": "aikit_core resolve + skillset::project (the `aikit set show` data shape) and GenerationId::from_hash",
+    "captured_by": "executing the pinned revision in an isolated temp capture crate; no live AIKit home was read or written",
+    "captured_at": "2026-09-06"
+  },
+  "envelope": {
+    "complete": false,
+    "generation": {
+      "context_id": "ctx_FACTORYINTAKE00000000A",
+      "generation_id": "gen_8b8c6ee18ce734a7"
+    },
+    "members": 4,
+    "projected": [
+      "skill/factory/return-review"
+    ],
+    "set": {
+      "label": "factory-intake",
+      "name": "factory-intake",
+      "provenance": "composed"
+    },
+    "summary": "sets/factory-intake — 4 members, 1 projected, 3 withheld (not installed, retired, unreviewed)",
+    "surface": "aikit set show factory-intake --json (data shape)",
+    "withheld": [
+      {
+        "capability": "skill/factory/legacy-orientation",
+        "reason": "skill/factory/legacy-orientation — withheld-retired on its Control ground: Superseded by the composed AgentProfile orientation source; retired by owner.",
+        "withheld_reason": {
+          "reason": "retired-standing",
+          "retirement_reason": "Superseded by the composed AgentProfile orientation source; retired by owner.",
+          "withheld": "unavailable"
+        }
+      },
+      {
+        "capability": "skill/factory/unresolved-member",
+        "reason": "skill/factory/unresolved-member — not present in any registry",
+        "withheld_reason": {
+          "reason": "not-in-catalog",
+          "withheld": "unavailable"
+        }
+      },
+      {
+        "capability": "skill/factory/unreviewed-return",
+        "reason": "skill/factory/unreviewed-return — this revision has not been reviewed",
+        "withheld_reason": {
+          "reason": "trust-required",
+          "withheld": "unavailable"
+        }
+      }
+    ]
+  }
+}
