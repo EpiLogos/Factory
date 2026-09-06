@@ -2,11 +2,6 @@ name: Factory Rust
 
 on:
   pull_request:
-    paths:
-      - "factory/**"
-      - "contracts/factory/**"
-      - "scripts/validate_agent_capability_intake.py"
-      - ".github/workflows/factory-rust.yml"
   push:
     branches:
       - main
