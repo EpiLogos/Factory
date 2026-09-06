@@ -7,3 +7,6 @@
 .env.*
 *.env
 *.env.*
+
+# Local recovery receipts for reviewed documentation changes.
+/.central/documentation-transactions/

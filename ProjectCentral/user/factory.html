@@ -1,0 +1,1049 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="color-scheme" content="light dark" />
+<title>Software Factory — Product ground</title>
+<meta name="description" content="Software Factory: durable development from authored intention through Journeys, Runs, evidence, Candidates, Recognition and Return. An Agent-recovered six-question account for review." />
+<style>
+:root{
+  --left-w:286px;
+  --right-w:326px;
+  --top-h:56px;
+  --paper:#f5f8fb;
+  --sheet:#ffffff;
+  --sheet-2:#eef4f8;
+  --ink:#132235;
+  --muted:#5e6d7f;
+  --faint:#8c98a7;
+  --line:#d8e1e9;
+  --line-strong:#bdcad6;
+  --blue:#1f5f9d;
+  --blue-deep:#184c7c;
+  --blue-soft:#e7f0fa;
+  --teal:#197f82;
+  --teal-soft:#e6f4f3;
+  --orange:#a45c2e;
+  --orange-soft:#f5ece6;
+  --danger:#9b4e50;
+  --success:#477a5e;
+  --focus:#2a78c5;
+  --shadow:0 12px 34px rgba(22,43,68,.08);
+  --radius:14px;
+  --reading:78ch;
+  --wide:1120px;
+  --full:1400px;
+  --ui:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  --serif:Georgia,"Times New Roman",Times,serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+html[data-theme="dark"]{
+  --paper:#071320;
+  --sheet:#0c1b2c;
+  --sheet-2:#10243a;
+  --ink:#e7edf5;
+  --muted:#a7b4c4;
+  --faint:#7c8ba0;
+  --line:#21364d;
+  --line-strong:#35536f;
+  --blue:#77abe5;
+  --blue-deep:#9bc5ef;
+  --blue-soft:#102e4d;
+  --teal:#5ab5b3;
+  --teal-soft:#103536;
+  --orange:#c57a45;
+  --orange-soft:#3b281d;
+  --danger:#ce8587;
+  --success:#80ad92;
+  --focus:#8ec3ff;
+  --shadow:0 18px 42px rgba(0,0,0,.3);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:auto;background:var(--paper)}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--serif);font-size:16.5px;line-height:1.7;text-rendering:optimizeLegibility}
+button,input,textarea,select{font:inherit}
+a{color:var(--blue);text-decoration-thickness:.08em;text-underline-offset:.16em}
+a:hover{color:var(--teal)}
+button{color:inherit}
+::selection{background:var(--blue-soft)}
+:focus-visible{outline:3px solid color-mix(in srgb,var(--focus) 65%,transparent);outline-offset:2px}
+.app{min-height:100vh;display:grid;grid-template-columns:var(--left-w) minmax(0,1fr) var(--right-w);grid-template-rows:var(--top-h) 1fr;grid-template-areas:"top top top" "left main right";transition:grid-template-columns .18s ease}
+body.left-closed .app{grid-template-columns:0 minmax(0,1fr) var(--right-w)}
+body.right-closed .app{grid-template-columns:var(--left-w) minmax(0,1fr) 0}
+body.left-closed.right-closed .app{grid-template-columns:0 minmax(0,1fr) 0}
+.topbar{grid-area:top;position:sticky;top:0;z-index:80;height:var(--top-h);display:flex;align-items:center;gap:9px;padding:0 12px;border-bottom:1px solid var(--line);background:color-mix(in srgb,var(--sheet) 94%,transparent);backdrop-filter:blur(14px)}
+.brand{min-width:0;margin-right:auto;display:flex;align-items:baseline;gap:10px;font-family:var(--ui)}
+.brand strong{font-size:12px;letter-spacing:.05em;text-transform:uppercase;white-space:nowrap}
+.brand span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:11.5px}
+.icon-btn{width:34px;height:34px;display:grid;place-items:center;padding:0;border:1px solid var(--line);border-radius:9px;background:var(--sheet);cursor:pointer;font:700 13px/1 var(--ui)}
+.icon-btn:hover{background:var(--blue-soft);border-color:var(--line-strong)}
+.route-chip{max-width:230px;height:32px;display:flex;align-items:center;gap:7px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--sheet);color:var(--muted);font:600 10.5px/1 var(--ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.route-chip code{color:var(--teal);font:800 10px/1 var(--mono)}
+.left-rail,.right-rail{position:sticky;top:var(--top-h);height:calc(100vh - var(--top-h));overflow:auto;background:var(--sheet);z-index:50;transition:transform .18s ease,opacity .18s ease}
+.left-rail{grid-area:left;border-right:1px solid var(--line);padding:18px 13px 34px}
+.right-rail{grid-area:right;border-left:1px solid var(--line);padding:18px 16px 34px}
+body.left-closed .left-rail{transform:translateX(-100%);opacity:0;pointer-events:none}
+body.right-closed .right-rail{transform:translateX(100%);opacity:0;pointer-events:none}
+.main{grid-area:main;min-width:0;background:var(--paper);container-type:inline-size;container-name:account-main}
+.rail-label{margin:4px 7px 10px;color:var(--faint);font:750 9.5px/1.2 var(--ui);letter-spacing:.12em;text-transform:uppercase}
+.surface-nav{display:grid;gap:5px}.nav-group{border-radius:10px}.nav-head{display:grid;grid-template-columns:minmax(0,1fr) 30px;align-items:stretch}.nav-select,.nav-toggle{border:0;background:transparent;cursor:pointer}.nav-select{display:grid;grid-template-columns:36px minmax(0,1fr);gap:7px;text-align:left;padding:9px 7px;border-radius:9px 0 0 9px}.nav-toggle{border-radius:0 9px 9px 0;font:800 11px/1 var(--ui);color:var(--muted)}.nav-head:hover .nav-select,.nav-head:hover .nav-toggle{background:var(--blue-soft)}.nav-group.active>.nav-head .nav-select,.nav-group.active>.nav-head .nav-toggle{background:var(--blue-soft)}.nav-group.active>.nav-head .nav-select{box-shadow:inset 3px 0 0 var(--blue)}.nav-q{font:800 10.5px/1.5 var(--mono);color:var(--blue)}.nav-name{font:700 11.5px/1.3 var(--ui);color:var(--ink)}.nav-gloss{display:block;margin-top:2px;color:var(--muted);font:400 10px/1.35 var(--ui)}.nav-toggle span{display:inline-block;transition:transform .15s ease}.nav-group.expanded .nav-toggle span{transform:rotate(90deg)}.subnav{display:none;margin:2px 0 5px 35px;padding:2px 0 5px 7px;border-left:1px solid var(--line)}.nav-group.expanded .subnav{display:grid;gap:1px}.subnav a{display:grid;grid-template-columns:32px minmax(0,1fr);gap:5px;padding:6px 8px;border-radius:7px;color:var(--muted);text-decoration:none;font:10.5px/1.35 var(--ui)}.subnav a:hover{background:var(--sheet-2);color:var(--ink)}.subnav a.active{background:var(--teal-soft);color:var(--ink)}.subnav code{font:800 9.5px/1.35 var(--mono);color:var(--teal)}
+.context-head{padding-bottom:15px;margin-bottom:14px;border-bottom:1px solid var(--line)}.context-kicker{margin-bottom:7px;color:var(--faint);font:750 9.5px/1 var(--ui);letter-spacing:.11em;text-transform:uppercase}.context-head h3{margin:0 0 5px;font:600 17px/1.25 var(--serif)}.context-head p{margin:0;color:var(--muted);font:11.5px/1.5 var(--ui)}.note-field{margin-top:15px}body[data-notes="false"] .note-field{display:none}.note-field label{display:block;margin-bottom:7px;color:var(--muted);font:700 10.5px/1.35 var(--ui)}.note-field textarea{width:100%;min-height:128px;resize:vertical;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:var(--paper);color:var(--ink);outline:none;font:12.5px/1.55 var(--ui)}.note-field textarea:focus{border-color:var(--blue)}.save-state{margin-top:5px;color:var(--faint);font:9.5px/1.3 var(--ui)}.context-slot{margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}.context-slot:empty{display:none}.context-slot h4{margin:0 0 8px;font:750 10px/1.3 var(--ui);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}.right-details{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.right-details summary{cursor:pointer;color:var(--muted);font:700 10.5px/1.4 var(--ui)}.meta-list{display:grid;gap:7px;margin:10px 0 0}.meta-row{display:grid;grid-template-columns:72px 1fr;gap:8px;font:10px/1.45 var(--ui)}.meta-row dt{color:var(--faint)}.meta-row dd{margin:0;color:var(--muted);overflow-wrap:anywhere}.source-list{display:grid;gap:8px;margin-top:10px}.source-list a{display:block;padding:8px 9px;border:1px solid var(--line);border-radius:9px;background:var(--paper);text-decoration:none;color:var(--ink);font:10.5px/1.4 var(--ui)}.source-list a:hover{border-color:var(--blue)}.source-empty{margin-top:9px;color:var(--faint);font:10px/1.4 var(--ui)}
+.surface{display:none;min-height:calc(100vh - var(--top-h));padding:clamp(34px,4vw,68px) clamp(22px,5vw,84px) 112px}.surface.active{display:block}.surface-inner{width:min(100%,var(--surface-max,var(--full)));margin:0 auto}.hero{margin-bottom:clamp(70px,8vw,118px);padding-bottom:clamp(34px,5vw,58px);border-bottom:1px solid var(--line)}.hero-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:18px;font-family:var(--ui)}.ql-badge{display:inline-flex;align-items:center;height:27px;padding:0 9px;border-radius:999px;background:var(--blue-soft);color:var(--blue);font:800 10.5px/1 var(--mono)}.hero-label{color:var(--muted);font:750 10px/1 var(--ui);letter-spacing:.09em;text-transform:uppercase}h1{max-width:18ch;margin:0;font-family:var(--serif);font-size:clamp(40px,5vw,66px);font-weight:500;line-height:1.02;letter-spacing:-.03em}.hero-deck{max-width:var(--reading);margin:20px 0 0;color:var(--muted);font-size:clamp(18px,1.8vw,22px);line-height:1.5}.hero-meta{display:flex;gap:10px 16px;flex-wrap:wrap;margin-top:22px;color:var(--faint);font:10.5px/1.4 var(--ui)}.ql-node{scroll-margin-top:calc(var(--top-h) + 26px);margin:0 0 clamp(76px,9vw,126px)}.node-head{margin-bottom:clamp(28px,3.4vw,40px)}.node-eyebrow{margin-bottom:10px;color:var(--teal);font:750 9.5px/1.2 var(--ui);letter-spacing:.1em;text-transform:uppercase}.ql-node h2{max-width:25ch;margin:0;font-family:var(--serif);font-size:clamp(26px,3vw,40px);font-weight:500;line-height:1.12;letter-spacing:-.018em}.node-deck{max-width:var(--reading);margin:13px 0 0;color:var(--muted);font-size:17.5px;line-height:1.58}.prose{max-width:var(--reading);font-size:16.5px;line-height:1.72}.prose p{margin:0 0 1em}.prose p:last-child{margin-bottom:0}.prose h3{margin:2.2em 0 .7em;font:600 22px/1.25 var(--serif)}.prose h4{margin:1.8em 0 .55em;font:750 12px/1.35 var(--ui);letter-spacing:.03em}.prose ul,.prose ol{margin:.9em 0 1.2em;padding-left:1.35em}.prose li{margin:.32em 0}.prose blockquote{margin:28px 0;padding:0 0 0 18px;border-left:3px solid var(--teal);color:var(--muted);font-size:18px;line-height:1.6}.prose code{font:90%/1 var(--mono);background:var(--sheet-2);padding:.12em .28em;border-radius:4px}.reading{width:min(100%,var(--reading))}.wide{width:min(100%,var(--wide))}.full{width:min(100%,var(--full))}.centered{margin-left:auto;margin-right:auto}
+.definition,.claim,.note,.warning,.evidence{max-width:var(--reading);margin:28px 0;padding:18px 20px;border-radius:0 12px 12px 0;background:var(--sheet);border:1px solid var(--line);border-left:4px solid var(--blue)}.definition{background:var(--blue-soft)}.claim{border-left-color:var(--teal);background:var(--teal-soft)}.note{border-left-color:var(--line-strong)}.warning{border-left-color:var(--orange);background:var(--orange-soft)}.evidence{border-left-color:var(--success)}.block-label{margin-bottom:7px;color:var(--muted);font:800 9.5px/1.3 var(--ui);letter-spacing:.08em;text-transform:uppercase}.definition p,.claim p,.note p,.warning p,.evidence p{margin:0;font-size:15.5px;line-height:1.6}.figure{margin:34px 0;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:var(--sheet);box-shadow:var(--shadow)}.figure-head{display:flex;justify-content:space-between;gap:14px;align-items:start;padding:14px 16px;border-bottom:1px solid var(--line);font-family:var(--ui)}.figure-head strong{font-size:11.5px;line-height:1.35}.figure-head span{color:var(--muted);font-size:10px;line-height:1.4;text-align:right}.figure-body{padding:clamp(14px,2vw,24px);overflow:auto}.figure figcaption{padding:12px 16px 14px;border-top:1px solid var(--line);color:var(--muted);font:10.8px/1.55 var(--ui)}.svg-wrap svg{display:block;width:100%;height:auto}.svg-wrap.scroll-x svg{min-width:720px}.table-wrap{margin:28px 0;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--sheet)}table{width:100%;border-collapse:collapse;font:12.5px/1.5 var(--ui)}th,td{padding:11px 13px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}th{background:var(--sheet-2);color:var(--muted);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase}tr:last-child td{border-bottom:0}.code-block,.equation{margin:28px 0;border:1px solid var(--line);border-radius:12px;background:var(--sheet);overflow:auto}.code-block pre{margin:0;padding:18px 20px;font:12.5px/1.6 var(--mono)}.equation{padding:20px 22px;font:500 clamp(20px,2.6vw,30px)/1.4 var(--serif)}.source-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:28px 0}.source-card{display:block;padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:var(--sheet);text-decoration:none;color:var(--ink)}.source-card:hover{border-color:var(--blue);box-shadow:var(--shadow)}.source-card strong{display:block;font:700 11.5px/1.4 var(--ui)}.source-card span{display:block;margin-top:4px;color:var(--muted);font:10.5px/1.5 var(--ui)}.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(24px,4vw,54px);align-items:start}.three-col{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.mockup-frame{margin:32px 0;border:1px solid var(--line-strong);border-radius:16px;background:var(--sheet);overflow:hidden;box-shadow:var(--shadow)}.mockup-toolbar{height:38px;display:flex;align-items:center;gap:6px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--sheet-2)}.mockup-dot{width:8px;height:8px;border-radius:50%;background:var(--line-strong)}.mockup-body{min-height:260px;padding:20px}.controls{display:grid;gap:18px;padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--sheet)}.control-row{display:grid;grid-template-columns:minmax(150px,.5fr) minmax(0,1fr) auto;gap:14px;align-items:center;font-family:var(--ui)}.control-row label{font-size:11.5px;font-weight:700}.control-row output{min-width:64px;text-align:right;color:var(--teal);font:800 11px/1 var(--mono)}input[type="range"]{width:100%;accent-color:var(--teal)}.toggle-row{display:flex;gap:7px;flex-wrap:wrap}.toggle-row button{padding:8px 11px;border:1px solid var(--line);border-radius:9px;background:var(--paper);cursor:pointer;font:700 10.5px/1.2 var(--ui)}.toggle-row button[aria-pressed="true"]{border-color:var(--blue);background:var(--blue);color:#fff}.timeline{position:relative;display:grid;gap:18px;margin:28px 0;padding-left:26px}.timeline:before{content:"";position:absolute;left:7px;top:5px;bottom:5px;width:1px;background:var(--line-strong)}.timeline-item{position:relative}.timeline-item:before{content:"";position:absolute;left:-23px;top:.55em;width:8px;height:8px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 4px var(--paper)}.timeline-item time{display:block;margin-bottom:3px;color:var(--faint);font:700 9.5px/1.3 var(--ui)}.timeline-item h4{margin:0 0 4px;font:650 16px/1.3 var(--serif)}.timeline-item p{margin:0;color:var(--muted);font:11.5px/1.5 var(--ui)}
+@media (max-width:1319px){.app{grid-template-columns:var(--left-w) minmax(0,1fr);grid-template-areas:"top top" "left main"}body.left-closed .app,body.left-closed.right-closed .app{grid-template-columns:0 minmax(0,1fr)}body.right-closed .app{grid-template-columns:var(--left-w) minmax(0,1fr)}.right-rail{position:fixed;top:var(--top-h);right:0;width:var(--right-w);height:calc(100vh - var(--top-h));border-left:1px solid var(--line);box-shadow:-18px 0 40px rgba(16,35,56,.14)}body.right-closed .right-rail{transform:translateX(100%);opacity:0;pointer-events:none}}
+@media (max-width:979px){.app{grid-template-columns:minmax(0,1fr);grid-template-areas:"top" "main"}body.left-closed .app,body.right-closed .app,body.left-closed.right-closed .app{grid-template-columns:minmax(0,1fr)}.left-rail{position:fixed;top:var(--top-h);left:0;width:min(var(--left-w),88vw);height:calc(100vh - var(--top-h));box-shadow:18px 0 40px rgba(16,35,56,.14)}.right-rail{width:min(var(--right-w),90vw)}.route-chip{display:none}.surface{padding-left:clamp(18px,5vw,42px);padding-right:clamp(18px,5vw,42px)}}
+@container account-main (max-width:880px){.two-col,.three-col,.source-grid{grid-template-columns:1fr}.control-row{grid-template-columns:1fr}.control-row output{text-align:left}}
+@container account-main (max-width:620px){.hero{margin-bottom:66px}.ql-node{margin-bottom:78px}.node-head{margin-bottom:26px}.figure-head{display:block}.figure-head span{display:block;margin-top:4px;text-align:left}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+@media print{:root{--paper:#fff;--sheet:#fff;--ink:#000;--muted:#444;--line:#bbb;--line-strong:#888}.topbar,.left-rail,.right-rail{display:none!important}.app{display:block}.main{display:block}.surface{display:block!important;padding:24mm 18mm;min-height:auto;break-before:page}.surface:first-child{break-before:auto}.hero{margin-bottom:18mm}.ql-node{break-inside:avoid-page}.figure,.table-wrap,.code-block,.equation{box-shadow:none;break-inside:avoid}a{color:#000;text-decoration:none}a[href^="http"]:after{content:" (" attr(href) ")";font-size:8pt;overflow-wrap:anywhere}}
+
+.right-closed .right-rail,.left-closed .left-rail{display:none}
+.svg-wrap{overflow-x:auto}.svg-wrap svg{min-width:640px}
+.unit-sources{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:22px;padding-top:14px;border-top:1px solid var(--line);font-size:12px}.unit-sources a{color:var(--muted)}
+.prose a[data-resource]{text-decoration:underline;text-underline-offset:3px}.source-unresolved{color:#a02d22}.surface-inner{max-width:1120px}.prose li{margin-bottom:.65em}
+@media print{.surface{display:block!important} .left-rail,.right-rail,.topbar{display:none!important} .main{margin:0!important}}
+.prose pre{max-width:100%;white-space:pre-wrap;overflow-wrap:anywhere;overflow-x:auto}.capability-links{font-size:.9em;color:var(--muted)}
+[data-surface="whole"] .hero{margin-bottom:40px;padding-bottom:30px}[data-surface="whole"] .ql-node{margin-bottom:42px}[data-surface="whole"] .node-head{margin-bottom:16px}[data-surface="whole"] .ql-node h2{max-width:36ch;font-size:clamp(25px,2.3vw,31px)}
+</style>
+</head>
+<body class="right-closed" data-notes="true">
+<script type="application/json" id="account-provenance">{
+  "uid": "factory-product-ground-2026-09-06",
+  "title": "Software Factory product ground",
+  "status": "draft-for-review",
+  "standing": "agent-inference",
+  "date": "2026-09-06",
+  "generator": "Agent recovered synthesis from native sources and retained corrections",
+  "seed_basis": {
+    "origin": "Agent-recovered candidate, not a supplied human seed",
+    "standing": "agent-inference"
+  },
+  "source_basis": [
+    {
+      "path": "../Central/docs/PROJECT-CONTEXT-PROTOCOL.md",
+      "sha256": "f732128a9e5f03ba26d9bb66eeebfe2c50198463ecf6c37c4fd23ce813020976",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../Central/skills/docs-methodology/SKILL.md",
+      "sha256": "6b6774f8e93ad21c361b11c09bf56c05a543c20d85276b27cfd659bf76d717f0",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../O-I/docs/HUMAN-AGENT-COVENANT.md",
+      "sha256": "79dccdffee7cb340fddaf049a9d898cea3b99bfb577cbeec8b988cfc79c01ef5",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../O-I/docs/positions/FOUNDING-POSITIONS.md",
+      "sha256": "f41ed11c377133a579d1284d2366167298050c955dedbc61fb5971e3d523e490",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/143.comments.json",
+      "sha256": "d1850ddb71a3fbbcb62705b226d288dc1f56c2ffae317d0cd732652916294154",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/143.json",
+      "sha256": "7117c97154f2f64df7be5377dbf6a781eca1670084d25578951495cfd9af61ad",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/155.comments.json",
+      "sha256": "6e6cd653b15886852964b3edfaee74445676de7a0c3ebce74cfed721b96dfbbb",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/155.json",
+      "sha256": "04918fdf8eca1da79d16951d7a92d9cfc9c4b17a79a4b8cd0bec483614919ab8",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/156.comments.json",
+      "sha256": "4fa4a629d61c2f4a04bba42050de9b01335ccd565fa060e0f022ca5c6add8f14",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/156.json",
+      "sha256": "2a10760a0dda3e7c2bd959995b9d99372ba749d219a85869fa550da1a6558fb0",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/163.comments.json",
+      "sha256": "fd7faf9ced2c87190b4b556221984ea52763086b7157377c576e40e3d8b010ea",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/163.json",
+      "sha256": "feb49d54d03c810f071cd104f6e4c52b28e04fbd3b3e660fc1050705ca6dd882",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/168.comments.json",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/168.json",
+      "sha256": "8017f7c2c7c844efb41dde7e602b98682395fa34ec86e3c65e2afa14aacea37f",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/170.comments.json",
+      "sha256": "abcab06235f508bc9b167cf0488c6c9703412ec23198878982222dd4f7515bd1",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/170.json",
+      "sha256": "fc895a8c4892ac320150a37dd9138bcd3d706565f941a65a1a4bbb90a428108b",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/174.comments.json",
+      "sha256": "a70ca40b76cad29871d0c031b81ba0dfd4367ed1cb2edf79f2d75f82ff811cec",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/174.json",
+      "sha256": "eee0815a42576486d8db5e6ad74e83db97524df6f8db51f6bd52e70b2ed8a216",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/176.comments.json",
+      "sha256": "6c1c3c664553ab2e2715ddfe16cdf4e6078854788fd27f9632aa81f1ace99986",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/176.json",
+      "sha256": "7202a16bdc1101893b6f5c6e0da90a5987c0932effd51115b3329c1a8fef5ae3",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/181.comments.json",
+      "sha256": "86b2b1b61ab1674ba9f997129f5228ae485cf45c76f41c1ddbf60aec46115d5e",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/181.json",
+      "sha256": "8a6862c72e0ad81c78c015dcc8b4a122079e6e3dbd2a52dead386faa37fd72da",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/4.comments.json",
+      "sha256": "73d609b88f8a1f499ba3c58b79f68041fdc7ae612dddd4f72b808e2df3591cd0",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "../github-recovery-mirror/mirror/agent-system-design/issues/4.json",
+      "sha256": "990fde38e4cc51253e0a8fe845e2f41f3cfb1a87a454b8c2d6f8a720707a97db",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "README.md",
+      "sha256": "eda016d4e9d6d317ace141747093f579abf984460d1eaa3667f168a986314bbe",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md",
+      "sha256": "ab0eb90a70a6ca3ce7cb6295ad8f17af9ea82d23cd0abc9ed80b1c07a1e3d2fc",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "docs/canon/QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md",
+      "sha256": "171fc11e1fecc1ce20e9bcbef036fbce2aaa606208ab2ba6636707908358b773",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "docs/canon/STRUCTURAL-SOURCE-FIDELITY.md",
+      "sha256": "a4030d769b61caaa32484c872b94d281aedd76a1a29abe95c38c0e7ccb0c9796",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md",
+      "sha256": "128dd95ecbf5cc4d4d486fce3401496a4f62136feb1900464d9c62500ae9ddd4",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/action_projection.rs",
+      "sha256": "6a05b689bbdc16eaba36afff86f4609d3fb350f954b3a1ad122a20a701fcd3d2",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/build.rs",
+      "sha256": "de05aaa337abd6a47c719a5c30e87a5020f64d2c940cf0a3073ff7550812d347",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/build_cognitive.rs",
+      "sha256": "47d1298f7b9710bd5e216c206435d23a9543c5b9e612fd6e18d7a90ca0eb42d2",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/build_provider.rs",
+      "sha256": "527ce717e1f48a394385ddd9cd489b8b5b5c318c621162492df8ce72da83eab5",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/cli.rs",
+      "sha256": "054034cf91ed94ed7ce9f9f2433e53e75149949f0ec9fad1788f3e3db9ac2175",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/core/run/model.rs",
+      "sha256": "a1f4606fbfa0ef4c253ef5580e18a54dcdecf17f203eb47b6a9550a27d64ba1c",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/core/run/thought.rs",
+      "sha256": "d142a69299b63cf0dd9f9699217fd7fc5302a782e192cee7987ac7174225882f",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/core/run/topology.rs",
+      "sha256": "0750ed154f2472c9b88e90bd35052e85d7db2c0eb6a4437307afd7d7013647a1",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/git_development.rs",
+      "sha256": "2ebc9473dea88891bdccee7ce8ca140d18120573184c29a6331fc188a41da64c",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/journey.rs",
+      "sha256": "e91d5e20d9cf61fa47466c2122fd5d1f2a7c2eb7bff70e4e65a2968c55d248c2",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/journey_commission.rs",
+      "sha256": "d8c9e805a95e120c0e897daaf772258c91ae40bd16cbb747c828ae8deafa5169",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/journey_praxis.rs",
+      "sha256": "3df4a870058ff174b69fdb08d735a181ee5491bfcaa771fe7bea25c22f628426",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/project_development.rs",
+      "sha256": "27acb008950f925aabb9ca2c56eee705e9fe5c818931672996aa6c8099ca02a6",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/project_development_store.rs",
+      "sha256": "59ed443133d058af04e9207aa20da8cbd40f38e939a36d8ab649c0aa4d3d34e6",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/src/structural_ground.rs",
+      "sha256": "37ff1583b95e7fdbe42c9c35c8692422bb762a4e4a012d9191d6f6f27e4fb060",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/action_projection.rs",
+      "sha256": "dd80f102c10014c47b4774e46b0b981c91712d3ae5e0012886b2c2a06a1b5b06",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/build_cognitive.rs",
+      "sha256": "d7bc38a88987f1f5e8edb339ea8c98db116c68bc28df5a5a41267bf713a737d2",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/build_cognitive_write.rs",
+      "sha256": "01f2ab277966c26e944c9b16ad7574ec9870411053dfc988d7ff6f5d7f5ce51d",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/build_file_provider.rs",
+      "sha256": "9d0fcf2a3d3761eb159fc86b9c7fd74f149760539fc46a268bdb574e971e0301",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/build_live.rs",
+      "sha256": "2ce2cbdee98dd89c67424710f621a18b799510e019d3390f0ff0eb9cd549946b",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/epi_holographic_structural_ground.rs",
+      "sha256": "4c7b7548cd9a28661b6d67f1debe747158e3e4a1803ac5a506c93aa6f331ae6b",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/native_cli.rs",
+      "sha256": "16e908df02ee88ae58433e7700d2b62008dfddc40642248314f8c61bdf04e52c",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/project_context_intent.rs",
+      "sha256": "cb57116e0ef392d1f16ef092c03a41c99e07e4b22801a231dd0b8680de0af161",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/project_development.rs",
+      "sha256": "50a78688a0bf8ea24f6c7b849e970e00b66894ef19857eadb99f3149a3185022",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/project_development_persistence.rs",
+      "sha256": "757dcf574ad7e9ea404de536ff36369d69020e8fdd3df10f50520ed91bc6687a",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/run_map.rs",
+      "sha256": "76885e0ee0a25e58bb0ee18fcdd025ea0e1a4419e184f3704d55c884a6850000",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/run_thought.rs",
+      "sha256": "bfb9dec7e9dfd9db1fa73230d44838ee3044a7ce5e9d7e376cd1f5bf13d40ed4",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "factory/tests/source_ground.rs",
+      "sha256": "ccde6d11390efc42ca98d0f6dde5bb32ac80621c4154a3795ac9a1677e69701a",
+      "role": "native source or retained development evidence; standing inherited from source"
+    },
+    {
+      "path": "skills/factory-development/SKILL.md",
+      "sha256": "f2fb0273254217abb6dc0dedc7735cf45ec8b807990851a0c0eee4b1569df926",
+      "role": "native source or retained development evidence; standing inherited from source"
+    }
+  ],
+  "matrix_source": "O-I Git ca78ec4:data/ql-relational-field.csv, exact H3/A3 incident subset",
+  "verification": {
+    "native_tests": "cargo test --test cli --test native_cli passed 7/7 on 2026-09-06; this is narrow CLI integration evidence",
+    "scope": "document structural and browser verification, plus narrow native CLI integration evidence",
+    "document_checks": "Shared check_product_ground.py passed; all 44 original nine-field relation rows compared exactly; seven browser routes, theme and context controls checked; 390px layout has no horizontal overflow; browser emitted no page errors."
+  },
+  "source_policy": "Additive candidate source collection. Human recognition remains separate.",
+  "source_basis_path_base": "repository-root",
+  "reconciled_source_revisions": [
+    {
+      "path": "../Central/docs/PROJECT-CONTEXT-PROTOCOL.md",
+      "read_sha256": "274e8d5f70d455d3f02e9882048020e2f18a296b617d720de78f33ad6535102a",
+      "current_sha256": "6846212de82152cb82d13fb31b89ccc56882e56b5f71f3b6737a863fc8e3cc09",
+      "reason": "Reviewed protocol/skill refinements made during this consolidation: intended capability gaps and source-format/standing parity.",
+      "date": "2026-09-06"
+    },
+    {
+      "path": "../Central/skills/docs-methodology/SKILL.md",
+      "read_sha256": "6ad5aaa495461bea1ae96a05a3f7411cfb9316a61e0766ed8a5e8d2fc6271df9",
+      "current_sha256": "fd3771d457330cbf746780ece970f7b758b0232916918e7fc9963e8350d9f3dd",
+      "reason": "Reviewed protocol/skill refinements made during this consolidation: intended capability gaps and source-format/standing parity.",
+      "date": "2026-09-06"
+    },
+    {
+      "path": "../Central/docs/PROJECT-CONTEXT-PROTOCOL.md",
+      "previous_sha256": "6846212de82152cb82d13fb31b89ccc56882e56b5f71f3b6737a863fc8e3cc09",
+      "sha256": "f732128a9e5f03ba26d9bb66eeebfe2c50198463ecf6c37c4fd23ce813020976",
+      "reason": "Reconciled single matrix form, declared views and Central filesystem / AIKit operation ownership; source authority unchanged."
+    },
+    {
+      "path": "../Central/skills/docs-methodology/SKILL.md",
+      "previous_sha256": "fd3771d457330cbf746780ece970f7b758b0232916918e7fc9963e8350d9f3dd",
+      "sha256": "b59fa65ab39258f59e3911ceab235764e86e5d4adf7ab43645a7c4734a659a6c",
+      "reason": "Reconciled single matrix form, declared views and Central filesystem / AIKit operation ownership; source authority unchanged."
+    },
+    {
+      "path": "factory/src/cli.rs",
+      "sha256": "054034cf91ed94ed7ce9f9f2433e53e75149949f0ec9fad1788f3e3db9ac2175",
+      "reason": "Re-read the native CLI inventory and command handlers for dated command-to-capability maintenance.",
+      "date": "2026-09-06"
+    },
+    {
+      "path": "factory/tests/cli.rs",
+      "reason": "Executed with factory/tests/native_cli.rs for the narrow native CLI integration reading.",
+      "date": "2026-09-06"
+    },
+    {
+      "path": "../Central/skills/docs-methodology/SKILL.md",
+      "previous_sha256": "b59fa65ab39258f59e3911ceab235764e86e5d4adf7ab43645a7c4734a659a6c",
+      "sha256": "6b6774f8e93ad21c361b11c09bf56c05a543c20d85276b27cfd659bf76d717f0",
+      "reason": "Reconciled CLI maintenance and bidirectional seed/question protocol against the source reviewed in this task."
+    }
+  ],
+  "matrix_basis": {
+    "protocol": "ql-capability-matrix/1",
+    "csv_sha256": "fbda3c0554d340e8fec01f28c7d058bd74bb79e0dce48a2e29a768b681227722",
+    "manifest_sha256": "877f6692c56b4bbf82df85f9eebaae9dfbda8f1ec4fcf4278b264a245b50d4bb",
+    "record_sha256": {
+      "cap.factory.native-cli": "86e6538a6744dd5156637d3fa9647545ae1cd7ca163b0fa0257aba42659ab4b5",
+      "cap.factory.build-reading": "1c56b2c0b339553328f5ceeeb15c14d7afcc95abe4a3cf0ceb42622c70fd2db7",
+      "cap.factory.journey-continuity": "77640fcdeee6f68b8574432b03188e3b822f6ee8cef33403d5eb9e75d988fd26",
+      "cap.factory.run-map": "b053596c4f0276d6ddd19f1aca16d85cf0c03041a88497dfca82c12bedea2548",
+      "cap.factory.build-evidence": "204ec6aedfeb2bcb270f66d62c859082c99b11ee3d2d1c7a482b13c7882bc7cb",
+      "cap.factory.structural-ground": "c47e478cbc3e68284cd0c065393b543cfd3675bf9bdf5ec4736f4f145354d106",
+      "cap.factory.journey-commission": "ae4131a98a13f28374faa2a7257c4fa5cff236f2d20aa525e2cdba7edd586fcc",
+      "cap.factory.bounded-intent": "889fb99747844139c2a08559c9f0549e7fc313c6ea8ca0a773b2b004a98ec562",
+      "cap.factory.git-development": "4ca4d1892e9571fd0653892cba0c7507c3adbe375f19ad331c7fbc707efbca8e",
+      "cap.factory.intent-return": "e725b6af05c62aa3f75e11411e66ee8344c6f43f452cc699c42da9d99eeb264c",
+      "cap.factory.request-evidence": "51f0bf8bdbc9b06ccab8b205742171878f48ab48de930025dc9ce08b8b3962b0",
+      "cap.factory.cognitive-reading": "ca70987dd89639c57643c40490be9ef8436983ea94646aafe8cd888fc95612ff",
+      "cap.factory.owner-return": "29c76a31c8aaab7d11d45920c6e43f0962ed34a1070a65fe86493dea4c1b1721",
+      "cap.factory.development-persistence": "ef75d98fe8247c6b5defc2bf1364611d2683838c023dbcbddb54d0cdb18c4634",
+      "cap.factory.praxis-condition": "ba5bc4b79611fa8125e0670f2b95a6d2a0115c2cece46c92929f6a98158714e5",
+      "cap.factory.action-projection": "c39bb93f4b1aa553ff005fbb800d9e7e67b348be2e7bbaafe7cf6de4647c153a",
+      "cap.factory.run-thought": "31aff6a65e86d153898b145d5a19097c43bbf0a660c6b858b831410f604dfbd4",
+      "cap.factory.praxis-fitness": "193389dbd1cd1e01e6437cc521af0f2969a71ff3a808620dde9f06a1c7e75bc1",
+      "H0->H3": "7f1f2fa6cc2bce146867125c9e442e5d1426fc8684f0a5db60e8a820ea7a116e",
+      "H0->A3": "b2fe65d7403cc96b50f4767e0f3fb63aef4013bde44aebd34e52816d35be342d",
+      "H1->H3": "d6956564a35d92f8cf3e38e1daabed132ec2f30d8159faadb28bf5290ba5e68b",
+      "H1->A3": "89acf6fe1e2bb708aa8627dda5e1e6563142ec9a5e9a91824bb4fff278cc368d",
+      "H2->H3": "f855752051d1a35c9b99ef54d4dc1059a25efc377d56b5446e4d4b457ab2537e",
+      "H2->A3": "6dbfb19653150c2cf01c3b7ee05f782b6be7c8528565a630c3e03bae28930921",
+      "H3->H0": "d116182c1efdafdef781255d1cd477500d70781a6b4e51966c40db66087f377f",
+      "H3->H1": "42bea837b8860be64a83ca1efe6c3d2c7070f486a04500e44fa8e1bc6786ef87",
+      "H3->H2": "8c142fc0120b7143fcfe04014ecef007d7efd1d653f14648ddcd5e44872bb164",
+      "H3->H3": "f21b206b3e40bdd5a5a7c9d011896cb4ad60055c062f6d8c2fa3c60b5f613222",
+      "H3->H4": "18ff3c42aa22ddb91c6bb66adadf249f2a209eff786cd354fc77824b55575023",
+      "H3->H5": "7be7c442fa1226c4fbde16e88f6d220eec4a907d2414ec57eca641c5579a6dc4",
+      "H3->A0": "a8bf4285a713e59d9f65374d99c8c8efee29cf6a4e26f0e707198d1bf59b2bd0",
+      "H3->A1": "c251524e7863baef9884c710db68c1d2a9b39e190e3fadfd6a5493198f6dfca9",
+      "H3->A2": "5477ce7ef90e94c9e009fc6659d98b699687db3c9d15b7db7748a131560169bc",
+      "H3->A3": "bddc5fe056872749284859745baca9ac340803f9b8cbc579896649ce68bb5bc0",
+      "H3->A4": "c72492d0812ae9456ef65618e67c828a7ab4f1fca752ee023132a7444fb4c460",
+      "H3->A5": "de8f0c9cca4ec46f6af9e73d34b67fe09a076cfde4f8f50786de43693b699b89",
+      "H4->H3": "55e468ccc92dd01b1bc21774bdceca676fab2f88b8665d5eaf06c29bc3a07aee",
+      "H4->A3": "0bf63dc36636300e3d26bc041ffacbb12a1b8118d650487b87da14289e8ff962",
+      "H5->H3": "d317289c777df0ad2c959d141980d4535a907408e25e8676c1e75beed4572ae6",
+      "H5->A3": "72440ec062a0be35ccf326ecd1aaa370a9c1bf313789b1087b2979d7c7b1c207",
+      "A0->H3": "73afaa312a31b7b01604be8d69bc80dba769dd45e5afe4c566e2224fa3537d79",
+      "A0->A3": "14b462c323afeec93b07ea944134c2fdb47fd0086cb41d33f2ef1840185ddd35",
+      "A1->H3": "857fb758de67cb2ef63c6fd5a0a9d3f1350b999fc37844528a490481a7c665ee",
+      "A1->A3": "60e51b3d56c639b26dd8db4ffaa16e68b270a2b21a2c38d8b29c90affb193d41",
+      "A2->H3": "ca07b3e6ec26623c164d961d3c626610fc3a864303c443fef0428d5b289f7988",
+      "A2->A3": "645165d18d776e0bba71844cce38ab59be61d0d98923d1ef302eff08318ee1aa",
+      "A3->H0": "88e7315f231b51649832a51c68bab1968284e789341af4aabf97c2a762233195",
+      "A3->H1": "307a76094887a69826d73d2d10b32ea4a376725db9e156ba2aad85c0e7043f35",
+      "A3->H2": "ed305d083a11e6e7c4d89dea2369b85f19557cf90787fde7993da88ff62049d4",
+      "A3->H3": "6179818d24232cd2339b3f8b95a10468cbb3e723c082233cdd0afb276fae5b37",
+      "A3->H4": "4c8b11a6aabf3d83c7a64d4462a0a66259f1ea7457d24c08bc6083904e1aae88",
+      "A3->H5": "49e0af562764159b7f55c8d93977dd0b6c0c7c61679c752bce766f1bb2655bac",
+      "A3->A0": "7652b0ccd77ebe6cd950507b9a31e0f42dfbcbf4421bca5a5278545a5b80a70b",
+      "A3->A1": "1d18afe8ba4d69eb8793c91f2384c2a5bf5603bceafc8901af05b9b84554bdfb",
+      "A3->A2": "3567e29ed72a89864547334597394e9131e281294c914a54a98cd7a69e8338a9",
+      "A3->A3": "10dfa1b807143c6b6a1269a5c37432aa023060f4a80c6bee17fe452e9e5977fd",
+      "A3->A4": "294966756eec08ece77cd327fec31b38456021dafb66ec38a226ac4b3f993afc",
+      "A3->A5": "3bd769da52dcaa2dad0e9c61201c5de6b127e3dde3c6944dda2b9733bfc47f05",
+      "A4->H3": "b8ed500560497d5bf8416599ca1e0c05929ecb5befb9c1023b7ab40067343ad9",
+      "A4->A3": "9da0eaab3e73c851700de709fa9b9c513a79fcdf6ce531d802886cbef52b6692",
+      "A5->H3": "56b8f9c053af6894bc0075b2b1d78450f81a790900061866f4e98da10e9ddc02",
+      "A5->A3": "a79913849e5ff13e75a0fa9eaf05eeb67c8baad71b0ff0a980fdcb93ccf3546f",
+      "rel.factory.q0.S": "0bf9395fa45d0eeb73b2902bc60355085cf1cafd0cab84b1b36dc887c9a9b476",
+      "rel.factory.q1.S": "d4127b42f26beaf5eaddc4a26c3a77db5a0cd503d4a6207b2dd2878857a69fb7",
+      "rel.factory.q2.S": "b920d685f5356b75a6ff712c4763019775be7eb0ccad736da5cae9bb82de3b30",
+      "rel.factory.q3.S": "1760315741c4e4758618e8f58a64df2d8bd3a9e2986dceaf0e8c387f2b175df4",
+      "rel.factory.q4.S": "6f2cae60f79cca69dc89d28e599ff0babbc4eb0a13065f249fc933e40859c79e",
+      "rel.factory.q5.S": "14e065f0889b7d0c297bd0c635350d9dd0beeb300d85820eb82e1b0b53ad91f0",
+      "rel.factory.q4.S0": "b9f82d0b886c47a83cb336280fe0099ae3a8c29e759659b0f8bb1727f7959d26",
+      "rel.factory.q3.S1": "68bce56da99402ca6f3426c3e8ca4b793096ebf86bed1bd665f15b924e711128",
+      "rel.factory.q2.S2": "4ae090c8769c2c2bf1404a7647d05b83e3920e9675f4de4c01bc040659a1dddf",
+      "rel.factory.q3.S4": "27b368c83e557f949c7fbff63f80df9538383bbaf37d1ab2dddaacbd68b8ac2b",
+      "rel.factory.q3.S5": "074473364d7c42f4f10d5bfe371b47e98004c5dc7eca9d1598ae122ee755e63d"
+    },
+    "change_ref": "codex:thread:01a07608-d2ec-7b10-9713-74c445adf8a5",
+    "reviewed_at": "2026-09-06T14:37:53.892551+00:00",
+    "reviewed_sections": []
+  }
+}</script>
+<script type="application/json" id="ground-resources">{
+  "factory:matrix:md": {
+    "title": "Factory capability and relation matrix",
+    "href": "capability-matrix.md"
+  },
+  "factory:matrix:csv": {
+    "title": "Lossless matrix CSV",
+    "href": "capability-matrix.csv"
+  },
+  "factory:doc:overview": {
+    "title": "Factory whole account",
+    "href": "#whole"
+  },
+  "factory:seed:q0": {
+    "title": "Keep the reason for making software alive",
+    "href": "#whole/why"
+  },
+  "source:README.md": {
+    "title": "README.md",
+    "href": "../../README.md"
+  },
+  "factory:seed:q1": {
+    "title": "A durable software development system",
+    "href": "#whole/what"
+  },
+  "factory:seed:q2": {
+    "title": "Commission, develop, encounter and return",
+    "href": "#whole/how"
+  },
+  "factory:seed:q3": {
+    "title": "People author; situated Agents carry development",
+    "href": "#whole/whereby"
+  },
+  "factory:seed:q4": {
+    "title": "Across Projects, sessions and changing Worlds",
+    "href": "#whole/context"
+  },
+  "factory:seed:q5": {
+    "title": "More room for authorship, better returned understanding",
+    "href": "#whole/purpose"
+  },
+  "factory:doc:need": {
+    "title": "Software that preserves what was worth making",
+    "href": "#q0/need"
+  },
+  "source:docs/canon/QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md": {
+    "title": "QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md",
+    "href": "../../docs/canon/QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md"
+  },
+  "factory:doc:authorship": {
+    "title": "Make human attention consequential",
+    "href": "#q0/authorship"
+  },
+  "source:docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md": {
+    "title": "01-SEMANTIC-CORE-RUN-SPINE.md",
+    "href": "../../docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md"
+  },
+  "factory:doc:ground": {
+    "title": "Recover the target before determining its future",
+    "href": "#q0/ground"
+  },
+  "source:docs/canon/STRUCTURAL-SOURCE-FIDELITY.md": {
+    "title": "STRUCTURAL-SOURCE-FIDELITY.md",
+    "href": "../../docs/canon/STRUCTURAL-SOURCE-FIDELITY.md"
+  },
+  "source:docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md": {
+    "title": "PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md",
+    "href": "../../docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md"
+  },
+  "factory:doc:product": {
+    "title": "A development system with a native command surface",
+    "href": "#q1/product"
+  },
+  "source:factory/src/cli.rs": {
+    "title": "cli.rs",
+    "href": "../../factory/src/cli.rs"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/181.comments.json": {
+    "title": "181.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/181.comments.json"
+  },
+  "factory:doc:continuity": {
+    "title": "Project, Journey and Run hold different durations",
+    "href": "#q1/continuity"
+  },
+  "source:factory/src/journey.rs": {
+    "title": "journey.rs",
+    "href": "../../factory/src/journey.rs"
+  },
+  "source:factory/src/core/run/model.rs": {
+    "title": "model.rs",
+    "href": "../../factory/src/core/run/model.rs"
+  },
+  "factory:doc:epistemics": {
+    "title": "An encounterable result with an inspectable reason",
+    "href": "#q1/epistemics"
+  },
+  "source:factory/src/build.rs": {
+    "title": "build.rs",
+    "href": "../../factory/src/build.rs"
+  },
+  "factory:doc:commission": {
+    "title": "Commission an outcome and leave routine work to Agents",
+    "href": "#q2/commission"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/176.json": {
+    "title": "176.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/176.json"
+  },
+  "source:factory/src/journey_commission.rs": {
+    "title": "journey_commission.rs",
+    "href": "../../factory/src/journey_commission.rs"
+  },
+  "factory:doc:implement": {
+    "title": "Carry a bounded intention into a developed difference",
+    "href": "#q2/implement"
+  },
+  "source:factory/src/project_development.rs": {
+    "title": "project_development.rs",
+    "href": "../../factory/src/project_development.rs"
+  },
+  "source:factory/src/git_development.rs": {
+    "title": "git_development.rs",
+    "href": "../../factory/src/git_development.rs"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/174.comments.json": {
+    "title": "174.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/174.comments.json"
+  },
+  "factory:doc:encounter": {
+    "title": "Move from the developmental question to exact evidence",
+    "href": "#q2/encounter"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/143.json": {
+    "title": "143.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/143.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/143.comments.json": {
+    "title": "143.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/143.comments.json"
+  },
+  "source:factory/src/build_cognitive.rs": {
+    "title": "build_cognitive.rs",
+    "href": "../../factory/src/build_cognitive.rs"
+  },
+  "factory:doc:return": {
+    "title": "Recognise what belongs and preserve what was learned",
+    "href": "#q2/return"
+  },
+  "factory:doc:owners": {
+    "title": "Compose the suite through native responsibilities",
+    "href": "#q3/owners"
+  },
+  "source:../O-I/docs/HUMAN-AGENT-COVENANT.md": {
+    "title": "HUMAN-AGENT-COVENANT.md",
+    "href": "../../../O-I/docs/HUMAN-AGENT-COVENANT.md"
+  },
+  "factory:doc:contracts": {
+    "title": "Keep identity, revision and authority intact",
+    "href": "#q3/contracts"
+  },
+  "source:factory/src/action_projection.rs": {
+    "title": "action_projection.rs",
+    "href": "../../factory/src/action_projection.rs"
+  },
+  "source:factory/src/core/run/topology.rs": {
+    "title": "topology.rs",
+    "href": "../../factory/src/core/run/topology.rs"
+  },
+  "source:factory/tests/run_map.rs": {
+    "title": "run_map.rs",
+    "href": "../../factory/tests/run_map.rs"
+  },
+  "factory:doc:thought": {
+    "title": "Retain attributable cognitive work across sessions",
+    "href": "#q3/thought"
+  },
+  "source:factory/src/core/run/thought.rs": {
+    "title": "thought.rs",
+    "href": "../../factory/src/core/run/thought.rs"
+  },
+  "source:factory/tests/run_thought.rs": {
+    "title": "run_thought.rs",
+    "href": "../../factory/tests/run_thought.rs"
+  },
+  "factory:doc:reentry": {
+    "title": "Return after an absence without reconstructing every chat",
+    "href": "#q4/reentry"
+  },
+  "source:factory/src/project_development_store.rs": {
+    "title": "project_development_store.rs",
+    "href": "../../factory/src/project_development_store.rs"
+  },
+  "factory:doc:routines": {
+    "title": "Repeated work needs a developmental reason and proof",
+    "href": "#q4/routines"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/176.comments.json": {
+    "title": "176.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/176.comments.json"
+  },
+  "source:factory/src/journey_praxis.rs": {
+    "title": "journey_praxis.rs",
+    "href": "../../factory/src/journey_praxis.rs"
+  },
+  "factory:doc:limits": {
+    "title": "Current evidence boundaries stay attached to the claim",
+    "href": "#q4/limits"
+  },
+  "factory:doc:outcome": {
+    "title": "Judge the product by meaningful development",
+    "href": "#q5/outcome"
+  },
+  "source:../O-I/docs/positions/FOUNDING-POSITIONS.md": {
+    "title": "FOUNDING-POSITIONS.md",
+    "href": "../../../O-I/docs/positions/FOUNDING-POSITIONS.md"
+  },
+  "factory:doc:praxis": {
+    "title": "Use this account as ground for the next act",
+    "href": "#q5/praxis"
+  },
+  "source:../Central/skills/docs-methodology/SKILL.md": {
+    "title": "SKILL.md",
+    "href": "../../../Central/skills/docs-methodology/SKILL.md"
+  },
+  "source:skills/factory-development/SKILL.md": {
+    "title": "SKILL.md",
+    "href": "../../skills/factory-development/SKILL.md"
+  },
+  "factory:doc:review": {
+    "title": "A candidate consolidation ready for meaning review",
+    "href": "#q5/review"
+  },
+  "source:../Central/docs/PROJECT-CONTEXT-PROTOCOL.md": {
+    "title": "PROJECT-CONTEXT-PROTOCOL.md",
+    "href": "../../../Central/docs/PROJECT-CONTEXT-PROTOCOL.md"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/181.json": {
+    "title": "181.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/181.json"
+  },
+  "source:factory/tests/native_cli.rs": {
+    "title": "native_cli.rs",
+    "href": "../../factory/tests/native_cli.rs"
+  },
+  "cap.factory.native-cli": {
+    "title": "Native command surface",
+    "href": "capability-matrix.md#cap-factory-native-cli"
+  },
+  "source:factory/src/build_provider.rs": {
+    "title": "build_provider.rs",
+    "href": "../../factory/src/build_provider.rs"
+  },
+  "source:factory/tests/build_file_provider.rs": {
+    "title": "build_file_provider.rs",
+    "href": "../../factory/tests/build_file_provider.rs"
+  },
+  "cap.factory.build-reading": {
+    "title": "Build reading",
+    "href": "capability-matrix.md#cap-factory-build-reading"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/168.json": {
+    "title": "168.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/168.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/168.comments.json": {
+    "title": "168.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/168.comments.json"
+  },
+  "cap.factory.journey-continuity": {
+    "title": "Journey continuity",
+    "href": "capability-matrix.md#cap-factory-journey-continuity"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/4.json": {
+    "title": "4.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/4.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/4.comments.json": {
+    "title": "4.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/4.comments.json"
+  },
+  "cap.factory.run-map": {
+    "title": "Run and canonical map",
+    "href": "capability-matrix.md#cap-factory-run-map"
+  },
+  "source:factory/tests/build_live.rs": {
+    "title": "build_live.rs",
+    "href": "../../factory/tests/build_live.rs"
+  },
+  "cap.factory.build-evidence": {
+    "title": "Candidate and evidence reading",
+    "href": "capability-matrix.md#cap-factory-build-evidence"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/156.json": {
+    "title": "156.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/156.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/156.comments.json": {
+    "title": "156.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/156.comments.json"
+  },
+  "source:factory/src/structural_ground.rs": {
+    "title": "structural_ground.rs",
+    "href": "../../factory/src/structural_ground.rs"
+  },
+  "source:factory/tests/source_ground.rs": {
+    "title": "source_ground.rs",
+    "href": "../../factory/tests/source_ground.rs"
+  },
+  "source:factory/tests/epi_holographic_structural_ground.rs": {
+    "title": "epi_holographic_structural_ground.rs",
+    "href": "../../factory/tests/epi_holographic_structural_ground.rs"
+  },
+  "cap.factory.structural-ground": {
+    "title": "Structural-ground inspection",
+    "href": "capability-matrix.md#cap-factory-structural-ground"
+  },
+  "cap.factory.journey-commission": {
+    "title": "Commission and handoff",
+    "href": "capability-matrix.md#cap-factory-journey-commission"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/174.json": {
+    "title": "174.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/174.json"
+  },
+  "source:factory/tests/project_context_intent.rs": {
+    "title": "project_context_intent.rs",
+    "href": "../../factory/tests/project_context_intent.rs"
+  },
+  "cap.factory.bounded-intent": {
+    "title": "Bounded intent condition",
+    "href": "capability-matrix.md#cap-factory-bounded-intent"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/170.json": {
+    "title": "170.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/170.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/170.comments.json": {
+    "title": "170.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/170.comments.json"
+  },
+  "cap.factory.git-development": {
+    "title": "Git development World",
+    "href": "capability-matrix.md#cap-factory-git-development"
+  },
+  "cap.factory.intent-return": {
+    "title": "Evidence-bearing intent return",
+    "href": "capability-matrix.md#cap-factory-intent-return"
+  },
+  "cap.factory.request-evidence": {
+    "title": "Request more evidence",
+    "href": "capability-matrix.md#cap-factory-request-evidence"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/163.json": {
+    "title": "163.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/163.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/163.comments.json": {
+    "title": "163.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/163.comments.json"
+  },
+  "source:factory/tests/build_cognitive.rs": {
+    "title": "build_cognitive.rs",
+    "href": "../../factory/tests/build_cognitive.rs"
+  },
+  "cap.factory.cognitive-reading": {
+    "title": "Cognitive inspection",
+    "href": "capability-matrix.md#cap-factory-cognitive-reading"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/155.json": {
+    "title": "155.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/155.json"
+  },
+  "source:../github-recovery-mirror/mirror/agent-system-design/issues/155.comments.json": {
+    "title": "155.comments.json",
+    "href": "../../../github-recovery-mirror/mirror/agent-system-design/issues/155.comments.json"
+  },
+  "source:factory/tests/project_development.rs": {
+    "title": "project_development.rs",
+    "href": "../../factory/tests/project_development.rs"
+  },
+  "cap.factory.owner-return": {
+    "title": "Owner-directed return",
+    "href": "capability-matrix.md#cap-factory-owner-return"
+  },
+  "source:factory/tests/project_development_persistence.rs": {
+    "title": "project_development_persistence.rs",
+    "href": "../../factory/tests/project_development_persistence.rs"
+  },
+  "cap.factory.development-persistence": {
+    "title": "Developmental ledger persistence",
+    "href": "capability-matrix.md#cap-factory-development-persistence"
+  },
+  "cap.factory.praxis-condition": {
+    "title": "Resolved praxis condition",
+    "href": "capability-matrix.md#cap-factory-praxis-condition"
+  },
+  "source:factory/tests/action_projection.rs": {
+    "title": "action_projection.rs",
+    "href": "../../factory/tests/action_projection.rs"
+  },
+  "cap.factory.action-projection": {
+    "title": "Native Action projection",
+    "href": "capability-matrix.md#cap-factory-action-projection"
+  },
+  "source:factory/tests/build_cognitive_write.rs": {
+    "title": "build_cognitive_write.rs",
+    "href": "../../factory/tests/build_cognitive_write.rs"
+  },
+  "cap.factory.run-thought": {
+    "title": "Source-backed thought retention",
+    "href": "capability-matrix.md#cap-factory-run-thought"
+  },
+  "cap.factory.praxis-fitness": {
+    "title": "Praxis fitness correlation",
+    "href": "capability-matrix.md#cap-factory-praxis-fitness"
+  }
+}</script>
+<div class="app">
+  <header class="topbar">
+    <button class="icon-btn" id="leftToggle" aria-label="Toggle contents" aria-controls="leftRail" aria-expanded="true">☰</button>
+    <div class="brand"><strong>Software Factory</strong><span>Product ground · review draft</span></div>
+    <div class="route-chip" id="routeChip"><code>#0</code><span>Ground</span></div>
+    <button class="icon-btn" id="themeToggle" aria-label="Switch theme">◐</button>
+    <button class="icon-btn" id="rightToggle" aria-label="Toggle context" aria-controls="rightRail" aria-expanded="false">✎</button>
+  </header>
+  <nav class="left-rail" id="leftRail" aria-label="Account contents"><div class="rail-label">Account</div><div class="surface-nav" id="surfaceNav"></div></nav>
+  <main class="main" id="mainContent">
+<article class="surface active" data-surface="whole" data-title="Development that stays answerable to purpose" data-gloss="Six-question overview" data-whole-anchor="0/1"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">0/1</span><span class="hero-label">Six-question overview</span></div><h1>Development that stays answerable to purpose</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="whole-why" data-node=".0" data-route="why" data-nav="Keep the reason for making software alive" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory why development ground" data-resource="factory:seed:q0"><header class="node-head"><div class="node-eyebrow">#0 · <span data-seed-question="factory:seed:q0">Why?</span></div><h2>Keep the reason for making software alive</h2></header><div class="prose"><div data-seed-content="factory:seed:q0"><p>Agentic development can produce working changes while losing the purpose and experience that made them worth asking for. Factory exists to carry human intention through development and returned reality, freeing the person from repeated orientation and mechanical supervision while preserving consequential judgment.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section><section class="ql-node" id="whole-what" data-node=".1" data-route="what" data-nav="A durable software development system" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory what development ground" data-resource="factory:seed:q1"><header class="node-head"><div class="node-eyebrow">#1 · <span data-seed-question="factory:seed:q1">What?</span></div><h2>A durable software development system</h2></header><div class="prose"><div data-seed-content="factory:seed:q1"><p>Software Factory is a native development system with a Rust semantic core, a factory command surface and a Build presentation. It relates Projects, continuing Journeys, bounded Runs, Claims, Evidence, Decisions and Candidates so an intended transformation remains inspectable across sessions, tools and material environments.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section><section class="ql-node" id="whole-how" data-node=".2" data-route="how" data-nav="Commission, develop, encounter and return" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory how development ground" data-resource="factory:seed:q2"><header class="node-head"><div class="node-eyebrow">#2 · <span data-seed-question="factory:seed:q2">How?</span></div><h2>Commission, develop, encounter and return</h2></header><div class="prose"><div data-seed-content="factory:seed:q2"><p>Start from the Project’s recognised purpose and a concrete intended difference. Recover the required source and conditions, carry out bounded development, make the resulting Candidate and Evidence encounterable, and return through Recognition or revision. Keep the exact intent, context, execution and evidence relations throughout.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section><section class="ql-node" id="whole-whereby" data-node=".3" data-route="whereby" data-nav="People author; situated Agents carry development" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory whereby development ground" data-resource="factory:seed:q3"><header class="node-head"><div class="node-eyebrow">#3 · <span data-seed-question="factory:seed:q3">Who / Whereby?</span></div><h2>People author; situated Agents carry development</h2></header><div class="prose"><div data-seed-content="factory:seed:q3"><p>The person or authorised governing locus determines consequential direction and recognises outcomes. Agents and AgentSets carry Journeys through bounded Runs. Factory supplies developmental continuity; Actuation supplies authority, AIKit the operative context and body, Workcell material execution, and Central durable source ground.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section><section class="ql-node" id="whole-context" data-node=".4" data-route="context" data-nav="Across Projects, sessions and changing Worlds" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory context development ground" data-resource="factory:seed:q4"><header class="node-head"><div class="node-eyebrow">#4 · <span data-seed-question="factory:seed:q4">Where / When?</span></div><h2>Across Projects, sessions and changing Worlds</h2></header><div class="prose"><div data-seed-content="factory:seed:q4"><p>Factory operates where software development needs continuity beyond a terminal or conversation. A Journey can span Runs and absences; a Run keeps its identity across execution changes. Native CLI, Build and external projections read the same developmental subjects. Ordinary projects remain valid without a special ontology or QL runtime.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section><section class="ql-node" id="whole-purpose" data-node=".5" data-route="purpose" data-nav="More room for authorship, better returned understanding" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory purpose development ground" data-resource="factory:seed:q5"><header class="node-head"><div class="node-eyebrow">#5 · <span data-seed-question="factory:seed:q5">Why-For?</span></div><h2>More room for authorship, better returned understanding</h2></header><div class="prose"><div data-seed-content="factory:seed:q5"><p>Success means a person can commission meaningful work, leave routine development to capable collaborators, and return to a clear result or consequential decision. The Project retains why its reality changed and what it learned. Evidence can improve implementation, methods or intention through the owner responsible for each.</p></div></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a></footer></section></div></article>
+<article class="surface" data-surface="q0" data-title="Keep the reason for making software alive" data-gloss="Why?" data-seed-ref="factory:seed:q0" data-seed-sha256="c5fc7b2673bf4788d30cf51e972372ca6e078910483cf73fa755b81a3f2f12b2"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#0</span><span class="hero-label">Why?</span></div><h1>Keep the reason for making software alive</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q0-need" data-node=".0" data-route="need" data-nav="Software that preserves what was worth making" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory need development ground" data-resource="factory:doc:need"><header class="node-head"><div class="node-eyebrow">vision</div><h2>Software that preserves what was worth making</h2></header><div class="prose"><p>A request often names a feature because the person wants a different experience. An Agent can satisfy the vocabulary of that request while missing the experience. Factory starts from this gap: development should stay answerable to why the work exists as it becomes design, code and a result somebody can encounter.</p><p>The intended human experience is to commission a useful change and step away from routine mechanics. Source discovery, environment selection, decomposition, implementation and verification should not repeatedly demand the person’s attention. The person remains available where taste, purpose or a choice between materially different futures matters.</p><p>This is a product ambition, not a claim that the current checkout supplies every part of that experience. The account develops [[factory:seed:q0|the Why seed]] from the native README and original experienced ontology. Those sources establish the destination; native code and evidence establish which portions have become executable.</p></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a><a data-source href="../../docs/canon/QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md">QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md</a></footer></section><section class="ql-node" id="q0-authorship" data-node=".1" data-route="authorship" data-nav="Make human attention consequential" data-context="design-commitment · agent-inference · draft-for-review" data-vessel="design-commitment" data-standing="agent-inference" data-tags="factory authorship development ground" data-resource="factory:doc:authorship"><header class="node-head"><div class="node-eyebrow">design-commitment</div><h2>Make human attention consequential</h2></header><div class="prose"><p>Commission should recover what the Project and initiating request already determine. If the destination is clear, the Agent proceeds with authorised engineering work. If several possible outcomes change the Project’s purpose or intended experience, the system presents that difference for human determination. It does not ask the person to repeat existing ground.</p><p>At the other aperture, Recognition concerns the realised difference. A person should encounter a Candidate, understand its consequential claims and inspect evidence that supports or challenges them. Recognition may accept it, return it, select another possibility, revise the design or revise the original intention.</p><p>The design therefore gives attention a reason and a subject. A HumanRequest records a semantic Decision need across channels. Its presentation should explain what must be decided, why the Agent cannot derive that decision from existing authority, and how the available evidence bears on the alternatives.</p></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a><a data-source href="../../docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md">01-SEMANTIC-CORE-RUN-SPINE.md</a></footer></section><section class="ql-node" id="q0-ground" data-node=".2" data-route="ground" data-nav="Recover the target before determining its future" data-context="protocol-method · agent-inference · draft-for-review" data-vessel="protocol-method" data-standing="agent-inference" data-tags="factory ground development ground" data-resource="factory:doc:ground"><header class="node-head"><div class="node-eyebrow">protocol-method</div><h2>Recover the target before determining its future</h2></header><div class="prose"><p>For a new piece of work, the Agent first locates the Project’s purpose, relevant design commitments, present frontier and source revisions. It reads the smallest sufficient set, retaining addresses to the larger field. Existing knowledge may disclose these sources, but generated interpretation remains distinguishable from the source it interprets.</p><p>When the target already has an authored relational structure, development must preserve its identities and constitutive relations. A feature-local decomposition cannot silently become a competing ontology. The Agent identifies the exact root of the requested change, current bindings, absent positions and the acceptance needed to prove fidelity.</p><p>The same practice remains proportionate for an ordinary project. It need not invent coordinates, special headers or a ProjectCentral instance. Structural fidelity is a conditional obligation to an existing source, not a demand that every repository acquire another framework. [[cap.factory.structural-ground|Structural-ground inspection]] carries this bounded capability.</p></div><footer class="unit-sources"><a data-source href="../../docs/canon/STRUCTURAL-SOURCE-FIDELITY.md">STRUCTURAL-SOURCE-FIDELITY.md</a><a data-source href="../../docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md">PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md</a></footer></section></div></article>
+<article class="surface" data-surface="q1" data-title="A durable software development system" data-gloss="What?" data-seed-ref="factory:seed:q1" data-seed-sha256="2adb57515414fc8f670ae6cf8b9df2f3abeadc4b8a49c3af36a6236679605e88"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#1</span><span class="hero-label">What?</span></div><h1>A durable software development system</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q1-product" data-node=".0" data-route="product" data-nav="A development system with a native command surface" data-context="surface-discovery · agent-inference · draft-for-review" data-vessel="surface-discovery" data-standing="agent-inference" data-tags="factory product development ground" data-resource="factory:doc:product"><header class="node-head"><div class="node-eyebrow">surface-discovery</div><h2>A development system with a native command surface</h2></header><div class="prose"><p>At its most concrete, Factory provides a Rust-owned developmental model, a maintained factory executable and a Build view over native state. The command surface reads and refreshes Build state, lists the Actions available for a selected Project and Run, and invokes an Action through the canonical provider. Structured output lets another Surface use the same result.</p><p>This gives a developer or Agent a practical entry: identify the stored state and canonical Project/Run references, inspect the snapshot, then choose from the Actions it actually exposes. An invocation returns a native receipt with caller lineage and resulting revision. Reopening the provider supplies the current reading of durable state.</p><p>The current command surface is intentionally narrower than the complete product vision. The accepted CLI ticket records no separate stable persisted Journey/Commission application entry during that cut. The account distinguishes those library/domain capabilities from commands a user can invoke today. [[cap.factory.native-cli|Native CLI]] and [[cap.factory.build-reading|Build reading]] describe the respective traces.</p></div><footer class="unit-sources"><a data-source href="../../factory/src/cli.rs">cli.rs</a><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/181.comments.json">181.comments.json</a></footer></section><section class="ql-node" id="q1-continuity" data-node=".1" data-route="continuity" data-nav="Project, Journey and Run hold different durations" data-context="architecture-contract · agent-inference · draft-for-review" data-vessel="architecture-contract" data-standing="agent-inference" data-tags="factory continuity development ground" data-resource="factory:doc:continuity"><header class="node-head"><div class="node-eyebrow">architecture-contract</div><h2>Project, Journey and Run hold different durations</h2></header><div class="prose"><p>A Project is the enduring whole in which development has meaning. A Journey holds a continuing intended difference that can require several bounded transformations. A Run holds one such transformation. The Journey can retain participants, its frontier, related activity and returned results while no AgentSession is alive.</p><p>For example, a continuing effort to improve an application may need an exploratory Run, a Run that implements a chosen experience and a later correction. Their evidence remains attributable to those Runs. Journey continuity allows a collaborator to recover the purpose connecting them without treating all activity as one indefinitely growing execution.</p><p>One Run has one canonical RunMap derived from its identity. The map makes developmental relations inspectable; a host, projection or session replacement does not mint another Run. The document’s six composition layers are separate from the Run’s Ground → Intent → Design → Development → Application → Recursion traversal. [[cap.factory.journey-continuity|Journey continuity]] and [[cap.factory.run-map|Run topology]] retain these distinctions.</p></div><footer class="unit-sources"><a data-source href="../../factory/src/journey.rs">journey.rs</a><a data-source href="../../factory/src/core/run/model.rs">model.rs</a><a data-source href="../../docs/canon/QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md">QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md</a></footer></section><section class="ql-node" id="q1-epistemics" data-node=".2" data-route="epistemics" data-nav="An encounterable result with an inspectable reason" data-context="architecture-contract · agent-inference · draft-for-review" data-vessel="architecture-contract" data-standing="agent-inference" data-tags="factory epistemics development ground" data-resource="factory:doc:epistemics"><header class="node-head"><div class="node-eyebrow">architecture-contract</div><h2>An encounterable result with an inspectable reason</h2></header><div class="prose"><p>A Claim makes an assertion or interpretation addressable. Evidence bears upon it: it may support, challenge or qualify the claim. A Candidate gathers an experienceable possible result for comparison and Recognition. A Decision records a determination with its relevant authority and consequences.</p><p>These distinctions let a person ask why a proposed change belongs to the Project. The answer can lead from the Candidate to its claims, from those claims to evidence, and from evidence to the execution or source that produced it. Passing tests, merge state and the producing model’s confidence each carry information; none alone answers the question of Recognition.</p><p>When several Candidates reveal a useful synthesis, the synthesis becomes another or revised Candidate with ordinary evidence and decision treatment. It should not bypass review because its ingredients were previously considered. [[cap.factory.build-evidence|Candidate and evidence reading]] is the inspected presentation capability; complete experiential acceptance remains wider than that read model.</p></div><footer class="unit-sources"><a data-source href="../../docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md">01-SEMANTIC-CORE-RUN-SPINE.md</a><a data-source href="../../factory/src/build.rs">build.rs</a></footer></section></div></article>
+<article class="surface" data-surface="q2" data-title="Commission, develop, encounter and return" data-gloss="How?" data-seed-ref="factory:seed:q2" data-seed-sha256="57f98a054ee00a34b1404d916c651f9a6fb9c1de4b9e323801d58bd3c6377491"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#2</span><span class="hero-label">How?</span></div><h1>Commission, develop, encounter and return</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q2-commission" data-node=".0" data-route="commission" data-nav="Commission an outcome and leave routine work to Agents" data-context="protocol-method · agent-inference · draft-for-review" data-vessel="protocol-method" data-standing="agent-inference" data-tags="factory commission development ground" data-resource="factory:doc:commission"><header class="node-head"><div class="node-eyebrow">protocol-method</div><h2>Commission an outcome and leave routine work to Agents</h2></header><div class="prose"><p>The person opens the Project and states the intended difference. The Agent recovers existing ground and explains the destination it understands, including any uncertainty that would materially change the result. Where the direction is already determined, the work proceeds. A genuine authorial ambiguity returns as a concrete choice with its evidence.</p><p>For continuing work, the Journey records the commission, accountable participant and closure conditions. A named Agent or AgentSet can carry the responsibility across bounded Runs. Each execution still receives its actual available Agency, context and material conditions through the native owners; membership of a Journey supplies no invocation authority.</p><p>While the person is absent, the Agent advances the relevant frontier and retains findings. When it needs Recognition, the visible request is attached to the developmental subject and explains the difference requiring attention. The intended result is continuity without constant supervision. [[cap.factory.journey-commission|Commission and handoff]] records the native developmental relation.</p></div><footer class="unit-sources"><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/176.json">176.json</a><a data-source href="../../factory/src/journey_commission.rs">journey_commission.rs</a></footer></section><section class="ql-node" id="q2-implement" data-node=".1" data-route="implement" data-nav="Carry a bounded intention into a developed difference" data-context="protocol-method · agent-inference · draft-for-review" data-vessel="protocol-method" data-standing="agent-inference" data-tags="factory implement development ground" data-resource="factory:doc:implement"><header class="node-head"><div class="node-eyebrow">protocol-method</div><h2>Carry a bounded intention into a developed difference</h2></header><div class="prose"><p>The entering Agent reads the relevant intent source, success conditions and exact AIKit ContextResolution reference. It records the operative praxis condition when it materially bears on the work. This preserves which method, body and source informed the Run without making Factory a second context resolver.</p><p>The Agent then carries out the transformation using the owner-native operations. A Git development World can pin the exact base and correlate an isolated worktree with the Run and Candidate. Returning a difference retains that basis so later review can distinguish changes in the work from changes in the source it started from.</p><p>When evaluating the result, the Agent answers the stated success criteria with evidence. Factory’s inspected Intent return logic rejects a different intent source or context resolution, unknown or duplicate criteria, and conclusive criteria without evidence. Missing coverage remains indeterminate. [[cap.factory.bounded-intent|Bounded intent]], [[cap.factory.git-development|Git development]] and [[cap.factory.intent-return|Evidence-bearing return]] connect this journey to concrete operations.</p></div><footer class="unit-sources"><a data-source href="../../factory/src/project_development.rs">project_development.rs</a><a data-source href="../../factory/src/git_development.rs">git_development.rs</a><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/174.comments.json">174.comments.json</a></footer></section><section class="ql-node" id="q2-encounter" data-node=".2" data-route="encounter" data-nav="Move from the developmental question to exact evidence" data-context="design-commitment · agent-inference · draft-for-review" data-vessel="design-commitment" data-standing="agent-inference" data-tags="factory encounter development ground" data-resource="factory:doc:encounter"><header class="node-head"><div class="node-eyebrow">design-commitment</div><h2>Move from the developmental question to exact evidence</h2></header><div class="prose"><p>Build should open at the level of the work: current frontier, consequential decisions, Candidates and claims. A person seeking detail can move into the live working relations and then into the trajectory that carried an execution. The presentation keeps these depths connected while preserving their different subjects.</p><p>The RunMap explains developmental meaning. The live view relates Agencies, execution condition, SessionSpace and material bindings. The trajectory supplies phases, tool calls, results, errors and native trace references. The SSSF-derived optic contributes the last depth through retained upstream source provenance; it does not redefine Factory’s semantic model.</p><p>A thin producer remains visibly thin. Missing detail should not be fabricated to resemble a richer harness. The person can request more evidence through an available native Action. That request should create the canonical semantic result and appear in the next provider revision, rather than becoming an untracked UI message. [[cap.factory.request-evidence|Request more evidence]] and [[cap.factory.cognitive-reading|Cognitive reading]] identify the inspected paths.</p></div><footer class="unit-sources"><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/143.json">143.json</a><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/143.comments.json">143.comments.json</a><a data-source href="../../factory/src/build_cognitive.rs">build_cognitive.rs</a></footer></section><section class="ql-node" id="q2-return" data-node=".3" data-route="return" data-nav="Recognise what belongs and preserve what was learned" data-context="protocol-method · agent-inference · draft-for-review" data-vessel="protocol-method" data-standing="agent-inference" data-tags="factory return development ground" data-resource="factory:doc:return"><header class="node-head"><div class="node-eyebrow">protocol-method</div><h2>Recognise what belongs and preserve what was learned</h2></header><div class="prose"><p>The person encounters the developed Candidate and the material claims about it. They may recognise the result, return it for further work, prefer another Candidate or determine that the findings change the intended direction. The accepted determination stays attached to the relevant subject, source basis and evidence.</p><p>Factory returns the pressure to the layer actually implicated. An implementation failure may require code work. A mistaken assumption may require a design revision. A praxis problem may call for a proposed Method improvement. A change to human intent requires that source owner’s Recognition; a successful Run does not silently author the person’s position.</p><p>A later collaborator should recover this relation through the Project’s history. They need to see what was asked, what reality returned and why the present state was recognised. [[cap.factory.owner-return|Owner-directed return]] and [[cap.factory.development-persistence|Developmental persistence]] provide bounded native support for that continuity.</p></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a><a data-source href="../../docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md">PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md</a></footer></section></div></article>
+<article class="surface" data-surface="q3" data-title="People author; situated Agents carry development" data-gloss="Who / Whereby?" data-seed-ref="factory:seed:q3" data-seed-sha256="52ca82a7c392196d52e9edf26966ba7751cd894be01bc5a8f13d58793eba4ac2"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#3</span><span class="hero-label">Who / Whereby?</span></div><h1>People author; situated Agents carry development</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q3-owners" data-node=".0" data-route="owners" data-nav="Compose the suite through native responsibilities" data-context="architecture-contract · agent-inference · draft-for-review" data-vessel="architecture-contract" data-standing="agent-inference" data-tags="factory owners development ground" data-resource="factory:doc:owners"><header class="node-head"><div class="node-eyebrow">architecture-contract</div><h2>Compose the suite through native responsibilities</h2></header><div class="prose"><p>Factory owns Project development: Journeys, bounded Runs, their maps and developmental evidence, Candidate relations and Recognition consequences. Central owns the durable source side. AIKit resolves the operative context, knowledge and praxis; Actuation determines situated Agency and authority; Workcell supplies material execution and lifecycle.</p><p>The O:I parent presents and connects these native relations through its desktop and other projections. QL-MEF supplies optional formal orientation and refraction. A product relation can be important without being a mandatory runtime dependency. Ordinary Factory operation must not require a QL service merely because a formal reading is available.</p><p>This ownership matters during a failure. A stale context binding calls for an attributable return to its owner, not a Factory-owned replacement resolver. A participant becoming unavailable changes the effective execution arrangement, not the authored AgentSet. [[cap.factory.praxis-condition|Praxis condition]] preserves the operative references while leaving resolution with their owner.</p></div><footer class="unit-sources"><a data-source href="../../docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md">PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md</a><a data-source href="../../../O-I/docs/HUMAN-AGENT-COVENANT.md">HUMAN-AGENT-COVENANT.md</a></footer></section><section class="ql-node" id="q3-contracts" data-node=".1" data-route="contracts" data-nav="Keep identity, revision and authority intact" data-context="architecture-contract · agent-inference · draft-for-review" data-vessel="architecture-contract" data-standing="agent-inference" data-tags="factory contracts development ground" data-resource="factory:doc:contracts"><header class="node-head"><div class="node-eyebrow">architecture-contract</div><h2>Keep identity, revision and authority intact</h2></header><div class="prose"><p>The same developmental subject must survive a change of Surface or execution host. A provider path locates material state; it is not the semantic identity of a Project or Run. A projection reads or invokes native state through stable references and preserves caller lineage, rather than creating an independent product record.</p><p>Mutation uses the current revision and native authority. A stale topology update must fail without partially changing the RunMap. An invalid batch must leave the previous topology intact. Legal return relations express developmental recursion without turning ordinary dependency edges into cycles. These are concrete contracts with corresponding native tests.</p><p>The Action surface follows the same discipline. Listing comes from the selected Build snapshot; invoking reaches the canonical executor. Denied authority must not mutate state. The document and CSV capability addresses are documentation references, not additional Action identifiers or a new permission registry. [[cap.factory.action-projection|Action projection]] and [[cap.factory.run-map|RunMap mutation]] expose the relevant boundaries.</p></div><footer class="unit-sources"><a data-source href="../../factory/src/action_projection.rs">action_projection.rs</a><a data-source href="../../factory/src/core/run/topology.rs">topology.rs</a><a data-source href="../../factory/tests/run_map.rs">run_map.rs</a></footer></section><section class="ql-node" id="q3-thought" data-node=".2" data-route="thought" data-nav="Retain attributable cognitive work across sessions" data-context="architecture-contract · agent-inference · draft-for-review" data-vessel="architecture-contract" data-standing="agent-inference" data-tags="factory thought development ground" data-resource="factory:doc:thought"><header class="node-head"><div class="node-eyebrow">architecture-contract</div><h2>Retain attributable cognitive work across sessions</h2></header><div class="prose"><p>Development includes interpretations, questions and intermediate findings that matter after a chat ends. The Run Thought field retains source-backed cognitive material in relation to the Run, producer and relevant subjects. Several AgentSessions can contribute without making a session the owner of the Run’s meaning.</p><p>A retained thought remains attributable and bounded by its actual lifecycle. It does not become a human-authored position because it appears in an enduring record. Source passage anchors and related references let a later reader inspect what the thought was about and return to its basis.</p><p>The cognitive Build reading can filter retained thought by subject, producer, anchor, related reference or lifecycle. Retention advances native Run revision while keeping RunMap identity distinct. Duplicate or cross-Run material must not corrupt the field. [[cap.factory.run-thought|Thought retention]] and [[cap.factory.cognitive-reading|Cognitive inspection]] connect the intended continuity to current source.</p></div><footer class="unit-sources"><a data-source href="../../factory/src/core/run/thought.rs">thought.rs</a><a data-source href="../../factory/src/build_cognitive.rs">build_cognitive.rs</a><a data-source href="../../factory/tests/run_thought.rs">run_thought.rs</a></footer></section></div></article>
+<article class="surface" data-surface="q4" data-title="Across Projects, sessions and changing Worlds" data-gloss="Where / When?" data-seed-ref="factory:seed:q4" data-seed-sha256="d11fa2c433bf3c28eb4aba45f33627584afaf5cba3c87ad0bf5146ee492f0467"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#4</span><span class="hero-label">Where / When?</span></div><h1>Across Projects, sessions and changing Worlds</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q4-reentry" data-node=".0" data-route="reentry" data-nav="Return after an absence without reconstructing every chat" data-context="design-commitment · agent-inference · draft-for-review" data-vessel="design-commitment" data-standing="agent-inference" data-tags="factory reentry development ground" data-resource="factory:doc:reentry"><header class="node-head"><div class="node-eyebrow">design-commitment</div><h2>Return after an absence without reconstructing every chat</h2></header><div class="prose"><p>On re-entry, the person needs the current Project ground, active frontier and consequential changes since their last encounter. They should be able to follow recognised Candidates, decisive returns and still-open claims. The intended reading explains why the Project is now here before offering lower-level logs.</p><p>Durable developmental context makes part of this recovery possible. The native ProjectDevelopmentStore retains an existing Run-scoped ledger and validates its identity on reload. An absent record returns absence. It does not fabricate a development history to fill a presentation. A material relocation can change a binding while preserving the developmental reference.</p><p>This account does not claim that every intended re-entry screen is currently installed. It records the UX target and the inspected persistence and identity contracts that support it. [[cap.factory.development-persistence|Ledger reload]] and [[cap.factory.journey-continuity|Journey continuity]] are the concrete supporting capabilities.</p></div><footer class="unit-sources"><a data-source href="../../docs/canon/wayfinders/01-SEMANTIC-CORE-RUN-SPINE.md">01-SEMANTIC-CORE-RUN-SPINE.md</a><a data-source href="../../factory/src/project_development_store.rs">project_development_store.rs</a></footer></section><section class="ql-node" id="q4-routines" data-node=".1" data-route="routines" data-nav="Repeated work needs a developmental reason and proof" data-context="design-commitment · agent-inference · draft-for-review" data-vessel="design-commitment" data-standing="agent-inference" data-tags="factory routines development ground" data-resource="factory:doc:routines"><header class="node-head"><div class="node-eyebrow">design-commitment</div><h2>Repeated work needs a developmental reason and proof</h2></header><div class="prose"><p>A Journey may be carried partly through recurring work, but repetition is only useful when it serves the continuing intended difference. Factory retains what the repetition is for, which Run or activity produced evidence, and whether the responsibility is complete or needs to reopen.</p><p>The later correction to ticket 176 replaces the earlier routine deferral with proof-before-automation. A Method’s existence or use is insufficient evidence of fitness for unattended repetition. The relevant burden follows the Method and developmental context. Material changes should make earlier proof visibly stale unless compatibility evidence justifies retaining it.</p><p>Factory correlates saved AgentProfile selection, Method/proof references, praxis returns and Routine observations. AIKit owns operative Method/Routine resolution and provider handoff; Central owns saved profile source; Workcell supplies material scheduling conditions. A generic personal routine requires no Journey. [[cap.factory.praxis-fitness|Praxis fitness correlation]] records Factory’s bounded contribution.</p></div><footer class="unit-sources"><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/176.comments.json">176.comments.json</a><a data-source href="../../factory/src/journey_praxis.rs">journey_praxis.rs</a></footer></section><section class="ql-node" id="q4-limits" data-node=".2" data-route="limits" data-nav="Current evidence boundaries stay attached to the claim" data-context="evidence · agent-inference · draft-for-review" data-vessel="evidence" data-standing="agent-inference" data-tags="factory limits development ground" data-resource="factory:doc:limits"><header class="node-head"><div class="node-eyebrow">evidence</div><h2>Current evidence boundaries stay attached to the claim</h2></header><div class="prose"><p>This revision is a source-inspected consolidation of the local Factory checkout and retained development conversations, dated 6 September 2026. Its narrow native CLI integration suite was executed: <code>cargo test --test cli --test native_cli</code> passed seven tests. The result is evidence for the CLI’s persisted snapshot, Action listing and projected invocation paths, not for every Factory capability or owner-world behaviour. Ticket receipts are historical observations at the revisions they name, rather than proof of all current owner-world behaviour.</p><p>Ticket 174’s later persistence handoff records that the software persistence seams landed, while the complete real Project proof remained the closure condition. That proof requires actual recognised source, persisted AIKit context and activation evidence, a real Run, criterion evidence and attributable return. Synthetic references do not settle that question.</p><p>Similarly, the native CLI publishes the accepted Build and Action seam, while Journey/Commission library relations do not automatically imply a persisted command entry. The capability matrix keeps these limits alongside source, code and test addresses. This prevents the intended experience from being mistaken for a completed installation.</p></div><footer class="unit-sources"><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/174.comments.json">174.comments.json</a><a data-source href="../../../github-recovery-mirror/mirror/agent-system-design/issues/181.comments.json">181.comments.json</a></footer></section></div></article>
+<article class="surface" data-surface="q5" data-title="More room for authorship, better returned understanding" data-gloss="Why-For?" data-seed-ref="factory:seed:q5" data-seed-sha256="521f80aaca94d8145ab65b945cc6cce65817a9a5f88045953fc356eebe563476"><div class="surface-inner"><header class="hero"><div class="hero-line"><span class="ql-badge">#5</span><span class="hero-label">Why-For?</span></div><h1>More room for authorship, better returned understanding</h1><p class="hero-deck">Software Factory · recovered product account · draft for review</p></header><section class="ql-node" id="q5-outcome" data-node=".0" data-route="outcome" data-nav="Judge the product by meaningful development" data-context="vision · agent-inference · draft-for-review" data-vessel="vision" data-standing="agent-inference" data-tags="factory outcome development ground" data-resource="factory:doc:outcome"><header class="node-head"><div class="node-eyebrow">vision</div><h2>Judge the product by meaningful development</h2></header><div class="prose"><p>The desired result is greater human room for authorship and life away from supervising execution mechanics. A person can entrust a meaningful outcome, inspect consequential alternatives and recognise an actual difference. Agents can recover why the work exists and contribute through stable, inspectable developmental subjects.</p><p>The Project should become more intelligible as it changes. Returned failures and unexpected possibilities remain useful findings. Its retained history should explain not only which files changed but what was intended, what evidence challenged the plan and which determination shaped the result.</p><p>This closes the relation to [[factory:seed:q5|the Why-For seed]]. The amount of generated code or documentation is not the product’s success measure. The useful test is whether capable development remains connected to purpose and whether returned reality can improve the next act without silently replacing the author’s ground.</p></div><footer class="unit-sources"><a data-source href="../../README.md">README.md</a><a data-source href="../../../O-I/docs/positions/FOUNDING-POSITIONS.md">FOUNDING-POSITIONS.md</a></footer></section><section class="ql-node" id="q5-praxis" data-node=".1" data-route="praxis" data-nav="Use this account as ground for the next act" data-context="skill-agent-operating-instruction · agent-inference · draft-for-review" data-vessel="skill-agent-operating-instruction" data-standing="agent-inference" data-tags="factory praxis development ground" data-resource="factory:doc:praxis"><header class="node-head"><div class="node-eyebrow">skill-agent-operating-instruction</div><h2>Use this account as ground for the next act</h2></header><div class="prose"><p>Begin with the six-answer overview, then open the layers relevant to the actual change. Follow capability links to native source and meaningful tests. Read later corrections before relying on an old ticket’s scope. Keep questions about purpose separate from observations of the current implementation.</p><p>When a seed answer changes, reconcile its corresponding expansion and follow affected contracts and capability references. A matching seed hash records the reviewed basis only; it cannot prove that the prose is faithful. Update the existing determination where possible instead of generating another account of the same subject.</p><p>For matrix work, preserve the original directed product rows as recovered relations. Their harmonic, supporting, latent, weak and reflexive readings do not describe readiness. Concrete capability rows carry need, operation, result and evidence separately. [[factory:matrix:md|The matrix]] is an addressable companion to the account, with an exact CSV carrier.</p></div><footer class="unit-sources"><a data-source href="../../../Central/skills/docs-methodology/SKILL.md">SKILL.md</a><a data-source href="../../skills/factory-development/SKILL.md">SKILL.md</a></footer></section><section class="ql-node" id="q5-review" data-node=".2" data-route="review" data-nav="A candidate consolidation ready for meaning review" data-context="temporal-working-state · agent-inference · draft-for-review" data-vessel="temporal-working-state" data-standing="agent-inference" data-tags="factory review development ground" data-resource="factory:doc:review"><header class="node-head"><div class="node-eyebrow">temporal-working-state</div><h2>A candidate consolidation ready for meaning review</h2></header><div class="prose"><p>The seed and expansions in this file are Agent-recovered inference, offered as a coherent candidate account. They are not attributed to a new human-authored seed and do not ratify themselves by residing under ProjectCentral/user. Existing sources remain available at their native locations and standings.</p><p>Review should first determine whether the compact definition and intended human experience are faithful. It should then check the detailed commission, development and return journeys against that purpose. The capability pair provides the trace back to inspected functionality and the unresolved acceptance boundaries.</p><p>The next revision can record accepted meaning in place, retain the source relations behind it and refine the corresponding native authoring practice. Wiki disclosure is a later consumer of these identities, tags and links. It may make the relations easier to retrieve without becoming another authority or a required stage between the authored account and development.</p><p>The <a href="capability-matrix.md#seed--field-contribution">seed × field grid</a> opens the <a href="capability-matrix.json">declared matrix views</a>. Edit its <a href="capability-matrix.csv">CSV records</a> under the <a href="../../../Central/docs/CAPABILITY-MATRIX-PROTOCOL.md">shared capability protocol</a>, then reconcile affected passages in this account. Central owns retirement’s filesystem structure; AIKit owns its operations and the wiki population procedure.</p></div><footer class="unit-sources"><a data-source href="../../../Central/docs/PROJECT-CONTEXT-PROTOCOL.md">PROJECT-CONTEXT-PROTOCOL.md</a><a data-source href="../../README.md">README.md</a></footer></section></div></article>
+</main>
+  <aside class="right-rail" id="rightRail" aria-label="Section context"><div class="context-head"><div class="context-kicker" id="contextCoord">#0 · .0</div><h3 id="contextTitle">Source context</h3><p id="contextSummary">Select a section to inspect its source and standing.</p></div><div class="note-field" id="noteField"><label for="sectionNote">Section notes</label><textarea id="sectionNote" placeholder="Write a note for this section…"></textarea><div class="save-state" id="saveState">Saved locally when available.</div></div><div class="context-slot" id="contextSlot"></div><details class="right-details" open><summary>Sources in this section</summary><div class="source-list" id="sectionSources"></div><div class="source-empty" id="sourceEmpty">No section sources listed.</div></details><details class="right-details"><summary>Provenance</summary><dl class="meta-list" id="metaList"></dl></details></aside>
+</div>
+
+<script>
+(() => {
+  const resources=JSON.parse(document.getElementById('ground-resources').textContent);
+  const walker=document.createTreeWalker(document.getElementById('mainContent'),NodeFilter.SHOW_TEXT,{acceptNode(node){return node.parentElement.closest('script,style,code,pre,a')?NodeFilter.FILTER_REJECT:NodeFilter.FILTER_ACCEPT;}});
+  const nodes=[];while(walker.nextNode())nodes.push(walker.currentNode);
+  for(const node of nodes){const raw=node.textContent;const pattern=/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g;let match,last=0,changed=false;const fragment=document.createDocumentFragment();
+    while((match=pattern.exec(raw))){changed=true;fragment.append(document.createTextNode(raw.slice(last,match.index)));const ref=match[1].trim(),entry=resources[ref];const el=document.createElement(entry?'a':'span');el.textContent=match[2]||entry?.title||ref;if(entry){el.href=entry.href;el.dataset.resource=ref;}else{el.className='source-unresolved';el.title='Unresolved authored source: '+ref;}fragment.append(el);last=pattern.lastIndex;}
+    if(changed){fragment.append(document.createTextNode(raw.slice(last)));node.replaceWith(fragment);}
+  }
+})();
+</script>
+<script>
+(() => {
+  'use strict';
+  const body = document.body;
+  const root = document.documentElement;
+  const surfaces = [...document.querySelectorAll('.surface')];
+  const surfaceNav = document.getElementById('surfaceNav');
+  const leftToggle = document.getElementById('leftToggle');
+  const rightToggle = document.getElementById('rightToggle');
+  const themeToggle = document.getElementById('themeToggle');
+  const routeChip = document.getElementById('routeChip');
+  const contextCoord = document.getElementById('contextCoord');
+  const contextTitle = document.getElementById('contextTitle');
+  const contextSummary = document.getElementById('contextSummary');
+  const contextSlot = document.getElementById('contextSlot');
+  const sectionSources = document.getElementById('sectionSources');
+  const sourceEmpty = document.getElementById('sourceEmpty');
+  const sectionNote = document.getElementById('sectionNote');
+  const saveState = document.getElementById('saveState');
+  const metaList = document.getElementById('metaList');
+  const provenance = readProvenance();
+  let activeSurface = surfaces[0];
+  let activeNode = activeSurface.querySelector('.ql-node');
+  let scrollFrame = 0;
+  function safeGet(key){try{return localStorage.getItem(key)}catch(_){return null}}
+  function safeSet(key,value){try{localStorage.setItem(key,value);return true}catch(_){return false}}
+  function readProvenance(){try{return JSON.parse(document.getElementById('account-provenance').textContent)}catch(_){return {}}}
+  function buildMetadata(){const fields=[['UID',provenance.uid],['Project',provenance.project],['Session',provenance.session],['Status',provenance.status],['Created',provenance.created],['Updated',provenance.updated],['Generator',provenance.generator]];metaList.innerHTML='';for(const [label,value] of fields){if(!value)continue;const row=document.createElement('div');row.className='meta-row';row.innerHTML=`<dt>${escapeHTML(label)}</dt><dd>${escapeHTML(String(value))}</dd>`;metaList.appendChild(row)}}
+  function escapeHTML(value){return value.replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]))}
+  function buildNav(){surfaceNav.innerHTML='';surfaces.forEach(surface=>{const q=surface.dataset.surface;const qNumber=q==='whole'?'0/1':q.replace(/^q/,'');const title=surface.dataset.title||q;const gloss=surface.dataset.gloss||'';const group=document.createElement('div');group.className='nav-group';group.dataset.surface=q;const head=document.createElement('div');head.className='nav-head';const select=document.createElement('button');select.type='button';select.className='nav-select';select.innerHTML=`<span class="nav-q">${q==='whole'?'':'#'}${qNumber}</span><span class="nav-name">${escapeHTML(title)}<span class="nav-gloss">${escapeHTML(gloss)}</span></span>`;select.addEventListener('click',()=>navigate(q,null,true));const toggle=document.createElement('button');toggle.type='button';toggle.className='nav-toggle';toggle.setAttribute('aria-label',`Toggle sections for ${title}`);toggle.setAttribute('aria-expanded','false');toggle.innerHTML='<span>›</span>';toggle.addEventListener('click',()=>{const open=group.classList.toggle('expanded');toggle.setAttribute('aria-expanded',String(open))});head.append(select,toggle);group.appendChild(head);const subnav=document.createElement('div');subnav.className='subnav';[...surface.querySelectorAll('.ql-node')].forEach(node=>{const a=document.createElement('a');const route=node.dataset.route||node.id;a.href=`#${q}/${encodeURIComponent(route)}`;a.dataset.nodeId=node.id;a.innerHTML=`<code>${escapeHTML(node.dataset.node||'')}</code><span>${escapeHTML(node.dataset.nav||node.querySelector('h2')?.textContent||route)}</span>`;a.addEventListener('click',event=>{event.preventDefault();navigate(q,route,true)});subnav.appendChild(a)});group.appendChild(subnav);surfaceNav.appendChild(group)})}
+  function parseHash(){let raw=location.hash.slice(1).trim();try{raw=decodeURIComponent(raw)}catch{}if(!raw)return{surface:surfaces[0]?.dataset.surface||'q0',route:null};const[surface,route]=raw.split('/');return{surface:surfaces.some(s=>s.dataset.surface===surface)?surface:(surfaces[0]?.dataset.surface||'q0'),route:route||null}}
+  function findNode(surface,route){const nodes=[...surface.querySelectorAll('.ql-node')];if(!route)return nodes[0]||null;return nodes.find(node=>node.dataset.route===route||node.id===route)||nodes[0]||null}
+  function navigate(surfaceId,route,push){const surface=surfaces.find(item=>item.dataset.surface===surfaceId)||surfaces[0];const node=findNode(surface,route);activateSurface(surface);activeNode=node;updateActiveUI();if(push){const hash=`#${surface.dataset.surface}${route?'/'+encodeURIComponent(route):''}`;history.pushState(null,'',hash)}requestAnimationFrame(()=>{if(route&&node)node.scrollIntoView({behavior:prefersReducedMotion()?'auto':'smooth',block:'start'});else window.scrollTo({top:0,behavior:'auto'})})}
+  function activateSurface(surface){if(activeSurface!==surface){activeSurface.classList.remove('active');surface.classList.add('active');activeSurface=surface;window.scrollTo({top:0,behavior:'auto'})}document.querySelectorAll('.nav-group').forEach(group=>{const isActive=group.dataset.surface===surface.dataset.surface;group.classList.toggle('active',isActive);if(isActive){group.classList.add('expanded');const toggle=group.querySelector('.nav-toggle');if(toggle)toggle.setAttribute('aria-expanded','true')}})}
+  function updateActiveUI(){if(!activeNode)return;document.querySelectorAll('.subnav a').forEach(a=>a.classList.toggle('active',a.dataset.nodeId===activeNode.id));const qNumber=activeSurface.dataset.surface==='whole'?'0/1':activeSurface.dataset.surface.replace(/^q/,'');routeChip.innerHTML=`<code>${qNumber==='0/1'?'':'#'}${qNumber} · ${escapeHTML(activeNode.dataset.node||'')}</code><span>${escapeHTML(activeNode.dataset.nav||'')}</span>`;updateContext(qNumber,activeNode)}
+  function updateContext(qNumber,node){contextCoord.textContent=`${qNumber==='0/1'?'':'#'}${qNumber} · ${node.dataset.node||''}`;contextTitle.textContent=node.dataset.nav||node.querySelector('h2')?.textContent||'Section';contextSummary.textContent=node.dataset.context||'Section-relative context.';const panel=node.querySelector('template[data-context-panel]');contextSlot.innerHTML='';if(panel)contextSlot.appendChild(panel.content.cloneNode(true));const sources=[...node.querySelectorAll('a[data-source]')];sectionSources.innerHTML='';sourceEmpty.hidden=sources.length>0;sources.forEach(source=>{const clone=document.createElement('a');clone.href=source.href;clone.target='_blank';clone.rel='noopener noreferrer';clone.textContent=source.textContent.trim()||source.href;sectionSources.appendChild(clone)});const noteKey=noteStorageKey(activeSurface.dataset.surface,node.dataset.route||node.id);sectionNote.value=safeGet(noteKey)||'';sectionNote.dataset.storageKey=noteKey}
+  function noteStorageKey(surface,route){return`ql-html-account:${provenance.uid||'anonymous'}:${surface}:${route}:note`}
+  function updateFromScroll(){scrollFrame=0;if(!activeSurface)return;const nodes=[...activeSurface.querySelectorAll('.ql-node')];if(!nodes.length)return;let current=nodes[0];const offset=parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'))+34;const atBottom=window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-4;if(atBottom){current=nodes[nodes.length-1]}else{for(const node of nodes){if(node.getBoundingClientRect().top<=offset)current=node;else break}}if(current!==activeNode){activeNode=current;updateActiveUI();const route=current.dataset.route||current.id;const nextHash=`#${activeSurface.dataset.surface}/${encodeURIComponent(route)}`;history.replaceState(null,'',nextHash)}}
+  function scheduleScrollUpdate(){if(scrollFrame)return;scrollFrame=requestAnimationFrame(updateFromScroll)}
+  function routeFromLocation(){const{surface,route}=parseHash();const targetSurface=surfaces.find(s=>s.dataset.surface===surface)||surfaces[0];const node=findNode(targetSurface,route);activateSurface(targetSurface);activeNode=node;updateActiveUI();requestAnimationFrame(()=>{if(route&&node)node.scrollIntoView({behavior:'auto',block:'start'});else window.scrollTo({top:0,behavior:'auto'})})}
+  function prefersReducedMotion(){return window.matchMedia('(prefers-reduced-motion: reduce)').matches}
+  function setTheme(theme){root.dataset.theme=theme;safeSet('ql-html-account:theme',theme)}
+  function applyResponsiveRailDefaults(){const width=window.innerWidth;if(width<980){body.classList.add('left-closed','right-closed')}else if(width<1320){if(!body.dataset.userLeft)body.classList.remove('left-closed');if(!body.dataset.userRight)body.classList.add('right-closed')}syncRailAria()}
+  function syncRailAria(){leftToggle.setAttribute('aria-expanded',String(!body.classList.contains('left-closed')));rightToggle.setAttribute('aria-expanded',String(!body.classList.contains('right-closed')))}
+  leftToggle.addEventListener('click',()=>{body.dataset.userLeft='1';body.classList.toggle('left-closed');syncRailAria()});rightToggle.addEventListener('click',()=>{body.dataset.userRight='1';body.classList.toggle('right-closed');syncRailAria()});themeToggle.addEventListener('click',()=>{setTheme(root.dataset.theme==='dark'?'light':'dark')});sectionNote.addEventListener('input',()=>{const ok=safeSet(sectionNote.dataset.storageKey||'',sectionNote.value);saveState.textContent=ok?'Saved locally.':'Local persistence is unavailable. The note remains in this page until it closes.'});window.addEventListener('scroll',scheduleScrollUpdate,{passive:true});window.addEventListener('popstate',routeFromLocation);window.addEventListener('hashchange',routeFromLocation);window.addEventListener('resize',applyResponsiveRailDefaults,{passive:true});buildMetadata();buildNav();setTheme(safeGet('ql-html-account:theme')||'light');applyResponsiveRailDefaults();routeFromLocation();
+})();
+</script>
+</body>
+</html>
