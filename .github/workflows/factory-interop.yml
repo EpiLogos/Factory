@@ -19,6 +19,9 @@ on:
       - "scripts/validate_factory_interop.py"
       - ".github/workflows/factory-interop.yml"
 
+env:
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   conformance:
     runs-on: ubuntu-latest
@@ -28,6 +31,11 @@ jobs:
         with:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            tests/factory/rust-interop
+          cache-on-failure: true
       - name: Validate Draft 2020-12 schemas and field ownership
         run: |
           python3 -m pip install --disable-pip-version-check 'jsonschema>=4,<5'
