@@ -1,0 +1,24 @@
+{
+  "schema": "factory.developmental-read-cases/v1",
+  "base": "947ce7a6bcde644b0a58a0529cfc50f66e78b899",
+  "projectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAE",
+  "journeyRef": "journey:01ARZ3NDEKTSV4RRFFQ69G5FAD",
+  "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FAA",
+  "contracts": {
+    "project": "factory.project-reading/v1",
+    "journey": "factory.journey-reading/v1",
+    "run": "factory.run-reading/v1"
+  },
+  "requiredOwner": "factory",
+  "requiredRunRelations": [
+    "owningJourneyRefs",
+    "runMap",
+    "thoughtAvailable",
+    "agencies",
+    "executions",
+    "evidence",
+    "candidates",
+    "humanRequests",
+    "actions"
+  ]
+}

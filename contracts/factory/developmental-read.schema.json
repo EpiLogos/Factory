@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.developmental-read.schema/v1",
+  "title": "Factory developmental public readings",
+  "oneOf": [
+    { "$ref": "#/$defs/projectReading" },
+    { "$ref": "#/$defs/journeyReading" },
+    { "$ref": "#/$defs/runReading" }
+  ],
+  "$defs": {
+    "canonicalRef": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "revision": { "type": "integer", "minimum": 1 },
+    "provenance": {
+      "type": "object",
+      "required": ["owner", "factoryStateRevision", "subjectRevision", "source"],
+      "properties": {
+        "owner": { "const": "factory" },
+        "factoryStateRevision": { "$ref": "#/$defs/revision" },
+        "subjectRevision": { "$ref": "#/$defs/revision" },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "projectReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "projectRef", "projectRevision", "journeys"],
+      "properties": {
+        "contract": { "const": "factory.project-reading/v1" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "projectRevision": { "$ref": "#/$defs/revision" },
+        "journeys": { "type": "array", "items": { "$ref": "#/$defs/journeySummary" } }
+      },
+      "additionalProperties": false
+    },
+    "journeySummary": {
+      "type": "object",
+      "required": ["journeyRef", "revision", "status", "frontier", "runRefs"],
+      "properties": {
+        "journeyRef": { "$ref": "#/$defs/canonicalRef" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "status": { "enum": ["proposed", "active", "paused", "completed", "abandoned"] },
+        "frontier": { "type": "string", "minLength": 1 },
+        "runRefs": { "type": "array", "items": { "$ref": "#/$defs/canonicalRef" } }
+      },
+      "additionalProperties": false
+    },
+    "journeyReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "journeyRef", "revision", "projectRef", "commission", "status", "frontier", "participants", "flowRefs", "runRefs", "activityRefs", "returns", "recognitions", "materialContextRefs", "startedAt"],
+      "properties": {
+        "contract": { "const": "factory.journey-reading/v1" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "journeyRef": { "$ref": "#/$defs/canonicalRef" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "relatedProjects": { "type": "array" },
+        "commission": { "type": "object" },
+        "status": { "type": "string" },
+        "frontier": { "type": "string" },
+        "participants": { "type": "array" },
+        "flowRefs": { "type": "array" },
+        "runRefs": { "type": "array" },
+        "agentSessionRefs": { "type": "array" },
+        "activityRefs": { "type": "array" },
+        "returns": { "type": "array" },
+        "recognitions": { "type": "array" },
+        "materialContextRefs": { "type": "array" },
+        "startedAt": { "type": "string" },
+        "completedAt": { "type": ["string", "null"] }
+      }
+    },
+    "runReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "runRef", "revision", "projectRef", "owningJourneyRefs", "lifecycle", "destination", "runMap", "thoughtAvailable", "thoughtRefs", "agencies", "executions", "evidence", "candidates", "humanRequests", "actions"],
+      "properties": {
+        "contract": { "const": "factory.run-reading/v1" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "runRef": { "$ref": "#/$defs/canonicalRef" },
+        "revision": { "$ref": "#/$defs/revision" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "owningJourneyRefs": { "type": "array" },
+        "lifecycle": { "type": "string" },
+        "destination": { "type": "string" },
+        "runMap": { "type": "object" },
+        "thoughtAvailable": { "type": "boolean" },
+        "thoughtRefs": { "type": "array" },
+        "agencies": { "type": "array" },
+        "executions": { "type": "array" },
+        "evidence": { "type": "array" },
+        "candidates": { "type": "array" },
+        "humanRequests": { "type": "array" },
+        "actions": { "type": "array" }
+      }
+    }
+  }
+}

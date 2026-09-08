@@ -8,6 +8,12 @@ use crate::build::{
 };
 use crate::build_provider::{FactoryBuildFileProvider, FACTORY_BUILD_LOCAL_PROVIDER_STATE};
 use crate::core::run::{ProjectRef, RunRef};
+use crate::developmental_read::{
+    FactoryDevelopmentalFileProvider, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
+    FACTORY_JOURNEY_READING_CONTRACT, FACTORY_PROJECT_READING_CONTRACT,
+    FACTORY_RUN_READING_CONTRACT,
+};
+use crate::journey::JourneyRef;
 use serde::Serialize;
 use std::error::Error;
 use std::fmt::{self, Display};
@@ -64,6 +70,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         Some("--version") | Some("version") => Ok(format!("factory {}", env!("CARGO_PKG_VERSION"))),
         Some("capabilities") => render_capabilities(json),
         Some("build") => build_command(&args[1..], json),
+        Some("development") => development_command(&args[1..], json, stdin_override),
         Some("action") => action_command(&args[1..], json, stdin_override),
         Some("verify") => verify_command(&args[1..], json),
         Some(command) => Err(CliError(format!(
@@ -76,6 +83,7 @@ fn help() -> String {
     format!(
         "Software Factory {}\n\n\
 Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
+Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
     )
@@ -89,6 +97,10 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
         commands: vec![
             "build.snapshot",
             "build.refresh",
+            "development.project",
+            "development.journey",
+            "development.run",
+            "development.action",
             "action.list",
             "action.invoke",
             "verify",
@@ -98,6 +110,10 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_BUILD_PROVIDER_CONTRACT,
             FACTORY_BUILD_LOCAL_PROVIDER_STATE,
             FACTORY_ACTION_PROJECTION_CONTRACT,
+            FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
+            FACTORY_PROJECT_READING_CONTRACT,
+            FACTORY_JOURNEY_READING_CONTRACT,
+            FACTORY_RUN_READING_CONTRACT,
         ],
     }
 }
@@ -146,6 +162,121 @@ fn build_command(args: &[String], json: bool) -> Result<String, CliError> {
             .collect::<Vec<_>>()
             .join(", ")
     ))
+}
+
+fn development_command(
+    args: &[String],
+    json: bool,
+    stdin_override: Option<&str>,
+) -> Result<String, CliError> {
+    let operation = args
+        .first()
+        .ok_or_else(|| CliError("missing development operation".into()))?;
+    let state_path = args
+        .get(1)
+        .ok_or_else(|| CliError("missing developmental state path".into()))?;
+    let mut provider = FactoryDevelopmentalFileProvider::open(state_path)
+        .map_err(|error| CliError(error.to_string()))?;
+
+    match operation.as_str() {
+        "project" => {
+            let project_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing project-ref".into()))?
+                .parse::<ProjectRef>()
+                .map_err(|error| CliError(format!("invalid project-ref: {error}")))?;
+            let reading = provider
+                .project_reading(&project_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nProject: {} @ {}\nJourneys: {}",
+                    reading.contract,
+                    reading.project_ref,
+                    reading.project_revision.get(),
+                    reading
+                        .journeys
+                        .iter()
+                        .map(|journey| journey.journey_ref.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            }
+        }
+        "journey" => {
+            let journey_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing journey-ref".into()))?
+                .parse::<JourneyRef>()
+                .map_err(|error| CliError(format!("invalid journey-ref: {error}")))?;
+            let reading = provider
+                .journey_reading(&journey_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nJourney: {} @ {}\nStatus: {:?}\nFrontier: {}\nRuns: {}",
+                    reading.contract,
+                    reading.journey_ref,
+                    reading.revision.get(),
+                    reading.status,
+                    reading.frontier,
+                    reading
+                        .run_refs
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            }
+        }
+        "run" => {
+            let run_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing run-ref".into()))?
+                .parse::<RunRef>()
+                .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+            let reading = provider
+                .run_reading(&run_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nRun: {} @ {}\nLifecycle: {:?}\nDestination: {}\nRunMap: {} @ {}",
+                    reading.contract,
+                    reading.run_ref,
+                    reading.revision.get(),
+                    reading.lifecycle,
+                    reading.destination,
+                    reading.run_map.address(),
+                    reading.run_map.topology_revision().get()
+                ))
+            }
+        }
+        "action" => {
+            let request_path = args.get(2).map(String::as_str).unwrap_or("-");
+            let input = read_input(request_path, stdin_override)?;
+            let request: FactoryActionProjectionRequest = serde_json::from_str(&input)?;
+            let receipt = execute_projected_factory_action(&mut provider, &request)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&receipt).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "Action {} applied to {} through Factory revision {} -> {}",
+                    receipt.action_ref,
+                    receipt.subject_ref,
+                    receipt.native_result.previous_revision,
+                    receipt.native_result.next_revision
+                ))
+            }
+        }
+        other => Err(CliError(format!("unknown development operation `{other}`"))),
+    }
 }
 
 fn action_command(
