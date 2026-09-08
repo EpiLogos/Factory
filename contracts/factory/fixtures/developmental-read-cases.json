@@ -9,7 +9,8 @@
     "journey": "factory.journey-reading/v1",
     "run": "factory.run-reading/v1",
     "workflowUnitList": "factory.workflow-unit-list-reading/v1",
-    "workflowUnit": "factory.workflow-unit-reading/v1"
+    "workflowUnit": "factory.workflow-unit-reading/v1",
+    "executionTelemetry": "factory.execution-telemetry-reading/v1"
   },
   "requiredOwner": "factory",
   "requiredRunRelations": [
@@ -60,5 +61,15 @@
     "absent": "absent",
     "lower": "not-owner-established",
     "absentLowerValues": null
+  },
+  "executionCorrelationLaw": {
+    "ownerEstablished": "owner-established",
+    "carrierMechanisms": ["native-harness", "acp"],
+    "modelUsageOwner": "actuation",
+    "materialUsageOwner": "workcell",
+    "unavailable": "unavailable",
+    "actuationBasis": "b6ed67e57ef45c5b0434ad63e296a31ce56d2e99",
+    "workcellBasis": "ab7540b9d76ab5089387e8bc54970ce05ed85d6e",
+    "metricValueLaw": "No token, cost, CPU, memory, GPU, network or storage value is emitted without an owner observation ref."
   }
 }

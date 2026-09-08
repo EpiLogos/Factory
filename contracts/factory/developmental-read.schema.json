@@ -7,7 +7,8 @@
     { "$ref": "#/$defs/journeyReading" },
     { "$ref": "#/$defs/runReading" },
     { "$ref": "#/$defs/workflowUnitListReading" },
-    { "$ref": "#/$defs/workflowUnitReading" }
+    { "$ref": "#/$defs/workflowUnitReading" },
+    { "$ref": "#/$defs/executionTelemetryReading" }
   ],
   "$defs": {
     "canonicalRef": {
@@ -190,7 +191,7 @@
         "runJourneyStatus": { "enum": ["owner-established", "absent"] },
         "runJourneyBasis": { "type": "string", "minLength": 1 },
         "runs": { "type": "array", "items": { "$ref": "#/$defs/workflowUnitRunCorrelation" } },
-        "lowerCorrelationStatus": { "const": "not-owner-established" },
+        "lowerCorrelationStatus": { "enum": ["owner-established", "not-owner-established"] },
         "agencyRefs": { "type": ["array", "null"], "items": { "type": "string" } },
         "executionRefs": { "type": ["array", "null"], "items": { "type": "string" } },
         "telemetryRefs": { "type": ["array", "null"], "items": { "type": "string" } }
@@ -281,6 +282,139 @@
         "stopConditions": { "type": "string", "minLength": 1 },
         "escalationConditions": { "type": "string", "minLength": 1 },
         "currentCorrelation": { "$ref": "#/$defs/workflowUnitCurrentCorrelation" }
+      },
+      "additionalProperties": false
+    },
+    "telemetryOwner": {
+      "enum": ["factory", "central", "actuation", "aikit", "workcell"]
+    },
+    "observationStanding": {
+      "enum": ["observed", "provider-reported", "normalized-from-native", "derived", "estimated"]
+    },
+    "revisionedOwnerRef": {
+      "type": "object",
+      "required": ["owner", "ref", "revision", "standing"],
+      "properties": {
+        "owner": { "$ref": "#/$defs/telemetryOwner" },
+        "ref": { "type": "string", "minLength": 1 },
+        "revision": { "type": "string", "minLength": 1 },
+        "standing": { "$ref": "#/$defs/observationStanding" }
+      },
+      "additionalProperties": false
+    },
+    "telemetryLink": {
+      "type": "object",
+      "required": ["owner", "availability", "observations"],
+      "properties": {
+        "owner": { "$ref": "#/$defs/telemetryOwner" },
+        "availability": { "enum": ["available", "unavailable", "unsupported"] },
+        "observations": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "carrier": {
+      "type": "object",
+      "required": ["mechanism", "carrierRef", "determinationRef", "source"],
+      "properties": {
+        "mechanism": { "enum": ["native-harness", "provider-subagent", "provider-team", "acp", "a2a", "aikit-gateway", "persistent-agent", "shared-field", "source-proven-adapter"] },
+        "carrierRef": { "type": "string", "minLength": 1 },
+        "determinationRef": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+      },
+      "additionalProperties": false
+    },
+    "temporalFact": {
+      "type": "object",
+      "required": ["value", "source"],
+      "properties": {
+        "value": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+      },
+      "additionalProperties": false
+    },
+    "temporalCorrelation": {
+      "type": "object",
+      "required": ["activityRefs", "sourceChanges", "dayRefs"],
+      "properties": {
+        "started": { "$ref": "#/$defs/temporalFact" },
+        "updated": { "$ref": "#/$defs/temporalFact" },
+        "completed": { "$ref": "#/$defs/temporalFact" },
+        "activityRefs": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
+        "flow": { "$ref": "#/$defs/revisionedOwnerRef" },
+        "changeHorizon": { "$ref": "#/$defs/revisionedOwnerRef" },
+        "sourceChanges": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
+        "dayRefs": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } }
+      },
+      "additionalProperties": false
+    },
+    "executionCondition": {
+      "type": "object",
+      "required": ["agentRef", "agencyRef", "carrier", "surfaceRefs", "workcellBindingRefs"],
+      "properties": {
+        "agentRef": { "type": "string", "minLength": 1 },
+        "agencyRef": { "type": "string", "minLength": 1 },
+        "actuationRef": { "type": "string", "minLength": 1 },
+        "carrier": { "$ref": "#/$defs/carrier" },
+        "harnessRef": { "type": "string", "minLength": 1 },
+        "harnessCompositionRef": { "type": "string", "minLength": 1 },
+        "agentSessionRef": { "type": "string", "minLength": 1 },
+        "sessionSpaceRef": { "type": "string", "minLength": 1 },
+        "surfaceRefs": { "$ref": "#/$defs/stringSet" },
+        "workcellBindingRefs": { "$ref": "#/$defs/stringSet" }
+      },
+      "additionalProperties": false
+    },
+    "handoff": {
+      "type": "object",
+      "required": ["fromAgencyRef", "delegationRef", "returnRef", "messageRefs", "source"],
+      "properties": {
+        "fromAgencyRef": { "type": "string", "minLength": 1 },
+        "delegationRef": { "type": "string", "minLength": 1 },
+        "returnRef": { "type": "string", "minLength": 1 },
+        "messageRefs": { "$ref": "#/$defs/stringSet" },
+        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+      },
+      "additionalProperties": false
+    },
+    "executionReturnState": {
+      "type": "object",
+      "required": ["evidenceRefs"],
+      "properties": {
+        "agencyReturnRef": { "type": "string", "minLength": 1 },
+        "agencyReturnState": { "type": "string", "minLength": 1 },
+        "evidenceRefs": { "$ref": "#/$defs/stringSet" }
+      },
+      "additionalProperties": false
+    },
+    "executionTelemetryProvenance": {
+      "type": "object",
+      "required": ["owner", "factoryStateRevision", "correlationRef", "source"],
+      "properties": {
+        "owner": { "const": "factory" },
+        "factoryStateRevision": { "$ref": "#/$defs/revision" },
+        "correlationRef": { "$ref": "#/$defs/canonicalRef" },
+        "source": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "executionTelemetryReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "telemetryRef", "projectRef", "runRef", "workflowUnitRef", "executionRef", "condition", "temporal", "modelUsage", "materialUsage", "returnState"],
+      "properties": {
+        "contract": { "const": "factory.execution-telemetry-reading/v1" },
+        "provenance": { "$ref": "#/$defs/executionTelemetryProvenance" },
+        "telemetryRef": { "$ref": "#/$defs/canonicalRef" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "runRef": { "$ref": "#/$defs/runRef" },
+        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
+        "executionRef": { "type": "string", "minLength": 1 },
+        "condition": { "$ref": "#/$defs/executionCondition" },
+        "temporal": { "$ref": "#/$defs/temporalCorrelation" },
+        "modelUsage": { "$ref": "#/$defs/telemetryLink" },
+        "materialUsage": { "$ref": "#/$defs/telemetryLink" },
+        "handoff": { "$ref": "#/$defs/handoff" },
+        "returnState": { "$ref": "#/$defs/executionReturnState" }
       },
       "additionalProperties": false
     }

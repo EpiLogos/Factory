@@ -60,6 +60,31 @@ for key, entry in schemas.items():
     missing = owner_failures(schema)
     assert not missing, f'{key}: fields without one semantic owner: {missing}'
 
+developmental_schema = load('contracts/factory/developmental-read.schema.json')
+telemetry_fixture = load('contracts/factory/fixtures/execution-telemetry-reading.json')
+validation_schema = dict(developmental_schema)
+validation_schema.pop('$id', None)
+Draft202012Validator.check_schema(validation_schema)
+errors = sorted(
+    Draft202012Validator(validation_schema).iter_errors(telemetry_fixture),
+    key=lambda error: list(error.path),
+)
+assert not errors, 'execution telemetry: ' + '; '.join(error.message for error in errors)
+assert telemetry_fixture['modelUsage'] == {
+    'owner': 'actuation',
+    'availability': 'unavailable',
+    'observations': [],
+    'reason': 'No stable owner-native model-usage observation at Actuation b6ed67e',
+}
+assert telemetry_fixture['materialUsage'] == {
+    'owner': 'workcell',
+    'availability': 'unavailable',
+    'observations': [],
+    'reason': 'No stable owner-native resource-usage observation at Workcell ab7540b',
+}
+for invented_metric in ('tokens', 'cost', 'cpu', 'memory', 'gpu', 'network', 'storage'):
+    assert invented_metric not in telemetry_fixture
+
 anti = load(fixture_set['antiFixturesPath'])
 by_id = {item['id']: item for item in anti['antiFixtures']}
 plausible = by_id['plausible-artifact-partial-evidence-as-full-closure']
@@ -74,4 +99,7 @@ assert representative['value']['evidenceMode'] == 'representative'
 assert whole_has_unmet_obligations(representative['value'])
 assert not representative['value']['samplingSufficiencyDeclared'] or not representative['value']['coverageConditionEvidenced']
 
-print(f'JSON Schema CR-001 interop PASS ({len(schemas)} schemas; whole-relative anti-fixtures present)')
+print(
+    f'JSON Schema CR-001 interop PASS ({len(schemas)} schemas; '
+    'execution telemetry and whole-relative anti-fixtures present)'
+)
