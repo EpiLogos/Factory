@@ -1,0 +1,97 @@
+{
+  "contract": "factory.execution-telemetry-reading/v1",
+  "provenance": {
+    "owner": "factory",
+    "factoryStateRevision": 7,
+    "correlationRef": "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3",
+    "source": "Factory execution correlation over owner-native refs"
+  },
+  "telemetryRef": "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4",
+  "projectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAE",
+  "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FAA",
+  "workflowUnitRef": "workflow-unit:01ARZ3NDEKTSV4RRFFQ69G5FAB",
+  "executionRef": "execution:implement-compiler",
+  "condition": {
+    "agentRef": "agent:parasakti",
+    "agencyRef": "agency:parasakti/implementation",
+    "actuationRef": "actuation:implement-compiler",
+    "carrier": {
+      "mechanism": "acp",
+      "carrierRef": "acp-session:implementation",
+      "determinationRef": "determination:implementation",
+      "source": {
+        "owner": "actuation",
+        "ref": "actuation-stream:factory-199",
+        "revision": "b6ed67e57ef45c5b0434ad63e296a31ce56d2e99",
+        "standing": "observed"
+      }
+    },
+    "harnessRef": "harness:pi",
+    "harnessCompositionRef": "harness-composition:implementation",
+    "agentSessionRef": "agent-session:implementation",
+    "sessionSpaceRef": "session-space:implementation",
+    "surfaceRefs": ["surface:acp"],
+    "workcellBindingRefs": ["binding:lan-gpu"]
+  },
+  "temporal": {
+    "started": {
+      "value": "2026-09-08T00:06:00+01:00",
+      "source": {
+        "owner": "actuation",
+        "ref": "actuation-stream:factory-199",
+        "revision": "stream-cursor:42",
+        "standing": "observed"
+      }
+    },
+    "activityRefs": [
+      {
+        "owner": "actuation",
+        "ref": "activity:implement-compiler",
+        "revision": "stream-cursor:42",
+        "standing": "observed"
+      }
+    ],
+    "flow": {
+      "owner": "central",
+      "ref": "flow:factory-agentic-w4",
+      "revision": "flow-revision:12",
+      "standing": "observed"
+    },
+    "sourceChanges": [],
+    "dayRefs": [
+      {
+        "owner": "central",
+        "ref": "day:2026-09-08",
+        "revision": "day-revision:1",
+        "standing": "observed"
+      }
+    ]
+  },
+  "modelUsage": {
+    "owner": "actuation",
+    "availability": "unavailable",
+    "observations": [],
+    "reason": "No stable owner-native model-usage observation at Actuation b6ed67e"
+  },
+  "materialUsage": {
+    "owner": "workcell",
+    "availability": "unavailable",
+    "observations": [],
+    "reason": "No stable owner-native resource-usage observation at Workcell ab7540b"
+  },
+  "handoff": {
+    "fromAgencyRef": "agency:parasakti/research",
+    "delegationRef": "delegation:research-to-implementation",
+    "returnRef": "return:inspect-source",
+    "messageRefs": ["message:handoff-context"],
+    "source": {
+      "owner": "actuation",
+      "ref": "actuation-stream:factory-199",
+      "revision": "stream-cursor:42",
+      "standing": "observed"
+    }
+  },
+  "returnState": {
+    "evidenceRefs": []
+  }
+}

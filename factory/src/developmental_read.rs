@@ -39,6 +39,8 @@ pub const FACTORY_RUN_READING_CONTRACT: &str = "factory.run-reading/v1";
 pub const FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT: &str =
     "factory.workflow-unit-list-reading/v1";
 pub const FACTORY_WORKFLOW_UNIT_READING_CONTRACT: &str = "factory.workflow-unit-reading/v1";
+pub const FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT: &str =
+    "factory.execution-telemetry-reading/v1";
 pub const FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER: &str = "factory.developmental-local-provider/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,6 +51,11 @@ pub struct FactoryDevelopmentalState {
     pub journeys: Vec<Journey>,
     #[serde(default)]
     pub workflow_sources: Vec<WorkflowSource>,
+    /// Factory-owned joins between developmental work and externally owned
+    /// execution actuality. The joined observations remain references to their
+    /// native owners; this is not a copied Activity or machine-metrics store.
+    #[serde(default)]
+    pub execution_correlations: Vec<FactoryExecutionCorrelation>,
 }
 
 impl FactoryDevelopmentalState {
@@ -62,6 +69,7 @@ impl FactoryDevelopmentalState {
             build,
             journeys,
             workflow_sources: Vec::new(),
+            execution_correlations: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -77,6 +85,18 @@ impl FactoryDevelopmentalState {
     ) -> Result<Self, FactoryDevelopmentalReadError> {
         workflow_sources.sort_by_key(workflow_source_identity);
         self.workflow_sources = workflow_sources;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// Attach Factory-owned execution correlations after validating every
+    /// Factory edge and every external-owner provenance claim.
+    pub fn with_execution_correlations(
+        mut self,
+        mut correlations: Vec<FactoryExecutionCorrelation>,
+    ) -> Result<Self, FactoryDevelopmentalReadError> {
+        correlations.sort_by(|left, right| left.correlation_ref.cmp(&right.correlation_ref));
+        self.execution_correlations = correlations;
         self.validate()?;
         Ok(self)
     }
@@ -120,7 +140,8 @@ impl FactoryDevelopmentalState {
                 }
             }
         }
-        self.compile_workflows()?;
+        let compiled_workflows = self.compile_workflows()?;
+        self.validate_execution_correlations(&compiled_workflows)?;
         Ok(())
     }
 
@@ -371,6 +392,191 @@ impl FactoryDevelopmentalState {
         })
     }
 
+    /// Read one Factory execution correlation as task-level telemetry. Values
+    /// owned by Actuation, Central, AIKit or Workcell are never reconstructed:
+    /// the reading carries their exact refs/revisions and explicit availability.
+    pub fn execution_telemetry_reading(
+        &self,
+        telemetry_ref: &Ref,
+    ) -> Result<FactoryExecutionTelemetryReading, FactoryDevelopmentalReadError> {
+        let correlation = self
+            .execution_correlations
+            .iter()
+            .find(|correlation| &correlation.telemetry_ref == telemetry_ref)
+            .ok_or_else(|| {
+                FactoryDevelopmentalReadError::ExecutionTelemetryNotFound(telemetry_ref.to_string())
+            })?;
+        let selection = FactoryBuildSelection {
+            project_ref: self.build.project().reference().clone(),
+            run_ref: correlation.run_ref.clone(),
+        };
+        let snapshot = FactoryBuildViewProvider.snapshot(&self.build, &selection)?;
+        let agency = snapshot
+            .view
+            .agencies
+            .iter()
+            .find(|agency| agency.agency_ref == correlation.agency_ref)
+            .ok_or_else(|| FactoryDevelopmentalReadError::AgencyNotFound {
+                run_ref: correlation.run_ref.to_string(),
+                agency_ref: correlation.agency_ref.clone(),
+            })?;
+        let execution = snapshot
+            .view
+            .executions
+            .iter()
+            .find(|execution| execution.execution_ref == correlation.execution_ref)
+            .ok_or_else(|| FactoryDevelopmentalReadError::ExecutionNotFound {
+                run_ref: correlation.run_ref.to_string(),
+                execution_ref: correlation.execution_ref.clone(),
+            })?;
+        let evidence_refs = snapshot
+            .view
+            .evidence
+            .iter()
+            .filter(|evidence| {
+                evidence.producing_execution_ref.as_deref()
+                    == Some(correlation.execution_ref.as_str())
+            })
+            .map(|evidence| evidence.evidence_ref.clone())
+            .collect();
+
+        Ok(FactoryExecutionTelemetryReading {
+            contract: FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT.into(),
+            provenance: FactoryExecutionTelemetryProvenance {
+                owner: FACTORY_NATIVE_OWNER.into(),
+                factory_state_revision: self.build.revision(),
+                correlation_ref: correlation.correlation_ref.clone(),
+                source: "Factory execution correlation over owner-native refs".into(),
+            },
+            telemetry_ref: correlation.telemetry_ref.clone(),
+            project_ref: self.build.project().reference().clone(),
+            run_ref: correlation.run_ref.clone(),
+            workflow_unit_ref: correlation.workflow_unit_ref.clone(),
+            execution_ref: correlation.execution_ref.clone(),
+            condition: FactoryExecutionCondition {
+                agent_ref: agency.agent_ref.clone(),
+                agency_ref: agency.agency_ref.clone(),
+                actuation_ref: agency.actuation_ref.clone(),
+                carrier: correlation.carrier.clone(),
+                harness_ref: execution.harness_ref.clone(),
+                harness_composition_ref: execution.harness_composition_ref.clone(),
+                agent_session_ref: execution.agent_session_ref.clone(),
+                session_space_ref: execution.session_space_ref.clone(),
+                surface_refs: execution.surface_refs.clone(),
+                workcell_binding_refs: execution.workcell_binding_refs.clone(),
+            },
+            temporal: correlation.temporal.clone(),
+            model_usage: correlation.model_usage.clone(),
+            material_usage: correlation.material_usage.clone(),
+            handoff: correlation.handoff.clone(),
+            return_state: FactoryExecutionReturnState {
+                agency_return_ref: agency.return_ref.clone(),
+                agency_return_state: agency.return_state.clone(),
+                evidence_refs,
+            },
+        })
+    }
+
+    fn validate_execution_correlations(
+        &self,
+        workflows: &[CompiledWorkflow],
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        let unit_refs = workflows
+            .iter()
+            .flat_map(|workflow| workflow.units.values().map(|unit| unit.reference.clone()))
+            .collect::<BTreeSet<_>>();
+        let mut correlation_refs = BTreeSet::new();
+        let mut telemetry_refs = BTreeSet::new();
+        for correlation in &self.execution_correlations {
+            correlation.validate()?;
+            if !correlation_refs.insert(correlation.correlation_ref.clone()) {
+                return Err(
+                    FactoryDevelopmentalReadError::DuplicateExecutionCorrelation(
+                        correlation.correlation_ref.to_string(),
+                    ),
+                );
+            }
+            if !telemetry_refs.insert(correlation.telemetry_ref.clone()) {
+                return Err(FactoryDevelopmentalReadError::DuplicateExecutionTelemetry(
+                    correlation.telemetry_ref.to_string(),
+                ));
+            }
+            if !unit_refs.contains(&correlation.workflow_unit_ref) {
+                return Err(FactoryDevelopmentalReadError::WorkflowUnitNotFound(
+                    correlation.workflow_unit_ref.to_string(),
+                ));
+            }
+            let selection = FactoryBuildSelection {
+                project_ref: self.build.project().reference().clone(),
+                run_ref: correlation.run_ref.clone(),
+            };
+            let snapshot = FactoryBuildViewProvider.snapshot(&self.build, &selection)?;
+            let run = self.build.run(&correlation.run_ref).ok_or_else(|| {
+                FactoryDevelopmentalReadError::RunNotFound(correlation.run_ref.to_string())
+            })?;
+            if !run.map().nodes().values().any(|node| {
+                node.semantic_ref.as_ref() == Some(correlation.workflow_unit_ref.as_ref())
+            }) {
+                return Err(FactoryDevelopmentalReadError::ExecutionUnitNotInRun {
+                    run_ref: correlation.run_ref.to_string(),
+                    workflow_unit_ref: correlation.workflow_unit_ref.to_string(),
+                });
+            }
+            let agency = snapshot
+                .view
+                .agencies
+                .iter()
+                .find(|agency| agency.agency_ref == correlation.agency_ref)
+                .ok_or_else(|| FactoryDevelopmentalReadError::AgencyNotFound {
+                    run_ref: correlation.run_ref.to_string(),
+                    agency_ref: correlation.agency_ref.clone(),
+                })?;
+            let execution = snapshot
+                .view
+                .executions
+                .iter()
+                .find(|execution| execution.execution_ref == correlation.execution_ref)
+                .ok_or_else(|| FactoryDevelopmentalReadError::ExecutionNotFound {
+                    run_ref: correlation.run_ref.to_string(),
+                    execution_ref: correlation.execution_ref.clone(),
+                })?;
+            if execution.agency_ref.as_deref() != Some(correlation.agency_ref.as_str()) {
+                return Err(FactoryDevelopmentalReadError::ExecutionAgencyMismatch {
+                    execution_ref: correlation.execution_ref.clone(),
+                    agency_ref: correlation.agency_ref.clone(),
+                });
+            }
+            if execution
+                .agent_ref
+                .as_deref()
+                .is_some_and(|agent_ref| agent_ref != agency.agent_ref)
+            {
+                return Err(FactoryDevelopmentalReadError::ExecutionAgentMismatch {
+                    execution_ref: correlation.execution_ref.clone(),
+                    agent_ref: agency.agent_ref.clone(),
+                });
+            }
+            if let Some(handoff) = &correlation.handoff {
+                let source = snapshot
+                    .view
+                    .agencies
+                    .iter()
+                    .find(|agency| agency.agency_ref == handoff.from_agency_ref)
+                    .ok_or_else(|| FactoryDevelopmentalReadError::AgencyNotFound {
+                        run_ref: correlation.run_ref.to_string(),
+                        agency_ref: handoff.from_agency_ref.clone(),
+                    })?;
+                if source.return_ref.as_deref() != Some(handoff.return_ref.as_str()) {
+                    return Err(FactoryDevelopmentalReadError::HandoffReturnMismatch {
+                        agency_ref: handoff.from_agency_ref.clone(),
+                        return_ref: handoff.return_ref.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn workflow_unit_summary(
         &self,
         workflow: &CompiledWorkflow,
@@ -430,6 +636,27 @@ impl FactoryDevelopmentalState {
             })
             .collect::<Vec<_>>();
         runs.sort_by(|left, right| left.run_ref.cmp(&right.run_ref));
+        let run_refs = runs
+            .iter()
+            .map(|correlation| correlation.run_ref.clone())
+            .collect::<BTreeSet<_>>();
+        let lower = self
+            .execution_correlations
+            .iter()
+            .filter(|correlation| {
+                &correlation.workflow_unit_ref == workflow_unit_ref
+                    && run_refs.contains(&correlation.run_ref)
+            })
+            .collect::<Vec<_>>();
+        let values = |select: fn(&FactoryExecutionCorrelation) -> String| {
+            let values = lower
+                .iter()
+                .map(|correlation| select(correlation))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect::<Vec<_>>();
+            (!values.is_empty()).then_some(values)
+        };
         FactoryWorkflowUnitCurrentCorrelation {
             run_journey_status: if runs.is_empty() {
                 FactoryWorkflowUnitCorrelationStatus::Absent
@@ -438,10 +665,14 @@ impl FactoryDevelopmentalState {
             },
             run_journey_basis: "RunMap Work node semanticRef plus Factory Journey run link".into(),
             runs,
-            lower_correlation_status: FactoryLowerCorrelationStatus::NotOwnerEstablished,
-            agency_refs: None,
-            execution_refs: None,
-            telemetry_refs: None,
+            lower_correlation_status: if lower.is_empty() {
+                FactoryLowerCorrelationStatus::NotOwnerEstablished
+            } else {
+                FactoryLowerCorrelationStatus::OwnerEstablished
+            },
+            agency_refs: values(|correlation| correlation.agency_ref.clone()),
+            execution_refs: values(|correlation| correlation.execution_ref.clone()),
+            telemetry_refs: values(|correlation| correlation.telemetry_ref.to_string()),
         }
     }
 
@@ -587,6 +818,13 @@ impl FactoryDevelopmentalFileProvider {
             .workflow_unit_reading(workflow_unit_ref, run_ref)?)
     }
 
+    pub fn execution_telemetry_reading(
+        &self,
+        telemetry_ref: &Ref,
+    ) -> Result<FactoryExecutionTelemetryReading, FactoryDevelopmentalProviderError> {
+        Ok(self.state.execution_telemetry_reading(telemetry_ref)?)
+    }
+
     pub fn execute_action(
         &mut self,
         invocation: &FactoryActionInvocation,
@@ -722,6 +960,433 @@ pub struct FactoryRunReading {
     pub candidates: Vec<CandidateRecord>,
     pub human_requests: Vec<HumanRequestRecord>,
     pub actions: Vec<FactoryActionDescriptor>,
+}
+
+/// Factory-owned relation from one stable WorkflowUnit to one concrete
+/// Execution. All non-Factory actuality remains linked to its native owner.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryExecutionCorrelation {
+    pub correlation_ref: Ref,
+    pub telemetry_ref: Ref,
+    pub run_ref: RunRef,
+    pub workflow_unit_ref: WorkflowUnitRef,
+    pub execution_ref: String,
+    pub agency_ref: String,
+    pub carrier: FactoryAgencyCarrier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<FactoryAgencyHandoff>,
+    pub temporal: FactoryTemporalCorrelation,
+    pub model_usage: FactoryOwnerTelemetryLink,
+    pub material_usage: FactoryOwnerTelemetryLink,
+}
+
+impl FactoryExecutionCorrelation {
+    fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
+        if self.correlation_ref.kind() != "execution-correlation" {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: self.correlation_ref.to_string(),
+                detail: "correlationRef must have kind execution-correlation".into(),
+            });
+        }
+        if self.telemetry_ref.kind() != "telemetry" {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: self.correlation_ref.to_string(),
+                detail: "telemetryRef must have kind telemetry".into(),
+            });
+        }
+        require_correlation_text(&self.execution_ref, "executionRef", &self.correlation_ref)?;
+        require_correlation_text(&self.agency_ref, "agencyRef", &self.correlation_ref)?;
+        self.carrier.validate(&self.correlation_ref)?;
+        if let Some(handoff) = &self.handoff {
+            handoff.validate(&self.correlation_ref)?;
+            if handoff.from_agency_ref == self.agency_ref {
+                return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: self.correlation_ref.to_string(),
+                    detail: "handoff must cross two distinct Agencies".into(),
+                });
+            }
+        }
+        self.temporal.validate(&self.correlation_ref)?;
+        self.model_usage.validate(
+            FactoryTelemetryOwner::Actuation,
+            "modelUsage",
+            &self.correlation_ref,
+        )?;
+        self.material_usage.validate(
+            FactoryTelemetryOwner::Workcell,
+            "materialUsage",
+            &self.correlation_ref,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryAgencyCarrier {
+    pub mechanism: FactoryAgencyCarrierMechanism,
+    /// Native provider/session/team/carrier identity; never an AgentRef.
+    pub carrier_ref: String,
+    /// Actuation-owned determination which established the situated Agency.
+    pub determination_ref: String,
+    pub source: FactoryRevisionedOwnerRef,
+}
+
+impl FactoryAgencyCarrier {
+    fn validate(&self, correlation_ref: &Ref) -> Result<(), FactoryDevelopmentalReadError> {
+        require_correlation_text(&self.carrier_ref, "carrier.carrierRef", correlation_ref)?;
+        require_correlation_text(
+            &self.determination_ref,
+            "carrier.determinationRef",
+            correlation_ref,
+        )?;
+        if self.source.owner != FactoryTelemetryOwner::Actuation {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: correlation_ref.to_string(),
+                detail: "carrier source must be owned by Actuation".into(),
+            });
+        }
+        self.source.validate("carrier.source", correlation_ref)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryAgencyCarrierMechanism {
+    NativeHarness,
+    ProviderSubagent,
+    ProviderTeam,
+    Acp,
+    A2a,
+    AikitGateway,
+    PersistentAgent,
+    SharedField,
+    SourceProvenAdapter,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryAgencyHandoff {
+    pub from_agency_ref: String,
+    /// Actuation-owned delegation/authority evidence. A message ref is never
+    /// accepted in this field.
+    pub delegation_ref: String,
+    pub return_ref: String,
+    #[serde(default)]
+    pub message_refs: Vec<String>,
+    pub source: FactoryRevisionedOwnerRef,
+}
+
+impl FactoryAgencyHandoff {
+    fn validate(&self, correlation_ref: &Ref) -> Result<(), FactoryDevelopmentalReadError> {
+        require_correlation_text(
+            &self.from_agency_ref,
+            "handoff.fromAgencyRef",
+            correlation_ref,
+        )?;
+        require_correlation_text(
+            &self.delegation_ref,
+            "handoff.delegationRef",
+            correlation_ref,
+        )?;
+        require_correlation_text(&self.return_ref, "handoff.returnRef", correlation_ref)?;
+        for message_ref in &self.message_refs {
+            require_correlation_text(message_ref, "handoff.messageRefs", correlation_ref)?;
+            if message_ref == &self.delegation_ref {
+                return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(),
+                    detail: "message/address identity cannot also be delegation authority".into(),
+                });
+            }
+        }
+        if self.source.owner != FactoryTelemetryOwner::Actuation {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: correlation_ref.to_string(),
+                detail: "handoff source must be owned by Actuation".into(),
+            });
+        }
+        self.source.validate("handoff.source", correlation_ref)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryTemporalCorrelation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started: Option<FactoryTemporalFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated: Option<FactoryTemporalFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed: Option<FactoryTemporalFact>,
+    #[serde(default)]
+    pub activity_refs: Vec<FactoryRevisionedOwnerRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FactoryRevisionedOwnerRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub change_horizon: Option<FactoryRevisionedOwnerRef>,
+    #[serde(default)]
+    pub source_changes: Vec<FactoryRevisionedOwnerRef>,
+    #[serde(default)]
+    pub day_refs: Vec<FactoryRevisionedOwnerRef>,
+}
+
+impl FactoryTemporalCorrelation {
+    fn validate(&self, correlation_ref: &Ref) -> Result<(), FactoryDevelopmentalReadError> {
+        for (field, fact) in [
+            ("temporal.started", self.started.as_ref()),
+            ("temporal.updated", self.updated.as_ref()),
+            ("temporal.completed", self.completed.as_ref()),
+        ] {
+            if let Some(fact) = fact {
+                require_correlation_text(&fact.value, field, correlation_ref)?;
+                fact.source.validate(field, correlation_ref)?;
+            }
+        }
+        for (field, references, expected_owner) in [
+            (
+                "temporal.activityRefs",
+                self.activity_refs.as_slice(),
+                FactoryTelemetryOwner::Actuation,
+            ),
+            (
+                "temporal.sourceChanges",
+                self.source_changes.as_slice(),
+                FactoryTelemetryOwner::Central,
+            ),
+            (
+                "temporal.dayRefs",
+                self.day_refs.as_slice(),
+                FactoryTelemetryOwner::Central,
+            ),
+        ] {
+            for reference in references {
+                if reference.owner != expected_owner {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(),
+                        detail: format!("{field} must retain {expected_owner:?} ownership"),
+                    });
+                }
+                reference.validate(field, correlation_ref)?;
+            }
+        }
+        for (field, reference) in [
+            ("temporal.flow", self.flow.as_ref()),
+            ("temporal.changeHorizon", self.change_horizon.as_ref()),
+        ] {
+            if let Some(reference) = reference {
+                if reference.owner != FactoryTelemetryOwner::Central {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(),
+                        detail: format!("{field} must retain Central ownership"),
+                    });
+                }
+                reference.validate(field, correlation_ref)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryTemporalFact {
+    pub value: String,
+    pub source: FactoryRevisionedOwnerRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryRevisionedOwnerRef {
+    pub owner: FactoryTelemetryOwner,
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub revision: String,
+    pub standing: FactoryObservationStanding,
+}
+
+impl FactoryRevisionedOwnerRef {
+    fn validate(
+        &self,
+        field: &str,
+        correlation_ref: &Ref,
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        require_correlation_text(&self.reference, &format!("{field}.ref"), correlation_ref)?;
+        require_correlation_text(
+            &self.revision,
+            &format!("{field}.revision"),
+            correlation_ref,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryTelemetryOwner {
+    Factory,
+    Central,
+    Actuation,
+    Aikit,
+    Workcell,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryObservationStanding {
+    Observed,
+    ProviderReported,
+    NormalizedFromNative,
+    Derived,
+    Estimated,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryOwnerTelemetryLink {
+    pub owner: FactoryTelemetryOwner,
+    pub availability: FactoryTelemetryAvailability,
+    #[serde(default)]
+    pub observations: Vec<FactoryRevisionedOwnerRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+impl FactoryOwnerTelemetryLink {
+    fn validate(
+        &self,
+        expected_owner: FactoryTelemetryOwner,
+        field: &str,
+        correlation_ref: &Ref,
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        if self.owner != expected_owner {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: correlation_ref.to_string(),
+                detail: format!("{field} must retain {expected_owner:?} ownership"),
+            });
+        }
+        match self.availability {
+            FactoryTelemetryAvailability::Available if self.observations.is_empty() => {
+                return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(),
+                    detail: format!("{field} is available but has no owner observation refs"),
+                });
+            }
+            FactoryTelemetryAvailability::Unavailable
+            | FactoryTelemetryAvailability::Unsupported
+                if !self.observations.is_empty() =>
+            {
+                return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(),
+                    detail: format!("{field} cannot carry observations while unavailable"),
+                });
+            }
+            _ => {}
+        }
+        if !matches!(self.availability, FactoryTelemetryAvailability::Available)
+            && self
+                .reason
+                .as_deref()
+                .is_none_or(|reason| reason.trim().is_empty())
+        {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: correlation_ref.to_string(),
+                detail: format!("{field} absence requires a reason"),
+            });
+        }
+        for observation in &self.observations {
+            if observation.owner != expected_owner {
+                return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(),
+                    detail: format!("{field} observation has the wrong native owner"),
+                });
+            }
+            observation.validate(field, correlation_ref)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryTelemetryAvailability {
+    Available,
+    Unavailable,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryExecutionTelemetryReading {
+    pub contract: String,
+    pub provenance: FactoryExecutionTelemetryProvenance,
+    pub telemetry_ref: Ref,
+    pub project_ref: ProjectRef,
+    pub run_ref: RunRef,
+    pub workflow_unit_ref: WorkflowUnitRef,
+    pub execution_ref: String,
+    pub condition: FactoryExecutionCondition,
+    pub temporal: FactoryTemporalCorrelation,
+    pub model_usage: FactoryOwnerTelemetryLink,
+    pub material_usage: FactoryOwnerTelemetryLink,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<FactoryAgencyHandoff>,
+    pub return_state: FactoryExecutionReturnState,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryExecutionTelemetryProvenance {
+    pub owner: String,
+    pub factory_state_revision: Revision,
+    pub correlation_ref: Ref,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryExecutionCondition {
+    pub agent_ref: String,
+    pub agency_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actuation_ref: Option<String>,
+    pub carrier: FactoryAgencyCarrier,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_composition_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_space_ref: Option<String>,
+    #[serde(default)]
+    pub surface_refs: Vec<String>,
+    #[serde(default)]
+    pub workcell_binding_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryExecutionReturnState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agency_return_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agency_return_state: Option<String>,
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+}
+
+fn require_correlation_text(
+    value: &str,
+    field: &str,
+    correlation_ref: &Ref,
+) -> Result<(), FactoryDevelopmentalReadError> {
+    if value.trim().is_empty() {
+        return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+            correlation_ref: correlation_ref.to_string(),
+            detail: format!("{field} cannot be empty"),
+        });
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -873,6 +1538,7 @@ pub enum FactoryWorkflowUnitCorrelationStatus {
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FactoryLowerCorrelationStatus {
+    OwnerEstablished,
     NotOwnerEstablished,
 }
 
@@ -966,9 +1632,40 @@ pub enum FactoryDevelopmentalReadError {
     JourneyNotFound(String),
     RunNotFound(String),
     WorkflowUnitNotFound(String),
+    ExecutionTelemetryNotFound(String),
     DuplicateJourney(String),
     DuplicateCompiledWorkflow(String),
     DuplicateWorkflowUnit(String),
+    DuplicateExecutionCorrelation(String),
+    DuplicateExecutionTelemetry(String),
+    AgencyNotFound {
+        run_ref: String,
+        agency_ref: String,
+    },
+    ExecutionNotFound {
+        run_ref: String,
+        execution_ref: String,
+    },
+    ExecutionUnitNotInRun {
+        run_ref: String,
+        workflow_unit_ref: String,
+    },
+    ExecutionAgencyMismatch {
+        execution_ref: String,
+        agency_ref: String,
+    },
+    ExecutionAgentMismatch {
+        execution_ref: String,
+        agent_ref: String,
+    },
+    HandoffReturnMismatch {
+        agency_ref: String,
+        return_ref: String,
+    },
+    InvalidExecutionCorrelation {
+        correlation_ref: String,
+        detail: String,
+    },
     ProjectJourneyMismatch {
         project_ref: String,
         journey_ref: String,
@@ -1047,8 +1744,9 @@ impl Error for FactoryDevelopmentalProviderError {}
 mod tests {
     use super::*;
     use crate::build::{
-        CandidateRecord, FactoryActionAuthority, FactoryActionInvocation,
-        REQUEST_MORE_EVIDENCE_ACTION_REF, REQUEST_MORE_EVIDENCE_CAPABILITY_REF,
+        AgencyRecord, CandidateRecord, ExecutionRecord, FactoryActionAuthority,
+        FactoryActionInvocation, REQUEST_MORE_EVIDENCE_ACTION_REF,
+        REQUEST_MORE_EVIDENCE_CAPABILITY_REF,
     };
     use crate::cli::execute_cli;
     use crate::core::run::{Project, Run};
@@ -1148,6 +1846,231 @@ mod tests {
                 .unwrap();
         }
         state.with_workflow_sources(vec![source]).unwrap()
+    }
+
+    fn owner_ref(
+        owner: FactoryTelemetryOwner,
+        reference: &str,
+        revision: &str,
+    ) -> FactoryRevisionedOwnerRef {
+        FactoryRevisionedOwnerRef {
+            owner,
+            reference: reference.into(),
+            revision: revision.into(),
+            standing: FactoryObservationStanding::Observed,
+        }
+    }
+
+    fn unavailable(owner: FactoryTelemetryOwner, reason: &str) -> FactoryOwnerTelemetryLink {
+        FactoryOwnerTelemetryLink {
+            owner,
+            availability: FactoryTelemetryAvailability::Unavailable,
+            observations: vec![],
+            reason: Some(reason.into()),
+        }
+    }
+
+    fn correlated_state() -> FactoryDevelopmentalState {
+        let mut state = state_with_workflow(true);
+        let workflow = state.compile_workflows().unwrap().remove(0);
+        let inspect = workflow.unit("inspect-source").unwrap().reference.clone();
+        let implement = workflow
+            .unit("implement-compiler")
+            .unwrap()
+            .reference
+            .clone();
+        let run_ref: RunRef = RUN.parse().unwrap();
+
+        state
+            .build
+            .insert_agency(AgencyRecord {
+                run_ref: run_ref.clone(),
+                agency_ref: "agency:parasakti/research".into(),
+                agent_ref: "agent:parasakti".into(),
+                label: "Parāśakti research Agency".into(),
+                position: None,
+                root_scope_ref: None,
+                metagency_grant_refs: vec![],
+                actuation_ref: Some("actuation:inspect-source".into()),
+                return_ref: Some("return:inspect-source".into()),
+                return_state: Some("returned".into()),
+            })
+            .unwrap();
+        state
+            .build
+            .insert_agency(AgencyRecord {
+                run_ref: run_ref.clone(),
+                agency_ref: "agency:parasakti/implementation".into(),
+                agent_ref: "agent:parasakti".into(),
+                label: "Parāśakti implementation Agency".into(),
+                position: None,
+                root_scope_ref: None,
+                metagency_grant_refs: vec![],
+                actuation_ref: Some("actuation:implement-compiler".into()),
+                return_ref: None,
+                return_state: None,
+            })
+            .unwrap();
+        state
+            .build
+            .insert_execution(ExecutionRecord {
+                run_ref: run_ref.clone(),
+                execution_ref: "execution:inspect-source".into(),
+                status: "returned".into(),
+                agency_ref: Some("agency:parasakti/research".into()),
+                agent_ref: Some("agent:parasakti".into()),
+                harness_ref: Some("harness:codex".into()),
+                harness_composition_ref: Some("harness-composition:research".into()),
+                agent_session_ref: Some("agent-session:research".into()),
+                session_space_ref: Some("session-space:research".into()),
+                surface_refs: vec!["surface:codex".into()],
+                workcell_binding_refs: vec!["binding:local-research".into()],
+                native_trajectory_ref: None,
+            })
+            .unwrap();
+        state
+            .build
+            .insert_execution(ExecutionRecord {
+                run_ref: run_ref.clone(),
+                execution_ref: "execution:implement-compiler".into(),
+                status: "running".into(),
+                agency_ref: Some("agency:parasakti/implementation".into()),
+                agent_ref: Some("agent:parasakti".into()),
+                harness_ref: Some("harness:pi".into()),
+                harness_composition_ref: Some("harness-composition:implementation".into()),
+                agent_session_ref: Some("agent-session:implementation".into()),
+                session_space_ref: Some("session-space:implementation".into()),
+                surface_refs: vec!["surface:acp".into()],
+                workcell_binding_refs: vec!["binding:lan-gpu".into()],
+                native_trajectory_ref: None,
+            })
+            .unwrap();
+
+        let actuation_source = owner_ref(
+            FactoryTelemetryOwner::Actuation,
+            "actuation-stream:factory-199",
+            "b6ed67e57ef45c5b0434ad63e296a31ce56d2e99",
+        );
+        let central_flow = owner_ref(
+            FactoryTelemetryOwner::Central,
+            "flow:factory-agentic-w4",
+            "flow-revision:12",
+        );
+        let unavailable_model = unavailable(
+            FactoryTelemetryOwner::Actuation,
+            "actuation.model-usage observation is not published at owner revision b6ed67e",
+        );
+        let unavailable_material = unavailable(
+            FactoryTelemetryOwner::Workcell,
+            "workcell resource-usage observation is not published at owner revision ab7540b",
+        );
+        let correlations = vec![
+            FactoryExecutionCorrelation {
+                correlation_ref: "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA1"
+                    .parse()
+                    .unwrap(),
+                telemetry_ref: "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA2".parse().unwrap(),
+                run_ref: run_ref.clone(),
+                workflow_unit_ref: inspect,
+                execution_ref: "execution:inspect-source".into(),
+                agency_ref: "agency:parasakti/research".into(),
+                carrier: FactoryAgencyCarrier {
+                    mechanism: FactoryAgencyCarrierMechanism::NativeHarness,
+                    carrier_ref: "harness-instance:codex-local".into(),
+                    determination_ref: "determination:research".into(),
+                    source: actuation_source.clone(),
+                },
+                handoff: None,
+                temporal: FactoryTemporalCorrelation {
+                    started: Some(FactoryTemporalFact {
+                        value: "2026-09-07T23:55:00+01:00".into(),
+                        source: actuation_source.clone(),
+                    }),
+                    updated: None,
+                    completed: Some(FactoryTemporalFact {
+                        value: "2026-09-08T00:05:00+01:00".into(),
+                        source: actuation_source.clone(),
+                    }),
+                    activity_refs: vec![owner_ref(
+                        FactoryTelemetryOwner::Actuation,
+                        "activity:inspect-source",
+                        "stream-cursor:41",
+                    )],
+                    flow: Some(central_flow.clone()),
+                    change_horizon: Some(owner_ref(
+                        FactoryTelemetryOwner::Central,
+                        "change-horizon:factory-w4",
+                        "cursor:18",
+                    )),
+                    source_changes: vec![owner_ref(
+                        FactoryTelemetryOwner::Central,
+                        "source-change:compiler-inspection",
+                        "change:7",
+                    )],
+                    day_refs: vec![
+                        owner_ref(
+                            FactoryTelemetryOwner::Central,
+                            "day:2026-09-07",
+                            "day-revision:1",
+                        ),
+                        owner_ref(
+                            FactoryTelemetryOwner::Central,
+                            "day:2026-09-08",
+                            "day-revision:1",
+                        ),
+                    ],
+                },
+                model_usage: unavailable_model.clone(),
+                material_usage: unavailable_material.clone(),
+            },
+            FactoryExecutionCorrelation {
+                correlation_ref: "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3"
+                    .parse()
+                    .unwrap(),
+                telemetry_ref: "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4".parse().unwrap(),
+                run_ref,
+                workflow_unit_ref: implement,
+                execution_ref: "execution:implement-compiler".into(),
+                agency_ref: "agency:parasakti/implementation".into(),
+                carrier: FactoryAgencyCarrier {
+                    mechanism: FactoryAgencyCarrierMechanism::Acp,
+                    carrier_ref: "acp-session:implementation".into(),
+                    determination_ref: "determination:implementation".into(),
+                    source: actuation_source.clone(),
+                },
+                handoff: Some(FactoryAgencyHandoff {
+                    from_agency_ref: "agency:parasakti/research".into(),
+                    delegation_ref: "delegation:research-to-implementation".into(),
+                    return_ref: "return:inspect-source".into(),
+                    message_refs: vec!["message:handoff-context".into()],
+                    source: actuation_source.clone(),
+                }),
+                temporal: FactoryTemporalCorrelation {
+                    started: Some(FactoryTemporalFact {
+                        value: "2026-09-08T00:06:00+01:00".into(),
+                        source: actuation_source,
+                    }),
+                    updated: None,
+                    completed: None,
+                    activity_refs: vec![owner_ref(
+                        FactoryTelemetryOwner::Actuation,
+                        "activity:implement-compiler",
+                        "stream-cursor:42",
+                    )],
+                    flow: Some(central_flow),
+                    change_horizon: None,
+                    source_changes: vec![],
+                    day_refs: vec![owner_ref(
+                        FactoryTelemetryOwner::Central,
+                        "day:2026-09-08",
+                        "day-revision:1",
+                    )],
+                },
+                model_usage: unavailable_model,
+                material_usage: unavailable_material,
+            },
+        ];
+        state.with_execution_correlations(correlations).unwrap()
     }
 
     #[test]
@@ -1312,6 +2235,146 @@ mod tests {
         assert_eq!(reading.current_correlation.agency_refs, None);
         assert_eq!(reading.current_correlation.execution_refs, None);
         assert_eq!(reading.current_correlation.telemetry_refs, None);
+    }
+
+    #[test]
+    fn heterogeneous_agency_and_temporal_telemetry_preserve_owner_boundaries() {
+        let state = correlated_state();
+        let workflows = state.compile_workflows().unwrap();
+        let inspect = workflows[0].unit("inspect-source").unwrap();
+        let implement = workflows[0].unit("implement-compiler").unwrap();
+
+        let inspect_reading = state
+            .workflow_unit_reading(&inspect.reference, Some(&RUN.parse().unwrap()))
+            .unwrap();
+        let implement_reading = state
+            .workflow_unit_reading(&implement.reference, Some(&RUN.parse().unwrap()))
+            .unwrap();
+        assert_eq!(
+            inspect_reading.current_correlation.lower_correlation_status,
+            FactoryLowerCorrelationStatus::OwnerEstablished
+        );
+        assert_eq!(
+            inspect_reading.current_correlation.agency_refs,
+            Some(vec!["agency:parasakti/research".into()])
+        );
+        assert_eq!(
+            implement_reading.current_correlation.execution_refs,
+            Some(vec!["execution:implement-compiler".into()])
+        );
+
+        let first = state
+            .execution_telemetry_reading(&"telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA2".parse().unwrap())
+            .unwrap();
+        let second = state
+            .execution_telemetry_reading(&"telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4".parse().unwrap())
+            .unwrap();
+        assert_eq!(first.condition.agent_ref, second.condition.agent_ref);
+        assert_ne!(first.condition.agency_ref, second.condition.agency_ref);
+        assert_eq!(
+            first.condition.carrier.mechanism,
+            FactoryAgencyCarrierMechanism::NativeHarness
+        );
+        assert_eq!(
+            second.condition.carrier.mechanism,
+            FactoryAgencyCarrierMechanism::Acp
+        );
+        assert_eq!(first.temporal.day_refs.len(), 2);
+        assert_eq!(first.run_ref, second.run_ref);
+        assert_eq!(
+            second.handoff.as_ref().unwrap().delegation_ref,
+            "delegation:research-to-implementation"
+        );
+        assert_eq!(
+            second.handoff.as_ref().unwrap().return_ref,
+            "return:inspect-source"
+        );
+        assert_eq!(
+            first.model_usage.availability,
+            FactoryTelemetryAvailability::Unavailable
+        );
+        assert!(first.model_usage.observations.is_empty());
+        assert_eq!(first.model_usage.owner, FactoryTelemetryOwner::Actuation);
+        assert_eq!(
+            first.material_usage.availability,
+            FactoryTelemetryAvailability::Unavailable
+        );
+        assert!(first.material_usage.observations.is_empty());
+        assert_eq!(first.material_usage.owner, FactoryTelemetryOwner::Workcell);
+    }
+
+    #[test]
+    fn message_identity_cannot_satisfy_handoff_delegation() {
+        let mut state = correlated_state();
+        let handoff = state.execution_correlations[1].handoff.as_mut().unwrap();
+        handoff.delegation_ref = handoff.message_refs[0].clone();
+        assert!(matches!(
+            state.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("message/address identity")
+        ));
+    }
+
+    #[test]
+    fn telemetry_links_cannot_change_owner_or_attach_values_to_absence() {
+        let mut wrong_owner = correlated_state();
+        wrong_owner.execution_correlations[0].material_usage.owner =
+            FactoryTelemetryOwner::Actuation;
+        assert!(matches!(
+            wrong_owner.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("Workcell ownership")
+        ));
+
+        let mut counterfeit_observation = correlated_state();
+        counterfeit_observation.execution_correlations[0]
+            .model_usage
+            .observations
+            .push(owner_ref(
+                FactoryTelemetryOwner::Actuation,
+                "model-usage:counterfeit",
+                "unknown",
+            ));
+        assert!(matches!(
+            counterfeit_observation.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("cannot carry observations while unavailable")
+        ));
+    }
+
+    #[test]
+    fn provider_reopens_and_cli_reads_the_same_execution_telemetry() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental.json");
+        FactoryDevelopmentalFileProvider::create(&path, correlated_state()).unwrap();
+        let output = execute_cli(
+            &[
+                "development".into(),
+                "execution-telemetry".into(),
+                path.to_string_lossy().into_owned(),
+                "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4".into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let reading: FactoryExecutionTelemetryReading = serde_json::from_str(&output).unwrap();
+        assert_eq!(
+            reading.contract,
+            FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT
+        );
+        assert_eq!(
+            reading.condition.carrier.source.reference,
+            "actuation-stream:factory-199"
+        );
+        assert_eq!(
+            reading.condition.workcell_binding_refs,
+            vec!["binding:lan-gpu"]
+        );
+        assert_eq!(
+            reading.temporal.flow.as_ref().unwrap().reference,
+            "flow:factory-agentic-w4"
+        );
     }
 
     #[test]
@@ -1491,5 +2554,35 @@ mod tests {
             unit["currentCorrelation"]["lowerCorrelationStatus"],
             cases["correlationLaw"]["lower"]
         );
+
+        let correlated = correlated_state();
+        let telemetry = serde_json::to_value(
+            correlated
+                .execution_telemetry_reading(
+                    &"telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4".parse().unwrap(),
+                )
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            telemetry["contract"],
+            cases["contracts"]["executionTelemetry"]
+        );
+        assert_eq!(
+            telemetry["modelUsage"]["owner"],
+            cases["executionCorrelationLaw"]["modelUsageOwner"]
+        );
+        assert_eq!(
+            telemetry["materialUsage"]["owner"],
+            cases["executionCorrelationLaw"]["materialUsageOwner"]
+        );
+        assert_eq!(
+            telemetry["modelUsage"]["availability"],
+            cases["executionCorrelationLaw"]["unavailable"]
+        );
+        assert!(telemetry.get("tokens").is_none());
+        assert!(telemetry.get("cost").is_none());
+        assert!(telemetry.get("cpu").is_none());
+        assert!(telemetry.get("memory").is_none());
     }
 }
