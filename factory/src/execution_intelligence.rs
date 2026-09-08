@@ -17,6 +17,8 @@ pub const AIKIT_MODEL_ROSTER_VERSION: &str = "aikit.model-roster/v1";
 pub struct ExecutionDemand {
     pub project_ref: String,
     pub run_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow_unit_ref: Option<String>,
     pub agency_ref: Option<String>,
     pub profile_ref: Option<String>,
     pub use_type: String,
@@ -119,6 +121,7 @@ pub enum ExecutionInteropError {
     WrongRosterVersion(String),
     EmptyModelRef,
     EmptyRunRef,
+    InvalidWorkflowUnitRef(String),
 }
 
 pub fn accept_aikit_selection(
@@ -128,6 +131,16 @@ pub fn accept_aikit_selection(
 ) -> Result<ExecutionDisposition, ExecutionInteropError> {
     if demand.run_ref.trim().is_empty() {
         return Err(ExecutionInteropError::EmptyRunRef);
+    }
+    if let Some(reference) = &demand.workflow_unit_ref {
+        if reference
+            .parse::<crate::core::run::WorkflowUnitRef>()
+            .is_err()
+        {
+            return Err(ExecutionInteropError::InvalidWorkflowUnitRef(
+                reference.clone(),
+            ));
+        }
     }
     if selection.model_ref.trim().is_empty() {
         return Err(ExecutionInteropError::EmptyModelRef);
@@ -177,6 +190,7 @@ mod tests {
         ExecutionDemand {
             project_ref: "project:factory".into(),
             run_ref: "run:184".into(),
+            workflow_unit_ref: None,
             agency_ref: Some("agency:mahamaya".into()),
             profile_ref: Some("profile:rust".into()),
             use_type: "coding".into(),

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.agent-workflow-source.schema/v1",
+  "title": "Factory Agent-first workflow source",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "coordinationContract", "source", "workflowKey", "units"],
+  "properties": {
+    "schemaVersion": {"const": "factory.agent-workflow-source/v1"},
+    "coordinationContract": {"const": "factory.bounded-coordination/v1"},
+    "source": {"$ref": "#/$defs/sourceProvenance"},
+    "workflowKey": {"$ref": "#/$defs/locator"},
+    "units": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/unit"}},
+    "barriers": {"type": "array", "items": {"$ref": "#/$defs/barrier"}},
+    "nesting": {"type": "array", "items": {"$ref": "#/$defs/nesting"}}
+  },
+  "$defs": {
+    "locator": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"},
+    "ref": {"type": "string", "pattern": "^[a-z][a-z0-9-]*:[0-9A-HJKMNP-TV-Z]{26}$"},
+    "nonEmpty": {"type": "string", "minLength": 1},
+    "refSet": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/ref"}},
+    "locatorSet": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/locator"}},
+    "textSet": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmpty"}},
+    "sourceProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "revision", "digest"],
+      "properties": {
+        "ref": {"type": "string", "pattern": "^workflow-source:[0-9A-HJKMNP-TV-Z]{26}$"},
+        "revision": {"$ref": "#/$defs/nonEmpty"},
+        "digest": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"},
+        "temporalRef": {"type": "string", "minLength": 1},
+        "flowRef": {"type": "string", "minLength": 1}
+      }
+    },
+    "agentRequirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agentRefs": {"$ref": "#/$defs/refSet"},
+        "agentSetRefs": {"$ref": "#/$defs/refSet"},
+        "agencyRefs": {"$ref": "#/$defs/refSet"}
+      },
+      "anyOf": [
+        {"required": ["agentRefs"], "properties": {"agentRefs": {"minItems": 1}}},
+        {"required": ["agentSetRefs"], "properties": {"agentSetRefs": {"minItems": 1}}},
+        {"required": ["agencyRefs"], "properties": {"agencyRefs": {"minItems": 1}}}
+      ]
+    },
+    "unit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "developmentalConcern", "requiredDifference", "returnContract", "subjectRef", "basisRevision", "agentRequirements", "praxisRefs", "capabilityRefs", "permittedEffects", "verificationObligations", "returnAddress", "stopConditions", "escalationConditions"],
+      "properties": {
+        "key": {"$ref": "#/$defs/locator"},
+        "developmentalConcern": {"$ref": "#/$defs/nonEmpty"},
+        "requiredDifference": {"$ref": "#/$defs/nonEmpty"},
+        "returnContract": {"$ref": "#/$defs/nonEmpty"},
+        "subjectRef": {"$ref": "#/$defs/ref"},
+        "basisRevision": {"$ref": "#/$defs/nonEmpty"},
+        "agentRequirements": {"$ref": "#/$defs/agentRequirements"},
+        "praxisRefs": {"allOf": [{"$ref": "#/$defs/refSet"}, {"minItems": 1}]},
+        "capabilityRefs": {"allOf": [{"$ref": "#/$defs/refSet"}, {"minItems": 1}]},
+        "dependencies": {"$ref": "#/$defs/locatorSet"},
+        "independenceFrom": {"$ref": "#/$defs/locatorSet"},
+        "permittedEffects": {"allOf": [{"$ref": "#/$defs/textSet"}, {"minItems": 1}]},
+        "verificationObligations": {"allOf": [{"$ref": "#/$defs/textSet"}, {"minItems": 1}]},
+        "returnAddress": {"$ref": "#/$defs/ref"},
+        "stopConditions": {"$ref": "#/$defs/nonEmpty"},
+        "escalationConditions": {"$ref": "#/$defs/nonEmpty"}
+      }
+    },
+    "barrier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "waitsFor", "releases"],
+      "properties": {
+        "key": {"$ref": "#/$defs/locator"},
+        "waitsFor": {"allOf": [{"$ref": "#/$defs/locatorSet"}, {"minItems": 1}]},
+        "releases": {"allOf": [{"$ref": "#/$defs/locatorSet"}, {"minItems": 1}]}
+      }
+    },
+    "nesting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent", "child"],
+      "properties": {
+        "parent": {"$ref": "#/$defs/locator"},
+        "child": {"$ref": "#/$defs/locator"}
+      }
+    }
+  }
+}

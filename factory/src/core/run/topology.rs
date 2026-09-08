@@ -331,13 +331,25 @@ fn validate_node(run_ref: &RunRef, node: &TopologyNode) -> Result<(), TopologyEr
             }
             Ok(())
         }
-        NodeKind::Destination | NodeKind::Work | NodeKind::Gate | NodeKind::Authority => {
+        NodeKind::Destination | NodeKind::Gate | NodeKind::Authority => {
             if let Some(reference) = &node.semantic_ref {
                 return Err(TopologyError::WrongSemanticRef {
                     node: node.id.clone(),
                     expected_kind: "none",
                     actual_kind: reference.kind().to_owned(),
                 });
+            }
+            Ok(())
+        }
+        NodeKind::Work => {
+            if let Some(reference) = &node.semantic_ref {
+                if reference.kind() != "workflow-unit" {
+                    return Err(TopologyError::WrongSemanticRef {
+                        node: node.id.clone(),
+                        expected_kind: "workflow-unit",
+                        actual_kind: reference.kind().to_owned(),
+                    });
+                }
             }
             Ok(())
         }
