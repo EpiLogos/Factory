@@ -17,21 +17,31 @@ on:
       - 'factory/**'
       - '.github/workflows/prelocal-build.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace --locked
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: .
+      - name: Verify lockfile freshness (test legs owned by Factory Rust)
+        run: cargo metadata --locked --format-version 1 > /dev/null
 
   artifact:
     if: github.event_name == 'push'
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
