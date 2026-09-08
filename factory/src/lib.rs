@@ -22,6 +22,7 @@ pub mod journey_praxis;
 pub mod project_development;
 pub mod project_development_store;
 pub mod structural_ground;
+pub mod workflow;
 
 impl AsRef<core::identity::Ref> for journey::JourneyRef {
     fn as_ref(&self) -> &core::identity::Ref {

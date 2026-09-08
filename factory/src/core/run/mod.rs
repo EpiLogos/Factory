@@ -9,7 +9,7 @@ pub use model::{
     RunRegistry, RunThoughtCommand, RunThoughtOutcome, RunTopologyCommand, WriteAuthority,
 };
 pub use projection::{resolve_run_projection, RunProjectionIdentity};
-pub use refs::{ProjectRef, RunMapAddress, RunRef, TypedRefError};
+pub use refs::{ProjectRef, RunMapAddress, RunRef, TypedRefError, WorkflowUnitRef};
 pub use thought::{
     PassageAnchor, RunThought, RunThoughtField, RunThoughtId, RunThoughtLifecycle,
     ThoughtFieldError, ThoughtProducer,

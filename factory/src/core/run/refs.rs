@@ -102,6 +102,7 @@ macro_rules! typed_ref {
 
 typed_ref!(ProjectRef, "project");
 typed_ref!(RunRef, "run");
+typed_ref!(WorkflowUnitRef, "workflow-unit");
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct RunMapAddress(RunRef);
