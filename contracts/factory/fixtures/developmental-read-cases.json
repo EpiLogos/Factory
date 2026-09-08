@@ -1,13 +1,15 @@
 {
   "schema": "factory.developmental-read-cases/v1",
-  "base": "947ce7a6bcde644b0a58a0529cfc50f66e78b899",
+  "base": "1f03e79f0a0bf56653e236b1a8dd103dbc061128",
   "projectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAE",
   "journeyRef": "journey:01ARZ3NDEKTSV4RRFFQ69G5FAD",
   "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FAA",
   "contracts": {
     "project": "factory.project-reading/v1",
     "journey": "factory.journey-reading/v1",
-    "run": "factory.run-reading/v1"
+    "run": "factory.run-reading/v1",
+    "workflowUnitList": "factory.workflow-unit-list-reading/v1",
+    "workflowUnit": "factory.workflow-unit-reading/v1"
   },
   "requiredOwner": "factory",
   "requiredRunRelations": [
@@ -20,5 +22,43 @@
     "candidates",
     "humanRequests",
     "actions"
-  ]
+  ],
+  "requiredWorkflowUnitFields": [
+    "workflowUnitRef",
+    "locator",
+    "key",
+    "workflowKey",
+    "developmentalConcern",
+    "subjectRef",
+    "basisRevision",
+    "requiredDifference",
+    "requiredReturn",
+    "requiredVerification",
+    "agentRequirements",
+    "praxisRefs",
+    "capabilityRefs",
+    "dependencies",
+    "independenceFrom",
+    "barrierRelations",
+    "nesting",
+    "currentCorrelation"
+  ],
+  "workflowUnitProvenanceFields": [
+    "buildStateRevision",
+    "sourceRef",
+    "sourceRevision",
+    "sourceDigest",
+    "identityAlgorithm"
+  ],
+  "workflowUnitListProvenanceFields": [
+    "buildStateRevision",
+    "sourceBases"
+  ],
+  "correlationLaw": {
+    "runJourneyBasis": "RunMap Work node semanticRef plus Factory Journey run link",
+    "ownerEstablished": "owner-established",
+    "absent": "absent",
+    "lower": "not-owner-established",
+    "absentLowerValues": null
+  }
 }

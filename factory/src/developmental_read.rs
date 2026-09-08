@@ -1,4 +1,5 @@
-//! Versioned public reads over Factory-owned Project, Journey and Run state.
+//! Versioned public reads over Factory-owned Project, Journey, Run and compiled
+//! WorkflowUnit state.
 //!
 //! The read models are deliberately bounded by subject. They expose canonical
 //! Factory state without requiring a consumer to link to private storage or
@@ -13,13 +14,18 @@ use crate::build::{
     FactoryBuildSelection, FactoryBuildState, FactoryBuildViewProvider, HumanRequestRecord,
     FACTORY_NATIVE_OWNER,
 };
-use crate::core::identity::Revision;
-use crate::core::run::{ProjectRef, RunLifecycle, RunMap, RunRef};
+use crate::core::identity::{Ref, Revision};
+use crate::core::run::{ProjectRef, RunLifecycle, RunMap, RunMapAddress, RunRef, WorkflowUnitRef};
 use crate::journey::{
     Journey, JourneyCommission, JourneyParticipant, JourneyRecognitionLink, JourneyRef,
     JourneyReturn, JourneyStatus,
 };
+use crate::workflow::{
+    compile_workflow, CompiledAgentRequirements, CompiledWorkflow, CompiledWorkflowUnit,
+    WorkflowSource,
+};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -30,6 +36,9 @@ pub const FACTORY_DEVELOPMENTAL_STATE_SCHEMA: &str = "factory.developmental-stat
 pub const FACTORY_PROJECT_READING_CONTRACT: &str = "factory.project-reading/v1";
 pub const FACTORY_JOURNEY_READING_CONTRACT: &str = "factory.journey-reading/v1";
 pub const FACTORY_RUN_READING_CONTRACT: &str = "factory.run-reading/v1";
+pub const FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT: &str =
+    "factory.workflow-unit-list-reading/v1";
+pub const FACTORY_WORKFLOW_UNIT_READING_CONTRACT: &str = "factory.workflow-unit-reading/v1";
 pub const FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER: &str = "factory.developmental-local-provider/v1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,6 +47,8 @@ pub struct FactoryDevelopmentalState {
     pub schema: String,
     pub build: FactoryBuildState,
     pub journeys: Vec<Journey>,
+    #[serde(default)]
+    pub workflow_sources: Vec<WorkflowSource>,
 }
 
 impl FactoryDevelopmentalState {
@@ -50,9 +61,24 @@ impl FactoryDevelopmentalState {
             schema: FACTORY_DEVELOPMENTAL_STATE_SCHEMA.into(),
             build,
             journeys,
+            workflow_sources: Vec::new(),
         };
         state.validate()?;
         Ok(state)
+    }
+
+    /// Attach authoritative workflow source to the developmental owner state.
+    /// The source digest is checked and the compiled artifact is regenerated
+    /// here and again on reopen/read; caller-supplied compiled artifacts are
+    /// never persisted as Factory truth.
+    pub fn with_workflow_sources(
+        mut self,
+        mut workflow_sources: Vec<WorkflowSource>,
+    ) -> Result<Self, FactoryDevelopmentalReadError> {
+        workflow_sources.sort_by_key(workflow_source_identity);
+        self.workflow_sources = workflow_sources;
+        self.validate()?;
+        Ok(self)
     }
 
     pub fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
@@ -94,6 +120,7 @@ impl FactoryDevelopmentalState {
                 }
             }
         }
+        self.compile_workflows()?;
         Ok(())
     }
 
@@ -241,6 +268,216 @@ impl FactoryDevelopmentalState {
         })
     }
 
+    /// List compiled WorkflowUnits in deterministic source/locator order.
+    /// An optional Run bounds correlation to that Run while preserving the
+    /// complete Factory-owned unit definition.
+    pub fn workflow_units_reading(
+        &self,
+        run_ref: Option<&RunRef>,
+    ) -> Result<FactoryWorkflowUnitListReading, FactoryDevelopmentalReadError> {
+        if let Some(run_ref) = run_ref {
+            self.ensure_run(run_ref)?;
+        }
+        let compiled_workflows = self.compile_workflows()?;
+        let mut units = compiled_workflows
+            .iter()
+            .flat_map(|workflow| {
+                workflow
+                    .units
+                    .values()
+                    .map(move |unit| self.workflow_unit_summary(workflow, unit, run_ref))
+            })
+            .collect::<Vec<_>>();
+        units.sort_by(|left, right| left.locator.cmp(&right.locator));
+        Ok(FactoryWorkflowUnitListReading {
+            contract: FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT.into(),
+            provenance: FactoryWorkflowUnitListProvenance {
+                owner: FACTORY_NATIVE_OWNER.into(),
+                build_state_revision: self.build.revision(),
+                source_bases: compiled_workflows
+                    .iter()
+                    .map(|workflow| FactoryWorkflowSourceBasis {
+                        source_ref: workflow.source.reference.clone(),
+                        source_revision: workflow.source.revision.clone(),
+                        source_digest: workflow.source.digest.clone(),
+                    })
+                    .collect(),
+            },
+            project_ref: self.build.project().reference().clone(),
+            run_filter: run_ref.cloned(),
+            units,
+        })
+    }
+
+    /// Resolve one canonical WorkflowUnit without treating its requirements as
+    /// evidence of runtime assignment, Agency, execution or telemetry.
+    pub fn workflow_unit_reading(
+        &self,
+        workflow_unit_ref: &WorkflowUnitRef,
+        run_ref: Option<&RunRef>,
+    ) -> Result<FactoryWorkflowUnitReading, FactoryDevelopmentalReadError> {
+        if let Some(run_ref) = run_ref {
+            self.ensure_run(run_ref)?;
+        }
+        let compiled_workflows = self.compile_workflows()?;
+        let (workflow, unit) = compiled_workflows
+            .iter()
+            .find_map(|workflow| {
+                workflow
+                    .units
+                    .values()
+                    .find(|unit| &unit.reference == workflow_unit_ref)
+                    .map(|unit| (workflow, unit))
+            })
+            .ok_or_else(|| {
+                FactoryDevelopmentalReadError::WorkflowUnitNotFound(workflow_unit_ref.to_string())
+            })?;
+        let summary = self.workflow_unit_summary(workflow, unit, run_ref);
+        Ok(FactoryWorkflowUnitReading {
+            contract: FACTORY_WORKFLOW_UNIT_READING_CONTRACT.into(),
+            provenance: FactoryWorkflowUnitProvenance {
+                owner: FACTORY_NATIVE_OWNER.into(),
+                build_state_revision: self.build.revision(),
+                source_ref: workflow.source.reference.clone(),
+                source_revision: workflow.source.revision.clone(),
+                source_digest: workflow.source.digest.clone(),
+                identity_algorithm: workflow.identity_algorithm.clone(),
+            },
+            project_ref: self.build.project().reference().clone(),
+            workflow_unit_ref: unit.reference.clone(),
+            locator: summary.locator,
+            key: unit.key.clone(),
+            workflow_key: workflow.workflow_key.clone(),
+            developmental_concern: unit.developmental_concern.clone(),
+            subject_ref: unit.subject_ref.clone(),
+            basis_revision: unit.basis_revision.clone(),
+            required_difference: unit.required_difference.clone(),
+            required_return: FactoryWorkflowUnitReturnRequirement {
+                contract: unit.return_contract.clone(),
+                address: unit.return_address.clone(),
+            },
+            required_verification: unit.verification_obligations.clone(),
+            agent_requirements: unit.agent_requirements.clone(),
+            praxis_refs: unit.praxis_refs.clone(),
+            capability_refs: unit.capability_refs.clone(),
+            dependencies: unit.dependencies.clone(),
+            independence_from: unit.independence_from.clone(),
+            barrier_relations: barrier_relations(workflow, unit),
+            nesting: nesting_relations(workflow, unit),
+            permitted_effects: unit.permitted_effects.clone(),
+            stop_conditions: unit.stop_conditions.clone(),
+            escalation_conditions: unit.escalation_conditions.clone(),
+            current_correlation: summary.current_correlation,
+        })
+    }
+
+    fn workflow_unit_summary(
+        &self,
+        workflow: &CompiledWorkflow,
+        unit: &CompiledWorkflowUnit,
+        run_filter: Option<&RunRef>,
+    ) -> FactoryWorkflowUnitSummary {
+        FactoryWorkflowUnitSummary {
+            workflow_unit_ref: unit.reference.clone(),
+            locator: workflow_unit_locator(workflow, unit),
+            key: unit.key.clone(),
+            workflow_key: workflow.workflow_key.clone(),
+            source_ref: workflow.source.reference.clone(),
+            source_revision: workflow.source.revision.clone(),
+            source_digest: workflow.source.digest.clone(),
+            subject_ref: unit.subject_ref.clone(),
+            basis_revision: unit.basis_revision.clone(),
+            current_correlation: self.workflow_unit_correlation(&unit.reference, run_filter),
+        }
+    }
+
+    fn workflow_unit_correlation(
+        &self,
+        workflow_unit_ref: &WorkflowUnitRef,
+        run_filter: Option<&RunRef>,
+    ) -> FactoryWorkflowUnitCurrentCorrelation {
+        let candidate_runs = if let Some(run_ref) = run_filter {
+            vec![run_ref.clone()]
+        } else {
+            self.journeys
+                .iter()
+                .flat_map(|journey| journey.runs.iter().map(|link| link.run_ref.clone()))
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        };
+        let mut runs = candidate_runs
+            .into_iter()
+            .filter_map(|run_ref| {
+                let run = self.build.run(&run_ref)?;
+                let present = run
+                    .map()
+                    .nodes()
+                    .values()
+                    .any(|node| node.semantic_ref.as_ref() == Some(workflow_unit_ref.as_ref()));
+                present.then(|| FactoryWorkflowUnitRunCorrelation {
+                    run_ref: run_ref.clone(),
+                    run_revision: run.revision(),
+                    run_map_address: RunMapAddress::for_run(run_ref.clone()),
+                    topology_revision: run.map().topology_revision(),
+                    journey_refs: self
+                        .journeys
+                        .iter()
+                        .filter(|journey| journey.runs.iter().any(|link| link.run_ref == run_ref))
+                        .map(|journey| journey.journey_ref.clone())
+                        .collect(),
+                })
+            })
+            .collect::<Vec<_>>();
+        runs.sort_by(|left, right| left.run_ref.cmp(&right.run_ref));
+        FactoryWorkflowUnitCurrentCorrelation {
+            run_journey_status: if runs.is_empty() {
+                FactoryWorkflowUnitCorrelationStatus::Absent
+            } else {
+                FactoryWorkflowUnitCorrelationStatus::OwnerEstablished
+            },
+            run_journey_basis: "RunMap Work node semanticRef plus Factory Journey run link".into(),
+            runs,
+            lower_correlation_status: FactoryLowerCorrelationStatus::NotOwnerEstablished,
+            agency_refs: None,
+            execution_refs: None,
+            telemetry_refs: None,
+        }
+    }
+
+    fn compile_workflows(&self) -> Result<Vec<CompiledWorkflow>, FactoryDevelopmentalReadError> {
+        let mut identities = BTreeSet::new();
+        let mut unit_refs = BTreeSet::new();
+        let mut compiled_workflows = Vec::new();
+        for source in &self.workflow_sources {
+            let workflow = compile_workflow(source.clone()).map_err(|error| {
+                FactoryDevelopmentalReadError::InvalidWorkflowSource {
+                    source_ref: source.source.reference.to_string(),
+                    detail: error.to_string(),
+                }
+            })?;
+            let identity = workflow_identity(&workflow);
+            if !identities.insert(identity.clone()) {
+                return Err(FactoryDevelopmentalReadError::DuplicateCompiledWorkflow(
+                    format!(
+                        "{}@{}:{}#{}",
+                        identity.0, identity.1, identity.2, identity.3
+                    ),
+                ));
+            }
+            for unit in workflow.units.values() {
+                if !unit_refs.insert(unit.reference.clone()) {
+                    return Err(FactoryDevelopmentalReadError::DuplicateWorkflowUnit(
+                        unit.reference.to_string(),
+                    ));
+                }
+            }
+            compiled_workflows.push(workflow);
+        }
+        compiled_workflows.sort_by_key(workflow_identity);
+        Ok(compiled_workflows)
+    }
+
     fn ensure_project(
         &self,
         project_ref: &ProjectRef,
@@ -248,6 +485,15 @@ impl FactoryDevelopmentalState {
         if self.build.project().reference() != project_ref {
             return Err(FactoryDevelopmentalReadError::ProjectNotFound(
                 project_ref.to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn ensure_run(&self, run_ref: &RunRef) -> Result<(), FactoryDevelopmentalReadError> {
+        if self.build.run(run_ref).is_none() {
+            return Err(FactoryDevelopmentalReadError::RunNotFound(
+                run_ref.to_string(),
             ));
         }
         Ok(())
@@ -322,6 +568,23 @@ impl FactoryDevelopmentalFileProvider {
         run_ref: &RunRef,
     ) -> Result<FactoryRunReading, FactoryDevelopmentalProviderError> {
         Ok(self.state.run_reading(run_ref)?)
+    }
+
+    pub fn workflow_units_reading(
+        &self,
+        run_ref: Option<&RunRef>,
+    ) -> Result<FactoryWorkflowUnitListReading, FactoryDevelopmentalProviderError> {
+        Ok(self.state.workflow_units_reading(run_ref)?)
+    }
+
+    pub fn workflow_unit_reading(
+        &self,
+        workflow_unit_ref: &WorkflowUnitRef,
+        run_ref: Option<&RunRef>,
+    ) -> Result<FactoryWorkflowUnitReading, FactoryDevelopmentalProviderError> {
+        Ok(self
+            .state
+            .workflow_unit_reading(workflow_unit_ref, run_ref)?)
     }
 
     pub fn execute_action(
@@ -475,13 +738,237 @@ pub struct FactoryActionDescriptor {
     pub applicable_subject_refs: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitListReading {
+    pub contract: String,
+    pub provenance: FactoryWorkflowUnitListProvenance,
+    pub project_ref: ProjectRef,
+    pub run_filter: Option<RunRef>,
+    pub units: Vec<FactoryWorkflowUnitSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitListProvenance {
+    pub owner: String,
+    /// Revision of the independent Build state consulted only for current
+    /// RunMap correlations. Workflow source attachment does not advance it.
+    pub build_state_revision: Revision,
+    pub source_bases: Vec<FactoryWorkflowSourceBasis>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowSourceBasis {
+    pub source_ref: Ref,
+    pub source_revision: String,
+    pub source_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitSummary {
+    pub workflow_unit_ref: WorkflowUnitRef,
+    pub locator: String,
+    pub key: String,
+    pub workflow_key: String,
+    pub source_ref: Ref,
+    pub source_revision: String,
+    pub source_digest: String,
+    pub subject_ref: Ref,
+    pub basis_revision: String,
+    pub current_correlation: FactoryWorkflowUnitCurrentCorrelation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitReading {
+    pub contract: String,
+    pub provenance: FactoryWorkflowUnitProvenance,
+    pub project_ref: ProjectRef,
+    pub workflow_unit_ref: WorkflowUnitRef,
+    pub locator: String,
+    pub key: String,
+    pub workflow_key: String,
+    pub developmental_concern: String,
+    pub subject_ref: Ref,
+    pub basis_revision: String,
+    pub required_difference: String,
+    pub required_return: FactoryWorkflowUnitReturnRequirement,
+    pub required_verification: BTreeSet<String>,
+    pub agent_requirements: CompiledAgentRequirements,
+    pub praxis_refs: BTreeSet<String>,
+    pub capability_refs: BTreeSet<String>,
+    pub dependencies: BTreeSet<WorkflowUnitRef>,
+    pub independence_from: BTreeSet<WorkflowUnitRef>,
+    pub barrier_relations: Vec<FactoryWorkflowBarrierRelation>,
+    pub nesting: FactoryWorkflowUnitNestingRelations,
+    pub permitted_effects: BTreeSet<String>,
+    pub stop_conditions: String,
+    pub escalation_conditions: String,
+    pub current_correlation: FactoryWorkflowUnitCurrentCorrelation,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitProvenance {
+    pub owner: String,
+    /// Revision of the independent Build state consulted only for current
+    /// RunMap correlations. The source revision/digest is the unit change basis.
+    pub build_state_revision: Revision,
+    pub source_ref: Ref,
+    pub source_revision: String,
+    pub source_digest: String,
+    pub identity_algorithm: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitReturnRequirement {
+    pub contract: String,
+    pub address: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowBarrierRelation {
+    pub barrier_key: String,
+    pub relation: FactoryWorkflowBarrierUnitRelation,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryWorkflowBarrierUnitRelation {
+    AwaitedByBarrier,
+    ReleasedByBarrier,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitNestingRelations {
+    pub parent_unit_refs: BTreeSet<WorkflowUnitRef>,
+    pub child_unit_refs: BTreeSet<WorkflowUnitRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitCurrentCorrelation {
+    pub run_journey_status: FactoryWorkflowUnitCorrelationStatus,
+    pub run_journey_basis: String,
+    pub runs: Vec<FactoryWorkflowUnitRunCorrelation>,
+    pub lower_correlation_status: FactoryLowerCorrelationStatus,
+    pub agency_refs: Option<Vec<String>>,
+    pub execution_refs: Option<Vec<String>>,
+    pub telemetry_refs: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryWorkflowUnitCorrelationStatus {
+    OwnerEstablished,
+    Absent,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryLowerCorrelationStatus {
+    NotOwnerEstablished,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FactoryWorkflowUnitRunCorrelation {
+    pub run_ref: RunRef,
+    pub run_revision: Revision,
+    pub run_map_address: RunMapAddress,
+    pub topology_revision: Revision,
+    pub journey_refs: Vec<JourneyRef>,
+}
+
+fn workflow_identity(workflow: &CompiledWorkflow) -> (Ref, String, String, String) {
+    (
+        workflow.source.reference.clone(),
+        workflow.source.revision.clone(),
+        workflow.source.digest.clone(),
+        workflow.workflow_key.clone(),
+    )
+}
+
+fn workflow_source_identity(source: &WorkflowSource) -> (Ref, String, String, String) {
+    (
+        source.source.reference.clone(),
+        source.source.revision.clone(),
+        source.source.digest.clone(),
+        source.workflow_key.clone(),
+    )
+}
+
+fn workflow_unit_locator(workflow: &CompiledWorkflow, unit: &CompiledWorkflowUnit) -> String {
+    format!(
+        "{}#{}/{}",
+        workflow.source.reference, workflow.workflow_key, unit.key
+    )
+}
+
+fn barrier_relations(
+    workflow: &CompiledWorkflow,
+    unit: &CompiledWorkflowUnit,
+) -> Vec<FactoryWorkflowBarrierRelation> {
+    let mut relations = workflow
+        .barriers
+        .iter()
+        .flat_map(|barrier| {
+            let mut relations = Vec::new();
+            if barrier.waits_for.contains(&unit.reference) {
+                relations.push(FactoryWorkflowBarrierRelation {
+                    barrier_key: barrier.key.clone(),
+                    relation: FactoryWorkflowBarrierUnitRelation::AwaitedByBarrier,
+                });
+            }
+            if barrier.releases.contains(&unit.reference) {
+                relations.push(FactoryWorkflowBarrierRelation {
+                    barrier_key: barrier.key.clone(),
+                    relation: FactoryWorkflowBarrierUnitRelation::ReleasedByBarrier,
+                });
+            }
+            relations
+        })
+        .collect::<Vec<_>>();
+    relations.sort();
+    relations
+}
+
+fn nesting_relations(
+    workflow: &CompiledWorkflow,
+    unit: &CompiledWorkflowUnit,
+) -> FactoryWorkflowUnitNestingRelations {
+    FactoryWorkflowUnitNestingRelations {
+        parent_unit_refs: workflow
+            .nesting
+            .iter()
+            .filter(|relation| relation.child == unit.reference)
+            .map(|relation| relation.parent.clone())
+            .collect(),
+        child_unit_refs: workflow
+            .nesting
+            .iter()
+            .filter(|relation| relation.parent == unit.reference)
+            .map(|relation| relation.child.clone())
+            .collect(),
+    }
+}
+
 #[derive(Debug)]
 pub enum FactoryDevelopmentalReadError {
     UnsupportedSchema(String),
     ProjectNotFound(String),
     JourneyNotFound(String),
     RunNotFound(String),
+    WorkflowUnitNotFound(String),
     DuplicateJourney(String),
+    DuplicateCompiledWorkflow(String),
+    DuplicateWorkflowUnit(String),
     ProjectJourneyMismatch {
         project_ref: String,
         journey_ref: String,
@@ -492,6 +979,10 @@ pub enum FactoryDevelopmentalReadError {
     },
     InvalidJourney {
         journey_ref: String,
+        detail: String,
+    },
+    InvalidWorkflowSource {
+        source_ref: String,
         detail: String,
     },
     Build(FactoryBuildError),
@@ -562,6 +1053,10 @@ mod tests {
     use crate::cli::execute_cli;
     use crate::core::run::{Project, Run};
     use crate::journey::JourneyRunLink;
+    use crate::workflow::{
+        compile_workflow, workflow_source_digest, WorkflowNestingSource, WorkflowSource,
+        WORKFLOW_UNIT_IDENTITY_ALGORITHM,
+    };
 
     const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAE";
     const JOURNEY: &str = "journey:01ARZ3NDEKTSV4RRFFQ69G5FAD";
@@ -569,6 +1064,8 @@ mod tests {
     const SCHEMA: &str = include_str!("../../contracts/factory/developmental-read.schema.json");
     const CASES: &str =
         include_str!("../../contracts/factory/fixtures/developmental-read-cases.json");
+    const WORKFLOW_SOURCE: &str =
+        include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
 
     fn state() -> FactoryDevelopmentalState {
         let project_ref: ProjectRef = PROJECT.parse().unwrap();
@@ -622,6 +1119,35 @@ mod tests {
             .correlate_material_context("workcell:local")
             .unwrap();
         FactoryDevelopmentalState::new(build, vec![journey]).unwrap()
+    }
+
+    fn workflow_source() -> WorkflowSource {
+        let mut source: WorkflowSource = serde_json::from_str(WORKFLOW_SOURCE).unwrap();
+        source.nesting.push(WorkflowNestingSource {
+            parent: "inspect-source".into(),
+            child: "implement-compiler".into(),
+        });
+        source.source.digest = workflow_source_digest(&source).unwrap();
+        source
+    }
+
+    fn state_with_workflow(applied_to_run: bool) -> FactoryDevelopmentalState {
+        let source = workflow_source();
+        let workflow = compile_workflow(source.clone()).unwrap();
+        let mut state = state();
+        if applied_to_run {
+            let run_ref: RunRef = RUN.parse().unwrap();
+            let authority = state.build.run_mutation_authority(&run_ref).unwrap();
+            state
+                .build
+                .apply_run_topology_command(
+                    &run_ref,
+                    &authority,
+                    workflow.topology_command(Revision::INITIAL),
+                )
+                .unwrap();
+        }
+        state.with_workflow_sources(vec![source]).unwrap()
     }
 
     #[test]
@@ -720,6 +1246,193 @@ mod tests {
     }
 
     #[test]
+    fn workflow_unit_reads_publish_compiled_semantics_and_only_owner_established_correlations() {
+        let state = state_with_workflow(true);
+        let list = state
+            .workflow_units_reading(Some(&RUN.parse().unwrap()))
+            .unwrap();
+        assert_eq!(list.contract, FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT);
+        assert_eq!(list.units.len(), 4);
+        assert!(list
+            .units
+            .windows(2)
+            .all(|pair| pair[0].locator < pair[1].locator));
+
+        let workflows = state.compile_workflows().unwrap();
+        let workflow = &workflows[0];
+        let unit = workflow.unit("implement-compiler").unwrap();
+        let reading = state
+            .workflow_unit_reading(&unit.reference, Some(&RUN.parse().unwrap()))
+            .unwrap();
+        assert_eq!(reading.contract, FACTORY_WORKFLOW_UNIT_READING_CONTRACT);
+        assert_eq!(reading.workflow_unit_ref, unit.reference);
+        assert_eq!(reading.provenance.source_ref, workflow.source.reference);
+        assert_eq!(reading.provenance.source_revision, workflow.source.revision);
+        assert_eq!(reading.provenance.source_digest, workflow.source.digest);
+        assert_eq!(
+            reading.provenance.identity_algorithm,
+            WORKFLOW_UNIT_IDENTITY_ALGORITHM
+        );
+        assert_eq!(reading.key, "implement-compiler");
+        assert_eq!(reading.subject_ref, unit.subject_ref);
+        assert_eq!(reading.basis_revision, unit.basis_revision);
+        assert_eq!(reading.required_difference, unit.required_difference);
+        assert_eq!(reading.required_return.contract, unit.return_contract);
+        assert_eq!(reading.required_return.address, unit.return_address);
+        assert_eq!(reading.required_verification, unit.verification_obligations);
+        assert_eq!(reading.agent_requirements, unit.agent_requirements);
+        assert_eq!(reading.praxis_refs, unit.praxis_refs);
+        assert_eq!(reading.capability_refs, unit.capability_refs);
+        assert_eq!(reading.dependencies, unit.dependencies);
+        assert_eq!(reading.independence_from, unit.independence_from);
+        assert_eq!(
+            reading.barrier_relations,
+            vec![FactoryWorkflowBarrierRelation {
+                barrier_key: "implementation-reviewed".into(),
+                relation: FactoryWorkflowBarrierUnitRelation::AwaitedByBarrier,
+            }]
+        );
+        assert_eq!(
+            reading.nesting.parent_unit_refs,
+            BTreeSet::from([workflow.unit("inspect-source").unwrap().reference.clone()])
+        );
+        assert_eq!(
+            reading.current_correlation.run_journey_status,
+            FactoryWorkflowUnitCorrelationStatus::OwnerEstablished
+        );
+        assert_eq!(reading.current_correlation.runs[0].run_ref.to_string(), RUN);
+        assert_eq!(
+            reading.current_correlation.runs[0].journey_refs[0].to_string(),
+            JOURNEY
+        );
+        assert_eq!(
+            reading.current_correlation.lower_correlation_status,
+            FactoryLowerCorrelationStatus::NotOwnerEstablished
+        );
+        assert_eq!(reading.current_correlation.agency_refs, None);
+        assert_eq!(reading.current_correlation.execution_refs, None);
+        assert_eq!(reading.current_correlation.telemetry_refs, None);
+    }
+
+    #[test]
+    fn workflow_source_attachment_preserves_build_revision_and_publishes_exact_change_basis() {
+        let source = workflow_source();
+        let expected_build_revision = state().build.revision();
+        let state = state().with_workflow_sources(vec![source.clone()]).unwrap();
+        let list = state.workflow_units_reading(None).unwrap();
+
+        assert_eq!(state.build.revision(), expected_build_revision);
+        assert_eq!(
+            list.provenance.build_state_revision,
+            expected_build_revision
+        );
+        assert_eq!(list.provenance.source_bases.len(), 1);
+        assert_eq!(
+            list.provenance.source_bases[0],
+            FactoryWorkflowSourceBasis {
+                source_ref: source.source.reference.clone(),
+                source_revision: source.source.revision.clone(),
+                source_digest: source.source.digest.clone(),
+            }
+        );
+
+        let unit_ref = state.compile_workflows().unwrap()[0]
+            .unit("inspect-source")
+            .unwrap()
+            .reference
+            .clone();
+        let reading = state.workflow_unit_reading(&unit_ref, None).unwrap();
+        assert_eq!(
+            reading.provenance.build_state_revision,
+            expected_build_revision
+        );
+        assert_eq!(reading.provenance.source_ref, source.source.reference);
+        assert_eq!(reading.provenance.source_revision, source.source.revision);
+        assert_eq!(reading.provenance.source_digest, source.source.digest);
+    }
+
+    #[test]
+    fn workflow_unit_absence_and_cli_resolution_are_truthful_and_persistent() {
+        let state = state_with_workflow(false);
+        let unit_ref = state.compile_workflows().unwrap()[0]
+            .unit("inspect-source")
+            .unwrap()
+            .reference
+            .clone();
+        let reading = state.workflow_unit_reading(&unit_ref, None).unwrap();
+        assert_eq!(
+            reading.current_correlation.run_journey_status,
+            FactoryWorkflowUnitCorrelationStatus::Absent
+        );
+        assert!(reading.current_correlation.runs.is_empty());
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental-workflow.json");
+        FactoryDevelopmentalFileProvider::create(&path, state).unwrap();
+        let list_output = execute_cli(
+            &[
+                "development".into(),
+                "workflow-units".into(),
+                path.to_string_lossy().into_owned(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let list: serde_json::Value = serde_json::from_str(&list_output).unwrap();
+        assert_eq!(
+            list["contract"],
+            FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT
+        );
+        assert_eq!(list["units"].as_array().unwrap().len(), 4);
+
+        let unit_output = execute_cli(
+            &[
+                "development".into(),
+                "workflow-unit".into(),
+                path.to_string_lossy().into_owned(),
+                unit_ref.to_string(),
+                RUN.into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let resolved: serde_json::Value = serde_json::from_str(&unit_output).unwrap();
+        assert_eq!(resolved["workflowUnitRef"], unit_ref.to_string());
+        assert_eq!(resolved["currentCorrelation"]["runJourneyStatus"], "absent");
+        assert_eq!(
+            resolved["currentCorrelation"]["lowerCorrelationStatus"],
+            "not-owner-established"
+        );
+        assert!(resolved["currentCorrelation"]["agencyRefs"].is_null());
+        assert!(resolved["currentCorrelation"]["executionRefs"].is_null());
+        assert!(resolved["currentCorrelation"]["telemetryRefs"].is_null());
+    }
+
+    #[test]
+    fn provider_reopen_rejects_workflow_source_semantic_tampering_without_restamped_digest() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory
+            .path()
+            .join("tampered-developmental-workflow.json");
+        FactoryDevelopmentalFileProvider::create(&path, state_with_workflow(false)).unwrap();
+
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        persisted["state"]["workflowSources"][0]["units"][0]["requiredDifference"] =
+            serde_json::Value::String("caller-tampered semantic difference".into());
+        fs::write(&path, serde_json::to_vec_pretty(&persisted).unwrap()).unwrap();
+
+        assert!(matches!(
+            FactoryDevelopmentalFileProvider::open(&path),
+            Err(FactoryDevelopmentalProviderError::Read(
+                FactoryDevelopmentalReadError::InvalidWorkflowSource { .. }
+            ))
+        ));
+    }
+
+    #[test]
     fn cross_language_schema_and_cases_pin_version_owner_and_public_relations() {
         let schema: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
         let cases: serde_json::Value = serde_json::from_str(CASES).unwrap();
@@ -741,5 +1454,42 @@ mod tests {
         for relation in cases["requiredRunRelations"].as_array().unwrap() {
             assert!(run.get(relation.as_str().unwrap()).is_some());
         }
+
+        let workflow_state = state_with_workflow(true);
+        let list =
+            serde_json::to_value(workflow_state.workflow_units_reading(None).unwrap()).unwrap();
+        let unit_ref = workflow_state.compile_workflows().unwrap()[0]
+            .unit("implement-compiler")
+            .unwrap()
+            .reference
+            .clone();
+        let unit = serde_json::to_value(
+            workflow_state
+                .workflow_unit_reading(&unit_ref, None)
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(list["contract"], cases["contracts"]["workflowUnitList"]);
+        assert_eq!(unit["contract"], cases["contracts"]["workflowUnit"]);
+        for field in cases["requiredWorkflowUnitFields"].as_array().unwrap() {
+            assert!(unit.get(field.as_str().unwrap()).is_some());
+        }
+        for field in cases["workflowUnitProvenanceFields"].as_array().unwrap() {
+            assert!(unit["provenance"].get(field.as_str().unwrap()).is_some());
+        }
+        for field in cases["workflowUnitListProvenanceFields"]
+            .as_array()
+            .unwrap()
+        {
+            assert!(list["provenance"].get(field.as_str().unwrap()).is_some());
+        }
+        assert_eq!(
+            unit["currentCorrelation"]["runJourneyBasis"],
+            cases["correlationLaw"]["runJourneyBasis"]
+        );
+        assert_eq!(
+            unit["currentCorrelation"]["lowerCorrelationStatus"],
+            cases["correlationLaw"]["lower"]
+        );
     }
 }
