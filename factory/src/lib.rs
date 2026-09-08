@@ -9,6 +9,7 @@ pub mod build_cognitive;
 pub mod build_provider;
 pub mod cli;
 pub mod core;
+pub mod developmental_read;
 pub mod execution_intelligence;
 pub mod git_development;
 // JourneyRef implements the standard AsRef trait below. Keep the legacy inherent

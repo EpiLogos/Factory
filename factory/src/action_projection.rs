@@ -79,12 +79,37 @@ pub struct FactoryActionProjectionReceipt {
 ///
 /// This is intentionally the only projection-specific step: after validating
 /// attribution, it constructs the existing canonical invocation/authority and
-/// delegates to `FactoryBuildFileProvider::execute_action`, which in turn delegates
-/// to `FactoryActionExecutor`. No projection implements Action meaning itself.
-pub fn execute_projected_factory_action(
-    provider: &mut FactoryBuildFileProvider,
+/// delegates through the selected first-party provider to `FactoryActionExecutor`.
+/// No projection or provider implements Action meaning itself.
+pub trait FactoryProjectedActionProvider {
+    type Error: Error + Send + Sync + 'static;
+
+    fn execute_projected_action(
+        &mut self,
+        invocation: &FactoryActionInvocation,
+        authority: &FactoryActionAuthority,
+    ) -> Result<FactoryActionReceipt, Self::Error>;
+}
+
+impl FactoryProjectedActionProvider for FactoryBuildFileProvider {
+    type Error = FactoryBuildProviderError;
+
+    fn execute_projected_action(
+        &mut self,
+        invocation: &FactoryActionInvocation,
+        authority: &FactoryActionAuthority,
+    ) -> Result<FactoryActionReceipt, Self::Error> {
+        self.execute_action(invocation, authority)
+    }
+}
+
+pub fn execute_projected_factory_action<P>(
+    provider: &mut P,
     request: &FactoryActionProjectionRequest,
-) -> Result<FactoryActionProjectionReceipt, FactoryActionProjectionError> {
+) -> Result<FactoryActionProjectionReceipt, FactoryActionProjectionError>
+where
+    P: FactoryProjectedActionProvider,
+{
     validate_request(request)?;
     let run_ref = RunRef::from_str(&request.run_ref)
         .map_err(|error| FactoryActionProjectionError::InvalidRunRef(error.to_string()))?;
@@ -101,7 +126,9 @@ pub fn execute_projected_factory_action(
         capability_granted: request.authority.capability_granted,
         action_authorised: request.authority.action_authorised,
     };
-    let native_result = provider.execute_action(&invocation, &authority)?;
+    let native_result = provider
+        .execute_projected_action(&invocation, &authority)
+        .map_err(|error| FactoryActionProjectionError::Provider(error.to_string()))?;
 
     if native_result.action_ref != request.action_ref
         || native_result.subject_ref != request.subject_ref
@@ -157,13 +184,7 @@ pub enum FactoryActionProjectionError {
     WrongNativeOwner(String),
     InvalidRunRef(String),
     NativeResultIdentityDrift,
-    Provider(FactoryBuildProviderError),
-}
-
-impl From<FactoryBuildProviderError> for FactoryActionProjectionError {
-    fn from(error: FactoryBuildProviderError) -> Self {
-        Self::Provider(error)
-    }
+    Provider(String),
 }
 
 impl Display for FactoryActionProjectionError {
@@ -178,7 +199,7 @@ impl Display for FactoryActionProjectionError {
             Self::WrongNativeOwner(owner) => write!(formatter, "Factory Action projection cannot substitute native owner `{owner}`"),
             Self::InvalidRunRef(error) => write!(formatter, "invalid Factory Run ref: {error}"),
             Self::NativeResultIdentityDrift => write!(formatter, "Factory native Action result drifted from projected Action/subject/authority identity"),
-            Self::Provider(error) => write!(formatter, "{error}"),
+            Self::Provider(error) => formatter.write_str(error),
         }
     }
 }
