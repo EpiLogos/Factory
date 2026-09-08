@@ -15,7 +15,6 @@
     "skill/factory-native/factory-bounded-work"
   ],
   "skill_set_refs": ["skill-set/factory-bounded-development"],
-  "method_refs": ["method/factory/bounded-work"],
   "routine_refs": [],
   "ratified_world_refs": ["project:Software-Factory"],
   "knowledge_source_refs": [
@@ -25,6 +24,6 @@
   "placement_intent_refs": [],
   "provenance_refs": [
     "central:source:project:Software-Factory:agents/factory-mode/intent.md",
-    "central:source:project:Software-Factory:skills/factory-bounded-work/method.json"
+    "central:source:project:Software-Factory:skills/factory-bounded-work/SKILL.md"
   ]
 }

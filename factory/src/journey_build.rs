@@ -186,7 +186,7 @@ mod tests {
             .record_return(JourneyReturn {
                 return_ref: "return:method:1".into(),
                 run_refs: vec![run_ref.clone()],
-                basis_refs: vec!["method:verified-research".into()],
+                basis_refs: vec!["skill/factory-native/factory-bounded-work".into()],
                 evidence_refs: vec!["evidence:method:1".into()],
                 recognition_ref: None,
                 summary: "Verified Method return.".into(),
@@ -224,7 +224,7 @@ mod tests {
                 JourneyPraxisReturn {
                     run_ref,
                     method_contract: AIKIT_METHOD_SCHEMA.into(),
-                    method_ref: "method:verified-research".into(),
+                    method_ref: "skill/factory-native/factory-bounded-work".into(),
                     method_revision: "method-rev-1".into(),
                     context_resolution_ref: "context-resolution:abc123".into(),
                     body_condition_refs: vec!["harness-composition:research".into()],
@@ -245,7 +245,7 @@ mod tests {
                 JourneyRoutineObservation {
                     contract: AIKIT_ROUTINE_SCHEMA.into(),
                     routine_ref: "routine:daily-research".into(),
-                    method_ref: "method:verified-research".into(),
+                    method_ref: "skill/factory-native/factory-bounded-work".into(),
                     method_revision: "method-rev-1".into(),
                     proof_ref: "proof:research:v1".into(),
                     routine_state: routine_state.into(),
@@ -291,7 +291,7 @@ mod tests {
         );
         assert_eq!(
             snapshot.praxis.praxis_returns[0].method_ref,
-            "method:verified-research"
+            "skill/factory-native/factory-bounded-work"
         );
         assert_eq!(
             snapshot.praxis.routines[0].routine_ref,

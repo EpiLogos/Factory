@@ -2,8 +2,9 @@
 //!
 //! Factory owns why work exists developmentally and which returned reality carries
 //! a Journey. Central continues to own AgentProfile source; AIKit continues to own
-//! Method/proof/Routine semantics and operative resolution. This module therefore
-//! retains their exact public refs/contracts as correlations only.
+//! Skill/SkillSet/Method-classification, proof/Routine semantics and operative
+//! resolution. This module therefore retains their public refs/contracts as
+//! correlations only.
 
 use crate::core::run::RunRef;
 use crate::journey::{Journey, JourneyRef};
@@ -13,7 +14,11 @@ use std::fmt::{self, Display};
 
 pub const JOURNEY_PRAXIS_SCHEMA: &str = "factory.journey-praxis/v1";
 pub const CENTRAL_AGENT_PROFILE_SCHEMA: &str = "central.agent-profile/v1";
-pub const AIKIT_METHOD_SCHEMA: &str = "aikit.method/v1";
+/// Current AIKit Method classification contract. The classified object remains
+/// an ordinary Skill; this name is retained for the Factory field/compatibility
+/// surface and does not create a Method resource identity.
+pub const AIKIT_SKILL_METHOD_METADATA_SCHEMA: &str = "aikit.skill-method-metadata/v1";
+pub const AIKIT_METHOD_SCHEMA: &str = AIKIT_SKILL_METHOD_METADATA_SCHEMA;
 pub const AIKIT_METHOD_PROOF_SCHEMA: &str = "aikit.method-proof/v1";
 pub const AIKIT_ROUTINE_SCHEMA: &str = "aikit.routine/v1";
 pub const AIKIT_ROUTINE_STALE_PROOF_STATE: &str = "stale-proof";
@@ -39,7 +44,8 @@ pub struct JourneyMethodProofCorrelation {
     pub verification_refs: Vec<String>,
 }
 
-/// Consequential use of one exact AIKit Method revision by a bounded Factory Run.
+/// Consequential use of one exact AIKit Method-classified Skill revision by a
+/// bounded Factory Run.
 ///
 /// Context/body refs are retained as the actual operative/material condition that
 /// carried the work; Factory does not resolve or reinterpret them. Activity,
@@ -48,7 +54,11 @@ pub struct JourneyMethodProofCorrelation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JourneyPraxisReturn {
     pub run_ref: RunRef,
+    /// Compatibility field name in `factory.journey-praxis/v1`. Its value is
+    /// the ordinary AIKit Skill ResourceRef, never a standalone MethodRef.
     pub method_contract: String,
+    /// Compatibility field name retained for the v1 projection. The referenced
+    /// identity is the Method-classified Skill named by AIKit.
     pub method_ref: String,
     pub method_revision: String,
     pub context_resolution_ref: String,
@@ -67,6 +77,8 @@ pub struct JourneyPraxisReturn {
 pub struct JourneyRoutineObservation {
     pub contract: String,
     pub routine_ref: String,
+    /// Compatibility field name; this is the same Method-classified Skill ref
+    /// carried by the Routine, not a second Method resource.
     pub method_ref: String,
     pub method_revision: String,
     pub proof_ref: String,
@@ -147,8 +159,12 @@ impl JourneyPraxisContext {
         returned: JourneyPraxisReturn,
     ) -> Result<(), JourneyPraxisError> {
         self.ensure_journey(journey)?;
-        require_contract(&returned.method_contract, AIKIT_METHOD_SCHEMA, "Method")?;
-        required(&returned.method_ref, "Method ref")?;
+        require_contract(
+            &returned.method_contract,
+            AIKIT_METHOD_SCHEMA,
+            "Method-classified Skill",
+        )?;
+        require_skill_ref(&returned.method_ref, "Method-classified Skill ref")?;
         required(&returned.method_revision, "Method revision")?;
         required(&returned.context_resolution_ref, "ContextResolution ref")?;
         validate_refs(&returned.body_condition_refs, "body condition refs")?;
@@ -226,7 +242,10 @@ impl JourneyPraxisContext {
         self.ensure_journey(journey)?;
         require_contract(&observation.contract, AIKIT_ROUTINE_SCHEMA, "Routine")?;
         required(&observation.routine_ref, "Routine ref")?;
-        required(&observation.method_ref, "Routine Method ref")?;
+        require_skill_ref(
+            &observation.method_ref,
+            "Routine Method-classified Skill ref",
+        )?;
         required(&observation.method_revision, "Routine Method revision")?;
         required(&observation.proof_ref, "Routine proof ref")?;
         required(&observation.routine_state, "Routine state")?;
@@ -350,6 +369,17 @@ fn required(value: &str, field: &str) -> Result<(), JourneyPraxisError> {
     }
 }
 
+fn require_skill_ref(value: &str, field: &str) -> Result<(), JourneyPraxisError> {
+    required(value, field)?;
+    if value.starts_with("skill/") {
+        Ok(())
+    } else {
+        Err(JourneyPraxisError::InvalidText(format!(
+            "{field} must use the ordinary AIKit Skill ref grammar"
+        )))
+    }
+}
+
 fn validate_refs(values: &[String], field: &str) -> Result<(), JourneyPraxisError> {
     for value in values {
         required(value, field)?;
@@ -460,7 +490,7 @@ impl Display for JourneyPraxisError {
                 method_revision,
             } => write!(
                 formatter,
-                "Run {run_ref} already carries Method {method_ref}@{method_revision}"
+                "Run {run_ref} already carries Method-classified Skill {method_ref}@{method_revision}"
             ),
             Self::RoutineWithoutJourneyProof {
                 routine_ref,
@@ -509,7 +539,7 @@ mod tests {
             .record_return(JourneyReturn {
                 return_ref: "return:method:1".into(),
                 run_refs: vec![run.clone()],
-                basis_refs: vec!["method:verified-research".into()],
+                basis_refs: vec!["skill/factory-native/factory-bounded-work".into()],
                 evidence_refs: vec!["evidence:method:1".into()],
                 recognition_ref: None,
                 summary: "Verified Method return.".into(),
@@ -532,7 +562,7 @@ mod tests {
         JourneyPraxisReturn {
             run_ref,
             method_contract: AIKIT_METHOD_SCHEMA.into(),
-            method_ref: "method:verified-research".into(),
+            method_ref: "skill/factory-native/factory-bounded-work".into(),
             method_revision: "method-rev-1".into(),
             context_resolution_ref: "context-resolution:abc123".into(),
             body_condition_refs: vec!["harness-composition:research".into()],
@@ -551,7 +581,7 @@ mod tests {
         JourneyRoutineObservation {
             contract: AIKIT_ROUTINE_SCHEMA.into(),
             routine_ref: "routine:daily-research".into(),
-            method_ref: "method:verified-research".into(),
+            method_ref: "skill/factory-native/factory-bounded-work".into(),
             method_revision: "method-rev-1".into(),
             proof_ref: "proof:research:v1".into(),
             routine_state: state.into(),
@@ -586,7 +616,10 @@ mod tests {
         context.record_praxis_return(&journey, praxis(run)).unwrap();
         let reading = context.reading(&journey).unwrap();
         let returned = &reading.praxis_returns[0];
-        assert_eq!(returned.method_ref, "method:verified-research");
+        assert_eq!(
+            returned.method_ref,
+            "skill/factory-native/factory-bounded-work"
+        );
         assert_eq!(returned.method_revision, "method-rev-1");
         assert_eq!(returned.context_resolution_ref, "context-resolution:abc123");
         assert_eq!(
@@ -598,6 +631,35 @@ mod tests {
             returned.proof.as_ref().unwrap().contract,
             AIKIT_METHOD_PROOF_SCHEMA
         );
+    }
+
+    #[test]
+    fn stale_standalone_method_contract_is_rejected_at_record_boundary() {
+        let (journey, run) = journey();
+        let mut context = JourneyPraxisContext::new(&journey);
+        let mut stale = praxis(run);
+        stale.method_contract = "aikit.method/v1".into();
+        assert!(matches!(
+            context.record_praxis_return(&journey, stale),
+            Err(JourneyPraxisError::ExternalContract {
+                subject: "Method-classified Skill",
+                expected: AIKIT_SKILL_METHOD_METADATA_SCHEMA,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn standalone_method_identity_is_rejected_for_new_praxis_records() {
+        let (journey, run) = journey();
+        let mut context = JourneyPraxisContext::new(&journey);
+        let mut standalone = praxis(run);
+        standalone.method_ref = "method/factory/bounded-work".into();
+        assert!(matches!(
+            context.record_praxis_return(&journey, standalone),
+            Err(JourneyPraxisError::InvalidText(message))
+                if message.contains("ordinary AIKit Skill ref grammar")
+        ));
     }
 
     #[test]

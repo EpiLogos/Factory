@@ -5,11 +5,23 @@ description: "METHOD: Carry a commissioned Factory investigation, repair or chan
 
 # Bounded developmental work
 
-Native owner: Software Factory. This Method composes **factory-development** (`factory:developer`) and **factory-operation** (`factory:operator`). Resolve their source-owned Skills through AIKit before consequential use. A missing required member is an unresolved composition, not permission to improvise its contract. SkillSet membership provides repertoire; Actuation authority and the selected material boundary govern effects.
+Native owner: Software Factory. This **METHOD-classified Skill** composes
+**factory-development** (`factory:developer`) and **factory-operation**
+(`factory:operator`). Its source identity is the ordinary Skill identity
+`skill/factory-native/factory-bounded-work`; the `METHOD:` prefix makes the
+situated praxis discoverable through AIKit's Method classification view. There is no second Method source, resource identity or lifecycle. Resolve the
+source-owned Skills through AIKit before consequential use. A missing required
+member is an unresolved composition, not permission to improvise its contract.
+SkillSet membership provides repertoire; Actuation authority and the selected
+material boundary govern effects.
 
 The source-owned **Factory Mode** expression and `profile/factory-mode` live in the Factory repository at `agents/factory-mode/`. A situated profile retains that lineage; the Method remains reusable by other commissioned agents.
 
-The [native Method declaration](method.json) relates those owner Skills and this bounded procedure through the existing AIKit Method contract. Resolve it against the actual commissioned Project/Focus. It describes praxis, not a schedule, an Action grant or a verification result.
+AIKit's `method list` reports this same Skill when its source is available and
+the `METHOD:` classification is visible. Any situated praxis metadata or
+UsageOverlay receipt must remain attached to this Skill identity and retain its
+ordinary Skill source/trust/projection semantics. Classification describes
+praxis; it is not a schedule, an Action grant or a verification result.
 
 Recover the commissioned concern, its affected experience, Project/subject and current state. Keep the person's intended condition distinct from your proposed operationalisation. Use factory-development's Whole, Claim and verification obligations; do not create another ledger or let a convenient local success shrink the commission.
 

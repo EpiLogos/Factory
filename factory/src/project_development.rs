@@ -110,6 +110,8 @@ pub struct ReflectionAnchor {
 
 /// Smallest sufficient resolved praxis condition for a consequential Run.
 /// Resolution remains AIKit-owned; Factory records the returned condition.
+/// `method_ref` is a compatibility projection label whose value is the
+/// Method-classified Skill identity. It is never a Factory-owned Method source.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PraxisCondition {
     pub run_ref: RunRef,
@@ -140,6 +142,7 @@ pub struct CapabilityPraxisRow {
     pub row_ref: String,
     pub capability_ref: String,
     pub skill_ref: Option<String>,
+    /// Compatibility projection label for a Method-classified Skill ref.
     pub method_ref: Option<String>,
     pub project_target_refs: Vec<String>,
     pub ql_affinity: Option<String>,

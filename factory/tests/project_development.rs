@@ -202,7 +202,7 @@ fn praxis_configuration_is_input_and_fitness_returns_as_ordinary_claim_evidence(
             run_ref: run_ref.clone(),
             condition_ref: "praxis/condition-155".into(),
             focus_ref: Some("focus/project-reflection".into()),
-            method_ref: Some("aikit:method/project-reflection-development".into()),
+            method_ref: Some("skill/aikit/knowledge-navigation".into()),
             skill_refs: vec!["aikit:skill/knowledge-navigation".into()],
             skill_set_refs: vec!["aikit:skill-set/factory-development".into()],
             profile_ref: Some("aikit:profile/code".into()),
@@ -225,7 +225,7 @@ fn praxis_configuration_is_input_and_fitness_returns_as_ordinary_claim_evidence(
             row_ref: "capability-row/project-reflection".into(),
             capability_ref: "capability/project-reflection".into(),
             skill_ref: Some("aikit:skill/knowledge-navigation".into()),
-            method_ref: Some("aikit:method/project-reflection-development".into()),
+            method_ref: Some("skill/aikit/knowledge-navigation".into()),
             project_target_refs: vec![SEMANTIC.into(), CODE.into()],
             ql_affinity: Some("descriptive-affinity-only".into()),
             use_type: "development".into(),
@@ -246,11 +246,11 @@ fn praxis_configuration_is_input_and_fitness_returns_as_ordinary_claim_evidence(
             observation_ref: "observation/praxis-fitness".into(),
             kind: DevelopmentObservationKind::PraxisFitness,
             statement: "resolved praxis was fit for the consequential reflection act".into(),
-            subject_refs: vec!["aikit:method/project-reflection-development".into()],
+            subject_refs: vec!["skill/aikit/knowledge-navigation".into()],
             evidence_refs: vec![EVIDENCE.into(), CLAIM.into()],
             owner_return: Some(OwnerReturnProposal {
                 owner_ref: "github:EpiLogos/ai-kit".into(),
-                source_ref: Some("aikit:method/project-reflection-development".into()),
+                source_ref: Some("skill/aikit/knowledge-navigation".into()),
                 proposal_ref: "proposal/praxis-fitness-155".into(),
                 recognition_required: true,
             }),
@@ -259,7 +259,7 @@ fn praxis_configuration_is_input_and_fitness_returns_as_ordinary_claim_evidence(
 
     assert_eq!(
         ledger.praxis.as_ref().unwrap().method_ref.as_deref(),
-        Some("aikit:method/project-reflection-development")
+        Some("skill/aikit/knowledge-navigation")
     );
     assert_eq!(
         ledger.capability_rows[0].observed_fitness_evidence_refs,

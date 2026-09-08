@@ -64,6 +64,16 @@ def verify(binary: str) -> dict:
             run("enable", identity, "--scope", "global")
         selected = run("set", "show", "factory-bounded-development")
         assert selected["complete"] and set(selected["projected"]) == set(IDS)
+        methods = run("method", "list")
+        bounded_method = next(
+            (method for method in methods["methods"]
+             if method["id"] == "skill/factory-native/factory-bounded-work"),
+            None,
+        )
+        assert bounded_method is not None and bounded_method["declared"]
+        assert bounded_method["active"]
+        assert bounded_method["kind"] == "skill"
+        assert bounded_method["payload"].startswith("Carry a commissioned Factory")
 
         # Remove a real required member in the disposable source. Synchronizing
         # must not rewrite the active snapshot or pretend the new one is active.
@@ -98,6 +108,7 @@ def verify(binary: str) -> dict:
             "binary_sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
             "snapshot": active["active_snapshot"],
             "members": IDS,
+            "method_classification": bounded_method,
             "payload_and_license_byte_parity": True,
             "selection_distinct_from_membership": True,
             "missing_member_disclosed": True,

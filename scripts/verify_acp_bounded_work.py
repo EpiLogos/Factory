@@ -101,13 +101,18 @@ def execute(args):
     aikit("project", "bind", "factory-bounded-acceptance", "--directory", str(work),
           "--no-default-skill-sets")
     commission_ref = "central:source:project:factory-bounded-acceptance:ProjectCentral/user/commission.md"
-    method_path = source / "factory-bounded-work/method.json"
-    method = aikit("method", "resolve", "--source", str(method_path))
+    method = aikit("method", "list")
+    bounded_method = next(
+        (item for item in method["methods"]
+         if item["id"] == "skill/factory-native/factory-bounded-work"),
+        None,
+    )
+    assert bounded_method and bounded_method["active"] and bounded_method["kind"] == "skill"
     definition_path = ROOT / "agents/factory-mode/profile.json"
     expression_path = ROOT / "agents/factory-mode/intent.md"
     definition = json.loads(definition_path.read_text())
     assert expression_path.read_text().strip()
-    assert definition["skill_refs"] == ids and definition["method_refs"] == [method["method"]["id"]]
+    assert definition["skill_refs"] == ids and "method_refs" not in definition
     profile = {**definition,
         "ref": "profile/factory-bounded-acceptance",
         "revision": "commission-v1", "source_profile_ref": definition["ref"],
@@ -169,18 +174,20 @@ def execute(args):
     assert composed["authored_basis"]["profile_source"]["purpose"] == definition["purpose"], composed
     assert definition["knowledge_source_refs"][0] in composed["authored_basis"]["profile_source"]["knowledge_source_refs"], composed
     assert composed["selected_harness"] == "harness/pi" and composed["selected_model"] == model_ref, composed
-    # Re-resolve after composition input exists, retaining the actual native
-    # ContextResolution rather than promoting a METHOD description to evidence.
-    method = aikit("method", "resolve", "--source", str(method_path))
-    assert all(item["active"] for item in method["skill_states"]), method
+    # Re-read after composition input exists. Method classification remains a
+    # view over the ordinary Skill; it is not a second source or activation path.
+    method = aikit("method", "list")
+    bounded_method = next(item for item in method["methods"]
+                          if item["id"] == "skill/factory-native/factory-bounded-work")
+    assert bounded_method["active"] and bounded_method["declared"]
     receipts = {"agent-profile.json": profile_receipt, "agency.json": agency,
         "instantiation.json": instantiation, "composition.json": composition,
-        "method-resolution.json": method}
+        "method-classification.json": method}
     for filename, value in receipts.items():
         (output / filename).write_text(json.dumps(value, indent=2) + "\n")
     setup = {"fixture_root": str(work), "aikit_home": str(home), "central_root": str(central_root),
         "commission_path": str(commission), "authority_ref": commission_ref,
-        "method_resolution": str(output / "method-resolution.json"),
+        "method_classification": str(output / "method-classification.json"),
         "agent_definition": {"profile": str(definition_path), "expression": str(expression_path),
             "source_profile_ref": definition["ref"], "agent_ref": definition["agent_ref"],
             "profile_sha256": hashlib.sha256(definition_path.read_bytes()).hexdigest(),
@@ -199,7 +206,7 @@ def execute(args):
     profile_source.relative_to(work)
     primary_paths = [profile_source, binding_path, work / ".aikit/actuation-model-bearing.json",
                      work / "ProjectCentral/project.json"]
-    paths = [commission, *bodies, method_path, definition_path, expression_path,
+    paths = [commission, *bodies, definition_path, expression_path,
              *primary_paths, *(output / name for name in receipts)]
     required = {
         "sources": [{
@@ -342,7 +349,7 @@ def execute(args):
             "required_context_sha256": hashlib.sha256((output / "required-context.json").read_bytes()).hexdigest(),
             "model": args.model, "provider_reported_model": observation, "model_tools": "disabled", "candidate_is_proposal": True,
             "authority_ref": commission_ref,
-            "composition_setup": setup, "native_method_resolution": str(output / "method-resolution.json"),
+            "composition_setup": setup, "native_method_classification": str(output / "method-classification.json"),
             "session_space_binary_sha256": session_space_digest,
             "session_space_file_changed_during_run": hashlib.sha256(args.session_space.read_bytes()).hexdigest() != session_space_digest,
             "scope": "Real resolved Skills → required source preflight → resident ACP → actual Pi candidate. Material application, Factory evidence and human acceptance remain separate.",
