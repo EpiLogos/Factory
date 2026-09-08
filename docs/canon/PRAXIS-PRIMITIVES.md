@@ -1,7 +1,7 @@
 # Software Factory — Praxis Primitive Relations
 
-**Status:** canonical architecture clarification  
-**Date:** 2026-08-19  
+**Status:** canonical architecture clarification; implementation reconciled to current AIKit Method-classification law
+**Date:** 2026-08-19; reconciliation 2026-09-08
 **Companion to:** `QL-SOFTWARE-FACTORY-PRIMITIVE-RELATIONS.md`, `QL-SOFTWARE-FACTORY-ARCHITECTURE-SPEC.md`  
 **Purpose:** Ratify the relation among Skill, Method, SkillSet, usage adaptation, Context/Focus and returned Factory evidence without replacing AIKit's operational ownership.
 
@@ -20,6 +20,17 @@ The Factory therefore ratifies `Method` as the product-level relation that answe
 > **How should the available praxis, knowledge and powers be related for this purpose and Focus?**
 
 This is an ontology clarification, not a demand for a new central store or a new orchestration runtime.
+
+### Current implementation reconciliation
+
+The product vocabulary below remains useful, but current AIKit implementation does not create a
+second `Method` resource. A Method is the same Skill/Capability identity whose Skill description
+starts with `METHOD:` and which AIKit exposes through `aikit method list`. The Factory source
+`skill/factory-native/factory-bounded-work` therefore remains a source-owned Skill classified as
+METHOD; its former standalone `method.json` source is retired. Situated metadata, UsageOverlays,
+and nested SkillSet relations remain attached to the ordinary Skill identity. Any retained
+`method_ref`/`method_refs` field in a compatibility projection is non-authoritative and carries
+that Skill reference; it does not create a standalone Method lifecycle.
 
 ---
 
@@ -113,7 +124,9 @@ Use the research-source verification Method.
 Use this Project's release Method.
 ```
 
-The Factory may therefore address `MethodRef` in Project, Context and Run state.
+The Factory may therefore address `MethodRef` in Project, Context and Run state. In current
+serialized compatibility projections, that field carries the ordinary Skill reference for a
+METHOD-classified Skill; it is not a Factory-owned Method resource identity.
 
 This does not make the Factory the universal Method source owner.
 
