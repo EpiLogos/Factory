@@ -1,0 +1,18 @@
+name: Branch hygiene
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: read
+
+jobs:
+  lifecycle:
+    uses: EpiLogos/Central/.github/workflows/branch-hygiene.yml@main
+    with:
+      delete_merged: true
+    secrets: inherit

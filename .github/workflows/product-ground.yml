@@ -9,14 +9,12 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   product-ground:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,9 +23,9 @@ jobs:
         with:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: .
+          cache-on-failure: true
       - name: Build the actual product CLI
         run: cargo build --bin factory
       - name: Check source, matrix, seed and native CLI maintenance

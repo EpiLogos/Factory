@@ -12,22 +12,22 @@ on:
       - "scripts/validate_agent_capability_intake.py"
       - ".github/workflows/factory-rust.yml"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   factory-rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: factory
+          workspaces: |
+            factory
+          cache-on-failure: true
       - name: Format
         run: cargo fmt --manifest-path factory/Cargo.toml -- --check
       - name: Clippy

@@ -15,14 +15,23 @@ on:
       - "factory/**"
       - ".github/workflows/factory-native-skills.yml"
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+env:
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - run: python3 scripts/validate_factory_skills.py
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            factory
+          cache-on-failure: true
+      - run: cargo fmt --manifest-path factory/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --manifest-path factory/Cargo.toml --all-targets
