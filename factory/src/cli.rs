@@ -7,11 +7,12 @@ use crate::build::{
     FACTORY_NATIVE_OWNER,
 };
 use crate::build_provider::{FactoryBuildFileProvider, FACTORY_BUILD_LOCAL_PROVIDER_STATE};
-use crate::core::run::{ProjectRef, RunRef};
+use crate::core::run::{ProjectRef, RunRef, WorkflowUnitRef};
 use crate::developmental_read::{
     FactoryDevelopmentalFileProvider, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
     FACTORY_JOURNEY_READING_CONTRACT, FACTORY_PROJECT_READING_CONTRACT,
-    FACTORY_RUN_READING_CONTRACT,
+    FACTORY_RUN_READING_CONTRACT, FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT,
+    FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
 };
 use crate::journey::JourneyRef;
 use serde::Serialize;
@@ -83,7 +84,7 @@ fn help() -> String {
     format!(
         "Software Factory {}\n\n\
 Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
-Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
+Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
     )
@@ -100,6 +101,8 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.project",
             "development.journey",
             "development.run",
+            "development.workflow-units",
+            "development.workflow-unit",
             "development.action",
             "action.list",
             "action.invoke",
@@ -114,6 +117,8 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_PROJECT_READING_CONTRACT,
             FACTORY_JOURNEY_READING_CONTRACT,
             FACTORY_RUN_READING_CONTRACT,
+            FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT,
+            FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
         ],
     }
 }
@@ -254,6 +259,67 @@ fn development_command(
                     reading.destination,
                     reading.run_map.address(),
                     reading.run_map.topology_revision().get()
+                ))
+            }
+        }
+        "workflow-units" => {
+            let run_ref = args
+                .get(2)
+                .map(|value| {
+                    value
+                        .parse::<RunRef>()
+                        .map_err(|error| CliError(format!("invalid run-ref: {error}")))
+                })
+                .transpose()?;
+            let reading = provider
+                .workflow_units_reading(run_ref.as_ref())
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else if reading.units.is_empty() {
+                Ok(format!("{}\nNo compiled WorkflowUnits.", reading.contract))
+            } else {
+                Ok(format!(
+                    "{}\nWorkflowUnits: {}",
+                    reading.contract,
+                    reading
+                        .units
+                        .iter()
+                        .map(|unit| format!("{} ({})", unit.workflow_unit_ref, unit.locator))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            }
+        }
+        "workflow-unit" => {
+            let workflow_unit_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing workflow-unit-ref".into()))?
+                .parse::<WorkflowUnitRef>()
+                .map_err(|error| CliError(format!("invalid workflow-unit-ref: {error}")))?;
+            let run_ref = args
+                .get(3)
+                .map(|value| {
+                    value
+                        .parse::<RunRef>()
+                        .map_err(|error| CliError(format!("invalid run-ref: {error}")))
+                })
+                .transpose()?;
+            let reading = provider
+                .workflow_unit_reading(&workflow_unit_ref, run_ref.as_ref())
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nWorkflowUnit: {}\nLocator: {}\nSource: {} @ {} ({})\nRun correlation: {:?}",
+                    reading.contract,
+                    reading.workflow_unit_ref,
+                    reading.locator,
+                    reading.provenance.source_ref,
+                    reading.provenance.source_revision,
+                    reading.provenance.source_digest,
+                    reading.current_correlation.run_journey_status
                 ))
             }
         }

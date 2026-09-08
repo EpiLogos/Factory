@@ -5,12 +5,26 @@
   "oneOf": [
     { "$ref": "#/$defs/projectReading" },
     { "$ref": "#/$defs/journeyReading" },
-    { "$ref": "#/$defs/runReading" }
+    { "$ref": "#/$defs/runReading" },
+    { "$ref": "#/$defs/workflowUnitListReading" },
+    { "$ref": "#/$defs/workflowUnitReading" }
   ],
   "$defs": {
     "canonicalRef": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "workflowUnitRef": {
+      "type": "string",
+      "pattern": "^workflow-unit:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "workflowSourceRef": {
+      "type": "string",
+      "pattern": "^workflow-source:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
+    },
+    "runRef": {
+      "type": "string",
+      "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
     },
     "revision": { "type": "integer", "minimum": 1 },
     "provenance": {
@@ -95,6 +109,180 @@
         "humanRequests": { "type": "array" },
         "actions": { "type": "array" }
       }
+    },
+    "stringSet": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "canonicalRefSet": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/canonicalRef" },
+      "uniqueItems": true
+    },
+    "workflowUnitRefSet": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/workflowUnitRef" },
+      "uniqueItems": true
+    },
+    "workflowUnitProvenance": {
+      "type": "object",
+      "required": ["owner", "buildStateRevision", "sourceRef", "sourceRevision", "sourceDigest", "identityAlgorithm"],
+      "properties": {
+        "owner": { "const": "factory" },
+        "buildStateRevision": { "$ref": "#/$defs/revision" },
+        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
+        "sourceRevision": { "type": "string", "minLength": 1 },
+        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "identityAlgorithm": { "const": "factory.workflow-unit.identity.blake3-ulid/v1" }
+      },
+      "additionalProperties": false
+    },
+    "workflowSourceBasis": {
+      "type": "object",
+      "required": ["sourceRef", "sourceRevision", "sourceDigest"],
+      "properties": {
+        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
+        "sourceRevision": { "type": "string", "minLength": 1 },
+        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitListProvenance": {
+      "type": "object",
+      "required": ["owner", "buildStateRevision", "sourceBases"],
+      "properties": {
+        "owner": { "const": "factory" },
+        "buildStateRevision": { "$ref": "#/$defs/revision" },
+        "sourceBases": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workflowSourceBasis" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "agentRequirements": {
+      "type": "object",
+      "required": ["agentRefs", "agentSetRefs", "agencyRefs"],
+      "properties": {
+        "agentRefs": { "$ref": "#/$defs/stringSet" },
+        "agentSetRefs": { "$ref": "#/$defs/stringSet" },
+        "agencyRefs": { "$ref": "#/$defs/stringSet" }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitRunCorrelation": {
+      "type": "object",
+      "required": ["runRef", "runRevision", "runMapAddress", "topologyRevision", "journeyRefs"],
+      "properties": {
+        "runRef": { "$ref": "#/$defs/runRef" },
+        "runRevision": { "$ref": "#/$defs/revision" },
+        "runMapAddress": { "type": "string", "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}/map$" },
+        "topologyRevision": { "$ref": "#/$defs/revision" },
+        "journeyRefs": { "$ref": "#/$defs/canonicalRefSet" }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitCurrentCorrelation": {
+      "type": "object",
+      "required": ["runJourneyStatus", "runJourneyBasis", "runs", "lowerCorrelationStatus", "agencyRefs", "executionRefs", "telemetryRefs"],
+      "properties": {
+        "runJourneyStatus": { "enum": ["owner-established", "absent"] },
+        "runJourneyBasis": { "type": "string", "minLength": 1 },
+        "runs": { "type": "array", "items": { "$ref": "#/$defs/workflowUnitRunCorrelation" } },
+        "lowerCorrelationStatus": { "const": "not-owner-established" },
+        "agencyRefs": { "type": ["array", "null"], "items": { "type": "string" } },
+        "executionRefs": { "type": ["array", "null"], "items": { "type": "string" } },
+        "telemetryRefs": { "type": ["array", "null"], "items": { "type": "string" } }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitSummary": {
+      "type": "object",
+      "required": ["workflowUnitRef", "locator", "key", "workflowKey", "sourceRef", "sourceRevision", "sourceDigest", "subjectRef", "basisRevision", "currentCorrelation"],
+      "properties": {
+        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
+        "locator": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "workflowKey": { "type": "string", "minLength": 1 },
+        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
+        "sourceRevision": { "type": "string", "minLength": 1 },
+        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "subjectRef": { "$ref": "#/$defs/canonicalRef" },
+        "basisRevision": { "type": "string", "minLength": 1 },
+        "currentCorrelation": { "$ref": "#/$defs/workflowUnitCurrentCorrelation" }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitListReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "projectRef", "runFilter", "units"],
+      "properties": {
+        "contract": { "const": "factory.workflow-unit-list-reading/v1" },
+        "provenance": { "$ref": "#/$defs/workflowUnitListProvenance" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "runFilter": { "oneOf": [{ "$ref": "#/$defs/runRef" }, { "type": "null" }] },
+        "units": { "type": "array", "items": { "$ref": "#/$defs/workflowUnitSummary" } }
+      },
+      "additionalProperties": false
+    },
+    "workflowBarrierRelation": {
+      "type": "object",
+      "required": ["barrierKey", "relation"],
+      "properties": {
+        "barrierKey": { "type": "string", "minLength": 1 },
+        "relation": { "enum": ["awaited-by-barrier", "released-by-barrier"] }
+      },
+      "additionalProperties": false
+    },
+    "workflowNestingRelations": {
+      "type": "object",
+      "required": ["parentUnitRefs", "childUnitRefs"],
+      "properties": {
+        "parentUnitRefs": { "$ref": "#/$defs/workflowUnitRefSet" },
+        "childUnitRefs": { "$ref": "#/$defs/workflowUnitRefSet" }
+      },
+      "additionalProperties": false
+    },
+    "workflowReturnRequirement": {
+      "type": "object",
+      "required": ["contract", "address"],
+      "properties": {
+        "contract": { "type": "string", "minLength": 1 },
+        "address": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "workflowUnitReading": {
+      "type": "object",
+      "required": ["contract", "provenance", "projectRef", "workflowUnitRef", "locator", "key", "workflowKey", "developmentalConcern", "subjectRef", "basisRevision", "requiredDifference", "requiredReturn", "requiredVerification", "agentRequirements", "praxisRefs", "capabilityRefs", "dependencies", "independenceFrom", "barrierRelations", "nesting", "permittedEffects", "stopConditions", "escalationConditions", "currentCorrelation"],
+      "properties": {
+        "contract": { "const": "factory.workflow-unit-reading/v1" },
+        "provenance": { "$ref": "#/$defs/workflowUnitProvenance" },
+        "projectRef": { "$ref": "#/$defs/canonicalRef" },
+        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
+        "locator": { "type": "string", "minLength": 1 },
+        "key": { "type": "string", "minLength": 1 },
+        "workflowKey": { "type": "string", "minLength": 1 },
+        "developmentalConcern": { "type": "string", "minLength": 1 },
+        "subjectRef": { "$ref": "#/$defs/canonicalRef" },
+        "basisRevision": { "type": "string", "minLength": 1 },
+        "requiredDifference": { "type": "string", "minLength": 1 },
+        "requiredReturn": { "$ref": "#/$defs/workflowReturnRequirement" },
+        "requiredVerification": { "$ref": "#/$defs/stringSet" },
+        "agentRequirements": { "$ref": "#/$defs/agentRequirements" },
+        "praxisRefs": { "$ref": "#/$defs/stringSet" },
+        "capabilityRefs": { "$ref": "#/$defs/stringSet" },
+        "dependencies": { "$ref": "#/$defs/workflowUnitRefSet" },
+        "independenceFrom": { "$ref": "#/$defs/workflowUnitRefSet" },
+        "barrierRelations": { "type": "array", "items": { "$ref": "#/$defs/workflowBarrierRelation" } },
+        "nesting": { "$ref": "#/$defs/workflowNestingRelations" },
+        "permittedEffects": { "$ref": "#/$defs/stringSet" },
+        "stopConditions": { "type": "string", "minLength": 1 },
+        "escalationConditions": { "type": "string", "minLength": 1 },
+        "currentCorrelation": { "$ref": "#/$defs/workflowUnitCurrentCorrelation" }
+      },
+      "additionalProperties": false
     }
   }
 }
