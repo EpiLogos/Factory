@@ -237,6 +237,35 @@ impl FactoryBuildState {
         self.bump_revision()
     }
 
+    /// Admit evidence about the exact current declared artifact scope of a
+    /// native Candidate. The Candidate revision and Run come from this owner,
+    /// never from a caller's claimed current state. This does not finish a Run,
+    /// verify artifact quality or grant human Recognition.
+    pub fn insert_artifact_evidence(
+        &mut self,
+        mut evidence: EvidenceRecord,
+        snapshot: &crate::artifact_evidence::ArtifactSnapshot,
+        assessment: &crate::artifact_evidence::SubjectState,
+    ) -> Result<(), crate::artifact_evidence::ArtifactEvidenceError> {
+        use crate::artifact_evidence::ArtifactEvidenceError;
+        let subject = &snapshot.subject_state().subject_ref;
+        let candidate = self.candidates.get(&subject.to_string()).ok_or_else(|| {
+            ArtifactEvidenceError::Build(FactoryBuildError::SubjectNotFound(subject.to_string()))
+        })?;
+        if subject.kind() != "candidate" || candidate.run_ref != evidence.run_ref {
+            return Err(ArtifactEvidenceError::Build(
+                FactoryBuildError::SubjectRunMismatch,
+            ));
+        }
+        let revision =
+            Revision::new(candidate.revision).ok_or(ArtifactEvidenceError::StaleSubject)?;
+        snapshot.validate_current(assessment, subject, revision)?;
+        evidence.native_ref = Some(snapshot.subject_state().state_ref.clone());
+        evidence.assessment = Some("current-declared-artifact-scope".into());
+        self.insert_evidence(evidence)
+            .map_err(ArtifactEvidenceError::Build)
+    }
+
     pub fn insert_candidate(
         &mut self,
         candidate: CandidateRecord,

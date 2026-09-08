@@ -1,0 +1,11 @@
+# Factory Mode source definition
+
+[The expression](intent.md) holds the agent's purpose and conduct in six implicit movements. [The native Central profile](profile.json) assigns the existing three-member `factory-bounded-development` SkillSet and `method/factory/bounded-work`. These are Factory-owned reusable sources. Personal expressions retain their existing `Control/agents/expressions` home; this package does not install a personal agency or create another runtime store.
+
+For a commissioned Project, derive a situated profile through native `agent-profile.save`: retain `agent/factory-mode`, set the distinct situated profile ref and revision, retain `source_profile_ref: profile/factory-mode`, bind the actual World and its ratified horizon, and add the commission's source ref and applicable adopted governance. Preserve the original purpose separately from the particular task. Resolve the assigned Skills and Method through AIKit, then bind the actual Actuation/Workcell authority and harness. A profile is source, not an execution grant or a new process.
+
+`scripts/verify_acp_bounded_work.py` uses this actual definition to create its temporary situated profile. It preserves the expression/source-profile relations in native composition and, for live execution, pins and explicitly delivers both source files alongside the commission and resolved Method. The existing `--setup-only` route verifies native source/profile/Method composition without calling a model.
+
+The home World uses Central's directory-name fallback because this repository has no native Project manifest. The refs declare source location; direct reading and native profile validation do not pretend that Central has registered the Factory World. The temporary verification World is actually initialised before its situated profile is saved.
+
+The proposed respect-for-experience governance law remains a proposal, so this profile does not silently add it as adopted governance. Anima and Aletheia can later supply their own expressions and derived profiles, retaining lineage and adding source-owned QL–MEF Methods/Skills as they become real. No speculative Agent, skill assignment, model choice, watcher or authority is preinstalled here.

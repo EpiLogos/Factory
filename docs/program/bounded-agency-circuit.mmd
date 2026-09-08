@@ -1,0 +1,39 @@
+flowchart TB
+  person["Person: concern, commission, experience"]
+  central["Central: authored profile and source revision"]
+  actuation["Actuation: WorldBinding and Pi instantiation receipt"]
+  sources["Factory source Skills: development + operation + bounded work"]
+  aikit["AIKit: source selection, composition, native Method / ContextResolution"]
+  gate{"Required source bytes still match?"}
+  hold["Refuse new prompt; retain draft and work"]
+  owner["Existing desktop ACP resident owner"]
+  bridge["AgentSessionHost → pi-acp → Pi"]
+  proposal["Actual model proposal; mutation tools disabled"]
+  effect{"Current source basis and exact finite material grant?"}
+  denied["Refuse before material operation"]
+  workcell["Workcell: fixed validator + one artifact write"]
+  factory["Factory: current artifact evidence + attributable Journey Return"]
+  stale["Changed subject: historical evidence cannot establish current applicability"]
+  recognition["Person: recognise, challenge or revise"]
+  cleanup["Native cancellation / PID-bound owner shutdown / process-group reap"]
+  person --> central
+  person --> actuation
+  central --> aikit
+  actuation --> aikit
+  sources --> aikit
+  aikit --> gate
+  gate -- no --> hold
+  gate -- yes --> owner
+  owner --> bridge
+  bridge --> proposal
+  proposal --> effect
+  effect -- no --> denied
+  effect -- yes --> workcell
+  workcell --> factory
+  factory -- subject changed --> stale
+  factory --> recognition
+  recognition -- correction to responsible owner --> person
+  owner --> cleanup
+  hold --> cleanup
+  style recognition fill:#f5ead6,stroke:#725f3d
+  style person fill:#f5ead6,stroke:#725f3d

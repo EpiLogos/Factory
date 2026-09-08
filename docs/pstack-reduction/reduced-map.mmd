@@ -1,0 +1,590 @@
+flowchart LR
+%% Reduced dependency graph. Canonical source nodes only.
+%% References are omitted from this operational graph; source-edge-manifest.json retains them.
+%% Optional and deferred edges remain visibly labelled.
+  n175e08d4d173["agents/comment-sicko.md"]
+  nc29edf8aad04["agents/poteto-agent.md"]
+  n0d9578cc4b67["automations/benny/FOR_AGENTS.md"]
+  ne4dfcb208d62["automations/benny/README.md"]
+  n47646fcc16ba["automations/benny/skills/reproduce-and-fix-issues/SKILL.md"]
+  n99bb81c8148a["automations/benny/skills/reproduce-and-fix-issues/references/control-adapter.md"]
+  n166d9d98041b["automations/benny/skills/reproduce-and-fix-issues/references/feature-map.example.md"]
+  n8a0a6506b2f0["automations/benny/skills/reproduce-and-fix-issues/references/verify-existing-fix.md"]
+  na0b07ff52302["automations/benny/skills/setup-benny/SKILL.md"]
+  n015fd761e6b5["automations/benny/skills/triage-issue-reports/SKILL.md"]
+  n8fee8a34394c["automations/benny/skills/triage-issue-reports/references/routing.example.md"]
+  n807648a3318f["automations/benny/templates/configuration.example.yaml"]
+  nf18041505dfc["automations/benny/templates/reproduce-automation-prompt.md"]
+  na23a4be2d085["automations/benny/templates/triage-automation-prompt.md"]
+  na986729b0041["external:AskQuestion"]
+  n4e8364fdf5e7["external:Task"]
+  nafd6263e4482["external:automate"]
+  n98755eac754b["external:control-cli"]
+  ne406bd434229["external:control-ui"]
+  n0f0f4c096707["external:create-skill"]
+  n7de53d917b04["external:deslop"]
+  nbdda1daa8628["external:goal"]
+  n1f70d10c3941["external:loop"]
+  n48d1581bdb90["skills/architect/SKILL.md"]
+  n658bff2ea29f["skills/architect/references/design-red-flags.md"]
+  n9b70ac8ede27["skills/architect/references/rationale-template.md"]
+  n4733aae06648["skills/architect/references/runner-prompt.md"]
+  n2e13d6d08287["skills/arena/SKILL.md"]
+  n14a1c034b592["skills/automate-me/SKILL.md"]
+  n7f2ef73b52cd["skills/blast-radius/SKILL.md"]
+  n7ef42e8daae8["skills/bro/SKILL.md"]
+  n6eef4526b020["skills/create-verification-skill/SKILL.md"]
+  n767604e591d9["skills/create-verification-skill/references/feature-map-example/README.md"]
+  nbf2a552e8c90["skills/create-verification-skill/references/feature-map-example/create-note.md"]
+  nde0da8415461["skills/create-verification-skill/references/feature-map-example/search.md"]
+  n41051d823e34["skills/figure-it-out/SKILL.md"]
+  n253c34a57b61["skills/how/SKILL.md"]
+  n1fcb21b4dc73["skills/how/references/critic-prompt.md"]
+  n8ae545142e98["skills/how/references/critique-rubric.md"]
+  na0c7ccf449ae["skills/how/references/explainer-prompt.md"]
+  n05325001f3d1["skills/how/references/explorer-prompt.md"]
+  nd2aa6d8d90d2["skills/interrogate/SKILL.md"]
+  nbd4db43c6a9b["skills/interrogate/references/code-quality-review.md"]
+  n2f3482e391e8["skills/interrogate/references/lead-judgment.md"]
+  na23f8e86cc4e["skills/interrogate/references/reviewer-prompt.md"]
+  nb152470e39fd["skills/interrogate/references/rubric.md"]
+  n15ec7bf02a9b["skills/maintain-verification-skill/SKILL.md"]
+  n95eeeffe3b14["skills/make-bot-ui/SKILL.md"]
+  nef152d4020cf["skills/no-comments/SKILL.md"]
+  n84651d3a857e["skills/poteto-mode/SKILL.md"]
+  naad1ce8f74ad["skills/poteto-mode/playbooks/authoring-a-skill.md"]
+  nc1764de78a82["skills/poteto-mode/playbooks/autonomous-run.md"]
+  n13fbdba34ff2["skills/poteto-mode/playbooks/autopilot-full.md"]
+  ne62280a0cf94["skills/poteto-mode/playbooks/autopilot-stack.md"]
+  n992504e20ebe["skills/poteto-mode/playbooks/babysit.md"]
+  n5ebd7028ce7f["skills/poteto-mode/playbooks/bug-fix.md"]
+  ndb0fc2fd8e12["skills/poteto-mode/playbooks/eval.md"]
+  nfb18b41f370a["skills/poteto-mode/playbooks/feature.md"]
+  nfa3eaf35bc7d["skills/poteto-mode/playbooks/hillclimb.md"]
+  nd7b70a770400["skills/poteto-mode/playbooks/investigation.md"]
+  nadda8d85e030["skills/poteto-mode/playbooks/multi-phase-plan.md"]
+  n006d1bc49992["skills/poteto-mode/playbooks/opening-a-pr.md"]
+  nf4f74265ffbc["skills/poteto-mode/playbooks/orchestrate.md"]
+  nccffb9e46647["skills/poteto-mode/playbooks/pause-safely.md"]
+  n4bee5eaf45ff["skills/poteto-mode/playbooks/perf-issue.md"]
+  n5de09ca2a0ba["skills/poteto-mode/playbooks/prototype.md"]
+  n062fd5fa1e4d["skills/poteto-mode/playbooks/refactoring.md"]
+  n6f1cbd195380["skills/poteto-mode/playbooks/runtime-forensics.md"]
+  n3793f560a9c2["skills/poteto-mode/playbooks/session-pickup.md"]
+  n8f65a876841b["skills/poteto-mode/playbooks/shipping.md"]
+  n87c5f643471c["skills/poteto-mode/playbooks/trace-forensics.md"]
+  na2f6a6b47fea["skills/poteto-mode/playbooks/visual-parity.md"]
+  n21693f75a488["skills/poteto-mode/playbooks/worktree-cleanup.md"]
+  naa37b914bf9d["skills/poteto-mode/references/bugbot-triage.md"]
+  n3fcb5c256eaf["skills/principle-boundary-discipline/SKILL.md"]
+  nca651f041310["skills/principle-build-the-lever/SKILL.md"]
+  n51dc818ada31["skills/principle-encode-lessons-in-structure/SKILL.md"]
+  n74f023e83b66["skills/principle-exhaust-the-design-space/SKILL.md"]
+  n198eb4862894["skills/principle-experience-first/SKILL.md"]
+  n017bdbbb2b67["skills/principle-fix-root-causes/SKILL.md"]
+  na6385fe9476d["skills/principle-foundational-thinking/SKILL.md"]
+  ne3205fac6b78["skills/principle-guard-the-context-window/SKILL.md"]
+  ne4444bef5db8["skills/principle-laziness-protocol/SKILL.md"]
+  n6661ea8d87d5["skills/principle-make-operations-idempotent/SKILL.md"]
+  n914c7be21077["skills/principle-migrate-callers-then-delete-legacy-apis/SKILL.md"]
+  nfff7f8346cc2["skills/principle-minimize-reader-load/SKILL.md"]
+  n81d4c494423c["skills/principle-model-the-domain/SKILL.md"]
+  n596931f34ea7["skills/principle-never-block-on-the-human/SKILL.md"]
+  nf41d33f4349e["skills/principle-outcome-oriented-execution/SKILL.md"]
+  n022899748750["skills/principle-prove-it-works/SKILL.md"]
+  n6c54ad06b07c["skills/principle-redesign-from-first-principles/SKILL.md"]
+  n4371086a336d["skills/principle-separate-before-serializing-shared-state/SKILL.md"]
+  n283f2a557337["skills/principle-sequence-verifiable-units/SKILL.md"]
+  nbc0168d7b6e0["skills/principle-subtract-before-you-add/SKILL.md"]
+  n4fd2cca0c94b["skills/principle-type-system-discipline/SKILL.md"]
+  nce7d0a29d5d6["skills/recall/SKILL.md"]
+  n64723975185f["skills/reflect/SKILL.md"]
+  nc5e51be65c9b["skills/reflect/references/divergent-reviewer.md"]
+  n580e40bdbdf2["skills/reflect/references/judgment-reviewer.md"]
+  n074d2121c892["skills/reflect/references/synthesizer.md"]
+  n229c08b06bb9["skills/reflect/references/tooling-reviewer.md"]
+  n4bc9d593dad3["skills/setup-pstack/SKILL.md"]
+  na382fb3a7a6e["skills/show-me-your-work/SKILL.md"]
+  n49b5850dae6e["skills/swarm/SKILL.md"]
+  n53f272aea4d2["skills/tdd/SKILL.md"]
+  n3cf41f06be8b["skills/teach/SKILL.md"]
+  n4162f0ff5a8f["skills/technical-writing/SKILL.md"]
+  n9fd9cf5f8d23["skills/typescript-best-practices/SKILL.md"]
+  nd8f8612600c3["skills/typescript-best-practices/references/patterns.md"]
+  n1044ad0de29d["skills/unslop/SKILL.md"]
+  nab0a10c2d019["skills/why/SKILL.md"]
+  nbdcefe792955["skills/why/references/epistemics.md"]
+  n6a5c529568f4["skills/why/references/investigator-prompt.md"]
+  nd588069c4faf["skills/why/references/source-playbook.md"]
+  ndb7ecb0e8875["skills/why/references/sources/code-archaeology.md"]
+  nd4eb12a8bf1f["skills/why/references/sources/databricks.md"]
+  n72c072c49b53["skills/why/references/sources/datadog.md"]
+  nee8d40e77e8c["skills/why/references/sources/incident-postmortem.md"]
+  n30f01c6c04e9["skills/why/references/sources/linear.md"]
+  n3985a8dbefab["skills/why/references/sources/notion.md"]
+  na03032edaa3f["skills/why/references/sources/sentry.md"]
+  nec856b11f99a["skills/why/references/sources/slack.md"]
+  nd2cba3008b37["skills/why/references/synthesizer-prompt.md"]
+  nd4bfcac36b16["unresolved:./playbooks/babysit.md"]
+  n7d9bd6aba86e["unresolved:automations/webhook/"]
+  n0fa84dbb0e4d["unresolved:scripts/snapshot.sh"]
+  n14ea114862f3["unresolved:skills/verify-"]
+  n24d2c51ad54c["unresolved:url"]
+  class n175e08d4d173 source
+  class nc29edf8aad04 source
+  class n0d9578cc4b67 external_automation
+  class ne4dfcb208d62 external_automation
+  class n47646fcc16ba external_automation
+  class n99bb81c8148a external_automation
+  class n166d9d98041b external_automation
+  class n8a0a6506b2f0 external_automation
+  class na0b07ff52302 external_automation
+  class n015fd761e6b5 external_automation
+  class n8fee8a34394c external_automation
+  class n807648a3318f external_automation
+  class nf18041505dfc external_automation
+  class na23a4be2d085 external_automation
+  class n48d1581bdb90 source
+  class n658bff2ea29f source
+  class n9b70ac8ede27 source
+  class n4733aae06648 source
+  class n2e13d6d08287 source
+  class n14a1c034b592 source
+  class n7f2ef73b52cd source
+  class n7ef42e8daae8 source
+  class n6eef4526b020 source
+  class n767604e591d9 source
+  class nbf2a552e8c90 source
+  class nde0da8415461 source
+  class n41051d823e34 source
+  class n253c34a57b61 source
+  class n1fcb21b4dc73 source
+  class n8ae545142e98 source
+  class na0c7ccf449ae source
+  class n05325001f3d1 source
+  class nd2aa6d8d90d2 source
+  class nbd4db43c6a9b source
+  class n2f3482e391e8 source
+  class na23f8e86cc4e source
+  class nb152470e39fd source
+  class n15ec7bf02a9b source
+  class n95eeeffe3b14 source
+  class nef152d4020cf source
+  class n84651d3a857e source
+  class naad1ce8f74ad source
+  class nc1764de78a82 source
+  class n13fbdba34ff2 source
+  class ne62280a0cf94 source
+  class n992504e20ebe source
+  class n5ebd7028ce7f source
+  class ndb0fc2fd8e12 source
+  class nfb18b41f370a source
+  class nfa3eaf35bc7d source
+  class nd7b70a770400 source
+  class nadda8d85e030 source
+  class n006d1bc49992 source
+  class nf4f74265ffbc source
+  class nccffb9e46647 source
+  class n4bee5eaf45ff source
+  class n5de09ca2a0ba source
+  class n062fd5fa1e4d source
+  class n6f1cbd195380 source
+  class n3793f560a9c2 source
+  class n8f65a876841b source
+  class n87c5f643471c source
+  class na2f6a6b47fea source
+  class n21693f75a488 source
+  class naa37b914bf9d source
+  class n3fcb5c256eaf source
+  class nca651f041310 source
+  class n51dc818ada31 source
+  class n74f023e83b66 source
+  class n198eb4862894 source
+  class n017bdbbb2b67 source
+  class na6385fe9476d source
+  class ne3205fac6b78 source
+  class ne4444bef5db8 source
+  class n6661ea8d87d5 source
+  class n914c7be21077 source
+  class nfff7f8346cc2 source
+  class n81d4c494423c source
+  class n596931f34ea7 source
+  class nf41d33f4349e source
+  class n022899748750 source
+  class n6c54ad06b07c source
+  class n4371086a336d source
+  class n283f2a557337 source
+  class nbc0168d7b6e0 source
+  class n4fd2cca0c94b source
+  class nce7d0a29d5d6 source
+  class n64723975185f source
+  class nc5e51be65c9b source
+  class n580e40bdbdf2 source
+  class n074d2121c892 source
+  class n229c08b06bb9 source
+  class n4bc9d593dad3 source
+  class na382fb3a7a6e source
+  class n49b5850dae6e source
+  class n53f272aea4d2 source
+  class n3cf41f06be8b source
+  class n4162f0ff5a8f source
+  class n9fd9cf5f8d23 source
+  class nd8f8612600c3 source
+  class n1044ad0de29d source
+  class nab0a10c2d019 source
+  class nbdcefe792955 source
+  class n6a5c529568f4 source
+  class nd588069c4faf source
+  class ndb7ecb0e8875 source
+  class nd4eb12a8bf1f source
+  class n72c072c49b53 source
+  class nee8d40e77e8c source
+  class n30f01c6c04e9 source
+  class n3985a8dbefab source
+  class na03032edaa3f source
+  class nec856b11f99a source
+  class nd2cba3008b37 source
+  n175e08d4d173 -->|"retain-conditional L26"| n253c34a57b61
+  n175e08d4d173 -->|"retain-conditional L26"| nab0a10c2d019
+  nc29edf8aad04 -->|"retain-conditional L3"| n84651d3a857e
+  nc29edf8aad04 -->|"retain-conditional L9"| n84651d3a857e
+  n0d9578cc4b67 -.->|"defer L85"| nafd6263e4482
+  n0d9578cc4b67 -.->|"defer L87"| nafd6263e4482
+  n0d9578cc4b67 -.->|"defer L89"| nafd6263e4482
+  n47646fcc16ba -->|"redirect-to-native-owner L31"| ne3205fac6b78
+  n47646fcc16ba -->|"redirect-to-native-owner L32"| n283f2a557337
+  n47646fcc16ba -->|"redirect-to-native-owner L32"| n017bdbbb2b67
+  n47646fcc16ba -->|"redirect-to-native-owner L32"| n022899748750
+  n47646fcc16ba -->|"redirect-to-native-owner L161"| n253c34a57b61
+  n47646fcc16ba -->|"redirect-to-native-owner L161"| nab0a10c2d019
+  n47646fcc16ba -->|"retain-conditional L262"| n53f272aea4d2
+  n47646fcc16ba -->|"redirect-to-native-owner L295"| n1044ad0de29d
+  na0b07ff52302 -.->|"defer L19"| nafd6263e4482
+  na0b07ff52302 -->|"retain-conditional L54"| n4371086a336d
+  na0b07ff52302 -->|"redirect-to-native-owner L55"| nfff7f8346cc2
+  na0b07ff52302 -.->|"defer L90"| nafd6263e4482
+  na0b07ff52302 -->|"retain-conditional L116"| n1044ad0de29d
+  na0b07ff52302 -.->|"defer L183"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L184"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L185"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L186"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L189"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L200"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L207"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L214"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L218"| nafd6263e4482
+  na0b07ff52302 -.->|"defer L246"| nafd6263e4482
+  n015fd761e6b5 -->|"retain-conditional L27"| n4371086a336d
+  n015fd761e6b5 -->|"redirect-to-native-owner L28"| nfff7f8346cc2
+  n015fd761e6b5 -->|"redirect-to-native-owner L28"| n1044ad0de29d
+  n015fd761e6b5 -->|"retain-conditional L71"| n253c34a57b61
+  n015fd761e6b5 -->|"retain-conditional L71"| nab0a10c2d019
+  nf18041505dfc -.->|"defer L3"| nafd6263e4482
+  na23a4be2d085 -.->|"defer L3"| nafd6263e4482
+  n48d1581bdb90 -->|"retain-conditional L23"| n253c34a57b61
+  n48d1581bdb90 -->|"retain-conditional L25"| n253c34a57b61
+  n48d1581bdb90 -->|"retain-conditional L25"| nab0a10c2d019
+  n48d1581bdb90 -->|"redirect-to-native-owner L31"| n2e13d6d08287
+  n48d1581bdb90 -->|"retain-conditional L35"| n74f023e83b66
+  n48d1581bdb90 -->|"retain-conditional L49"| na6385fe9476d
+  n48d1581bdb90 -->|"retain-conditional L49"| nf41d33f4349e
+  n48d1581bdb90 -->|"retain-conditional L49"| nd2aa6d8d90d2
+  n48d1581bdb90 -->|"retain-conditional L61"| n6c54ad06b07c
+  n48d1581bdb90 -->|"retain-conditional L61"| n017bdbbb2b67
+  n48d1581bdb90 -->|"redirect-to-native-owner L76"| n253c34a57b61
+  n48d1581bdb90 -->|"retain-conditional L78"| nbc0168d7b6e0
+  n4733aae06648 -->|"redirect-to-native-owner L5"| n48d1581bdb90
+  n4733aae06648 -->|"retain-conditional L12"| n4371086a336d
+  n4733aae06648 -->|"redirect-to-native-owner L14"| n51dc818ada31
+  n4733aae06648 -->|"redirect-to-native-owner L15"| n3fcb5c256eaf
+  n4733aae06648 -->|"retain-conditional L17"| n6661ea8d87d5
+  n4733aae06648 -->|"retain-conditional L18"| ne4444bef5db8
+  n4733aae06648 -->|"retain-conditional L18"| nfff7f8346cc2
+  n2e13d6d08287 -->|"retain-conditional L29"| n4371086a336d
+  n2e13d6d08287 -->|"redirect-to-native-owner L57"| n6c54ad06b07c
+  n2e13d6d08287 -->|"redirect-to-native-owner L65"| n022899748750
+  n14a1c034b592 -.->|"defer L11"| n0f0f4c096707
+  n14a1c034b592 -.->|"defer L17"| na986729b0041
+  n14a1c034b592 -.->|"defer L17"| na986729b0041
+  n14a1c034b592 -.->|"defer L44"| na986729b0041
+  n14a1c034b592 -.->|"defer L44"| na986729b0041
+  n14a1c034b592 -->|"redirect-to-native-owner L63"| n84651d3a857e
+  n14a1c034b592 -.->|"defer L67"| n0f0f4c096707
+  n14a1c034b592 -.->|"defer L72"| n0f0f4c096707
+  n14a1c034b592 -->|"redirect-to-native-owner L77"| n1044ad0de29d
+  n14a1c034b592 -.->|"defer L77"| n0f0f4c096707
+  n14a1c034b592 -.->|"defer L96"| n0f0f4c096707
+  n14a1c034b592 -.->|"defer L102"| n0f0f4c096707
+  n14a1c034b592 -.->|"defer L109"| n0f0f4c096707
+  n7f2ef73b52cd -->|"redirect-to-native-owner L33"| nab0a10c2d019
+  n7f2ef73b52cd -->|"retain-conditional L36"| nab0a10c2d019
+  n7f2ef73b52cd -->|"redirect-to-native-owner L38"| n2e13d6d08287
+  n7f2ef73b52cd -->|"retain-conditional L48"| n1044ad0de29d
+  n6eef4526b020 -.->|"defer L9"| n14ea114862f3
+  n6eef4526b020 -.->|"defer L25"| n14ea114862f3
+  n6eef4526b020 -.->|"defer L36"| n14ea114862f3
+  n6eef4526b020 -->|"retain-conditional L44"| n15ec7bf02a9b
+  n41051d823e34 -->|"redirect-to-native-owner L15"| n84651d3a857e
+  n41051d823e34 -->|"retain-conditional L25"| n596931f34ea7
+  n41051d823e34 -->|"retain-conditional L29"| na6385fe9476d
+  n41051d823e34 -->|"redirect-to-native-owner L32"| n48d1581bdb90
+  n41051d823e34 -->|"redirect-to-native-owner L32"| n2e13d6d08287
+  n41051d823e34 -->|"redirect-to-native-owner L32"| ne4444bef5db8
+  n41051d823e34 -->|"retain-conditional L33"| n4371086a336d
+  n41051d823e34 -->|"retain-conditional L41"| n283f2a557337
+  n41051d823e34 -->|"retain-conditional L49"| na382fb3a7a6e
+  n41051d823e34 -.->|"retain-optional L53"| n51dc818ada31
+  n253c34a57b61 -.->|"defer L65"| n4e8364fdf5e7
+  n253c34a57b61 -.->|"defer L77"| n4e8364fdf5e7
+  nd2aa6d8d90d2 -.->|"defer L36"| n4e8364fdf5e7
+  nd2aa6d8d90d2 -.->|"defer L50"| n4e8364fdf5e7
+  n15ec7bf02a9b -.->|"defer L25"| n14ea114862f3
+  n15ec7bf02a9b -->|"retain-conditional L25"| n6eef4526b020
+  n95eeeffe3b14 -.->|"defer L37"| n7d9bd6aba86e
+  nef152d4020cf -.->|"defer L19"| n4e8364fdf5e7
+  nef152d4020cf -.->|"defer L19"| n4e8364fdf5e7
+  nef152d4020cf -->|"retain-conditional L20"| n253c34a57b61
+  nef152d4020cf -->|"retain-conditional L20"| nab0a10c2d019
+  nef152d4020cf -->|"retain-conditional L21"| n48d1581bdb90
+  nef152d4020cf -->|"retain-conditional L22"| n017bdbbb2b67
+  nef152d4020cf -->|"retain-conditional L22"| n6c54ad06b07c
+  n84651d3a857e -->|"retain-conditional L19"| n253c34a57b61
+  n84651d3a857e -.->|"defer L20"| na986729b0041
+  n84651d3a857e -.->|"defer L20"| na986729b0041
+  n84651d3a857e -->|"retain-conditional L21"| n81d4c494423c
+  n84651d3a857e -->|"retain-conditional L22"| n48d1581bdb90
+  n84651d3a857e -->|"retain-conditional L23"| n49b5850dae6e
+  n84651d3a857e -->|"retain-conditional L23"| n2e13d6d08287
+  n84651d3a857e -->|"retain-conditional L24"| nd2aa6d8d90d2
+  n84651d3a857e -->|"retain-conditional L26"| n1044ad0de29d
+  n84651d3a857e -.->|"defer L26"| n0f0f4c096707
+  n84651d3a857e -->|"retain-conditional L27"| n4162f0ff5a8f
+  n84651d3a857e -.->|"defer L28"| n7de53d917b04
+  n84651d3a857e -->|"retain-conditional L29"| nef152d4020cf
+  n84651d3a857e -.->|"defer L30"| n98755eac754b
+  n84651d3a857e -.->|"defer L30"| ne406bd434229
+  n84651d3a857e -->|"retain-conditional L31"| n992504e20ebe
+  n84651d3a857e -->|"retain-conditional L32"| n8f65a876841b
+  n84651d3a857e -->|"retain-conditional L35"| na382fb3a7a6e
+  n84651d3a857e -.->|"defer L35"| n1f70d10c3941
+  n84651d3a857e -->|"retain-conditional L44"| na6385fe9476d
+  n84651d3a857e -->|"retain-conditional L45"| n6c54ad06b07c
+  n84651d3a857e -->|"retain-conditional L46"| nbc0168d7b6e0
+  n84651d3a857e -->|"retain-conditional L47"| nfff7f8346cc2
+  n84651d3a857e -->|"retain-conditional L50"| n74f023e83b66
+  n84651d3a857e -->|"retain-conditional L58"| n6661ea8d87d5
+  n84651d3a857e -->|"retain-conditional L60"| n4371086a336d
+  n84651d3a857e -->|"retain-conditional L64"| n022899748750
+  n84651d3a857e -->|"retain-conditional L66"| n283f2a557337
+  n84651d3a857e -->|"retain-conditional L70"| ne3205fac6b78
+  n84651d3a857e -->|"retain-conditional L89"| nc29edf8aad04
+  n84651d3a857e -->|"retain-conditional L89"| n253c34a57b61
+  n84651d3a857e -->|"retain-conditional L89"| nab0a10c2d019
+  n84651d3a857e -->|"retain-conditional L89"| nd2aa6d8d90d2
+  n84651d3a857e -->|"retain-conditional L89"| n64723975185f
+  n84651d3a857e -->|"retain-conditional L89"| n49b5850dae6e
+  n84651d3a857e -->|"retain-conditional L91"| n4bc9d593dad3
+  n84651d3a857e -->|"retain-conditional L91"| n253c34a57b61
+  n84651d3a857e -->|"retain-conditional L91"| nab0a10c2d019
+  n84651d3a857e -->|"retain-conditional L91"| n2e13d6d08287
+  n84651d3a857e -->|"retain-conditional L91"| n49b5850dae6e
+  n84651d3a857e -->|"retain-conditional L91"| n48d1581bdb90
+  n84651d3a857e -->|"retain-conditional L91"| nd2aa6d8d90d2
+  n84651d3a857e -->|"retain-conditional L91"| n64723975185f
+  n84651d3a857e -.->|"defer L91"| n4e8364fdf5e7
+  n84651d3a857e -->|"retain-conditional L114"| n48d1581bdb90
+  n84651d3a857e -->|"retain-conditional L116"| n41051d823e34
+  n84651d3a857e -->|"retain-conditional L116"| nf4f74265ffbc
+  n84651d3a857e -->|"retain-conditional L118"| nd7b70a770400
+  n84651d3a857e -->|"retain-conditional L121"| nfa3eaf35bc7d
+  n84651d3a857e -->|"retain-conditional L123"| n87c5f643471c
+  n84651d3a857e -->|"retain-conditional L129"| ndb0fc2fd8e12
+  n84651d3a857e -->|"retain-conditional L131"| n8f65a876841b
+  n84651d3a857e -->|"retain-conditional L132"| nc1764de78a82
+  n84651d3a857e -.->|"defer L132"| n1f70d10c3941
+  n84651d3a857e -->|"retain-conditional L133"| nf4f74265ffbc
+  n84651d3a857e -->|"retain-conditional L134"| n13fbdba34ff2
+  naad1ce8f74ad -.->|"defer L5"| n0f0f4c096707
+  naad1ce8f74ad -->|"redirect-to-native-owner L8"| n006d1bc49992
+  naad1ce8f74ad -->|"retain-conditional L10"| n51dc818ada31
+  nc1764de78a82 -.->|"defer L3"| n1f70d10c3941
+  nc1764de78a82 -.->|"defer L6"| n1f70d10c3941
+  nc1764de78a82 -->|"retain-conditional L8"| n283f2a557337
+  nc1764de78a82 -.->|"defer L9"| na986729b0041
+  nc1764de78a82 -.->|"defer L9"| na986729b0041
+  nc1764de78a82 -.->|"retain-optional L10"| na382fb3a7a6e
+  n13fbdba34ff2 -.->|"defer L5"| nbdda1daa8628
+  n13fbdba34ff2 -->|"retain-conditional L6"| n022899748750
+  n13fbdba34ff2 -.->|"defer L6"| n7de53d917b04
+  n13fbdba34ff2 -->|"retain-conditional L6"| nef152d4020cf
+  n13fbdba34ff2 -->|"retain-conditional L6"| na382fb3a7a6e
+  n13fbdba34ff2 -->|"retain-conditional L8"| n49b5850dae6e
+  n13fbdba34ff2 -.->|"defer L8"| n98755eac754b
+  n13fbdba34ff2 -.->|"defer L8"| ne406bd434229
+  n13fbdba34ff2 -.->|"defer L10"| n1f70d10c3941
+  n13fbdba34ff2 -.->|"defer L10"| nbdda1daa8628
+  ne62280a0cf94 -.->|"defer L5"| n7de53d917b04
+  ne62280a0cf94 -->|"retain-conditional L5"| nef152d4020cf
+  ne62280a0cf94 -->|"retain-conditional L5"| na382fb3a7a6e
+  ne62280a0cf94 -.->|"defer L6"| n1f70d10c3941
+  ne62280a0cf94 -.->|"defer L6"| nbdda1daa8628
+  ne62280a0cf94 -.->|"defer L7"| nbdda1daa8628
+  ne62280a0cf94 -->|"redirect-to-native-owner L8"| n49b5850dae6e
+  n992504e20ebe -.->|"defer L14"| n1f70d10c3941
+  n5ebd7028ce7f -->|"retain-conditional L8"| n253c34a57b61
+  n5ebd7028ce7f -->|"retain-conditional L8"| nab0a10c2d019
+  n5ebd7028ce7f -.->|"defer L8"| n1f70d10c3941
+  n5ebd7028ce7f -->|"retain-conditional L9"| n48d1581bdb90
+  n5ebd7028ce7f -->|"retain-conditional L11"| n53f272aea4d2
+  n5ebd7028ce7f -->|"retain-conditional L13"| n006d1bc49992
+  ndb0fc2fd8e12 -->|"redirect-to-native-owner L22"| n2e13d6d08287
+  ndb0fc2fd8e12 -->|"redirect-to-native-owner L23"| n2e13d6d08287
+  nfb18b41f370a -->|"retain-conditional L10"| n4371086a336d
+  nfb18b41f370a -->|"retain-conditional L12"| n81d4c494423c
+  nfb18b41f370a -->|"retain-conditional L12"| n2e13d6d08287
+  nfb18b41f370a -->|"retain-conditional L15"| n283f2a557337
+  nfb18b41f370a -->|"retain-conditional L16"| nd2aa6d8d90d2
+  nfb18b41f370a -->|"retain-conditional L17"| n006d1bc49992
+  nfa3eaf35bc7d -->|"retain-conditional L7"| n253c34a57b61
+  nfa3eaf35bc7d -->|"retain-conditional L8"| nca651f041310
+  nfa3eaf35bc7d -->|"retain-conditional L9"| na382fb3a7a6e
+  nfa3eaf35bc7d -->|"retain-conditional L12"| ne3205fac6b78
+  nfa3eaf35bc7d -->|"retain-conditional L12"| n4371086a336d
+  nfa3eaf35bc7d -->|"retain-conditional L16"| n283f2a557337
+  nfa3eaf35bc7d -->|"retain-conditional L17"| ne4444bef5db8
+  nfa3eaf35bc7d -->|"redirect-to-native-owner L19"| n006d1bc49992
+  nd7b70a770400 -->|"redirect-to-native-owner L7"| n253c34a57b61
+  nd7b70a770400 -->|"redirect-to-native-owner L7"| nab0a10c2d019
+  nd7b70a770400 -->|"retain-conditional L9"| n253c34a57b61
+  nd7b70a770400 -->|"redirect-to-native-owner L10"| n1044ad0de29d
+  nd7b70a770400 -->|"retain-conditional L12"| n48d1581bdb90
+  nadda8d85e030 -->|"retain-conditional L6"| n596931f34ea7
+  nadda8d85e030 -->|"redirect-to-native-owner L7"| ne3205fac6b78
+  nadda8d85e030 -->|"retain-conditional L8"| n283f2a557337
+  nadda8d85e030 -->|"redirect-to-native-owner L9"| n4162f0ff5a8f
+  nadda8d85e030 -->|"redirect-to-native-owner L9"| n1044ad0de29d
+  nadda8d85e030 -->|"redirect-to-native-owner L10"| n51dc818ada31
+  nadda8d85e030 -->|"retain-conditional L13"| n022899748750
+  nadda8d85e030 -->|"retain-conditional L13"| n49b5850dae6e
+  nadda8d85e030 -.->|"defer L15"| ne406bd434229
+  nadda8d85e030 -.->|"defer L15"| n98755eac754b
+  nadda8d85e030 -.->|"defer L35"| nbdda1daa8628
+  nadda8d85e030 -.->|"defer L42"| n1f70d10c3941
+  nadda8d85e030 -.->|"defer L43"| nbdda1daa8628
+  nadda8d85e030 -.->|"defer L60"| n7de53d917b04
+  nadda8d85e030 -->|"retain-conditional L60"| nef152d4020cf
+  nadda8d85e030 -.->|"defer L72"| ne406bd434229
+  nadda8d85e030 -.->|"defer L72"| n98755eac754b
+  nadda8d85e030 -.->|"defer L79"| n4e8364fdf5e7
+  n006d1bc49992 -.->|"defer L5"| n4e8364fdf5e7
+  n006d1bc49992 -.->|"defer L5"| n4e8364fdf5e7
+  n006d1bc49992 -.->|"defer L9"| n7de53d917b04
+  n006d1bc49992 -->|"retain-conditional L9"| nef152d4020cf
+  n006d1bc49992 -->|"retain-conditional L9"| n4162f0ff5a8f
+  n006d1bc49992 -->|"retain-conditional L9"| n1044ad0de29d
+  n006d1bc49992 -->|"retain-conditional L11"| n84651d3a857e
+  n006d1bc49992 -->|"retain-conditional L11"| n4162f0ff5a8f
+  n006d1bc49992 -->|"retain-conditional L11"| n1044ad0de29d
+  n006d1bc49992 -->|"retain-conditional L18"| n7f2ef73b52cd
+  n006d1bc49992 -.->|"defer L19"| n98755eac754b
+  n006d1bc49992 -.->|"defer L19"| ne406bd434229
+  n006d1bc49992 -->|"retain-conditional L29"| n992504e20ebe
+  n006d1bc49992 -.->|"defer L31"| n7de53d917b04
+  nf4f74265ffbc -.->|"defer L17"| n4e8364fdf5e7
+  nf4f74265ffbc -.->|"defer L18"| n4e8364fdf5e7
+  nf4f74265ffbc -.->|"defer L19"| ne406bd434229
+  nf4f74265ffbc -.->|"defer L19"| n98755eac754b
+  nf4f74265ffbc -.->|"defer L32"| na986729b0041
+  n4bee5eaf45ff -->|"retain-conditional L8"| n253c34a57b61
+  n4bee5eaf45ff -->|"retain-conditional L16"| n48d1581bdb90
+  n4bee5eaf45ff -->|"retain-conditional L17"| n283f2a557337
+  n4bee5eaf45ff -->|"redirect-to-native-owner L20"| n006d1bc49992
+  n5de09ca2a0ba -->|"retain-conditional L10"| n74f023e83b66
+  n062fd5fa1e4d -->|"retain-conditional L5"| n41051d823e34
+  n062fd5fa1e4d -->|"retain-conditional L7"| n253c34a57b61
+  n062fd5fa1e4d -->|"retain-conditional L7"| n022899748750
+  n062fd5fa1e4d -->|"retain-conditional L8"| n81d4c494423c
+  n062fd5fa1e4d -->|"retain-conditional L9"| na6385fe9476d
+  n062fd5fa1e4d -->|"retain-conditional L9"| n6c54ad06b07c
+  n062fd5fa1e4d -->|"retain-conditional L9"| n48d1581bdb90
+  n062fd5fa1e4d -->|"retain-conditional L10"| nbc0168d7b6e0
+  n062fd5fa1e4d -->|"retain-conditional L10"| ne4444bef5db8
+  n062fd5fa1e4d -->|"redirect-to-native-owner L12"| n022899748750
+  n062fd5fa1e4d -->|"retain-conditional L13"| nfff7f8346cc2
+  n062fd5fa1e4d -->|"retain-conditional L14"| n283f2a557337
+  n062fd5fa1e4d -->|"retain-conditional L14"| n006d1bc49992
+  n3793f560a9c2 -->|"redirect-to-native-owner L7"| ne3205fac6b78
+  n8f65a876841b -->|"retain-conditional L3"| n992504e20ebe
+  n8f65a876841b -.->|"defer L7"| ne406bd434229
+  n8f65a876841b -.->|"defer L7"| n98755eac754b
+  n8f65a876841b -.->|"defer L14"| n1f70d10c3941
+  n87c5f643471c -->|"redirect-to-native-owner L5"| n6f1cbd195380
+  n87c5f643471c -->|"redirect-to-native-owner L7"| ne3205fac6b78
+  na2f6a6b47fea -->|"retain-conditional L7"| n4371086a336d
+  na2f6a6b47fea -.->|"defer L8"| n1f70d10c3941
+  na2f6a6b47fea -->|"redirect-to-native-owner L9"| n006d1bc49992
+  naa37b914bf9d -.->|"defer L3"| nd4bfcac36b16
+  n283f2a557337 -->|"retain-conditional L22"| n022899748750
+  n283f2a557337 -->|"retain-conditional L22"| nca651f041310
+  n4fd2cca0c94b -->|"retain-conditional L21"| n51dc818ada31
+  nce7d0a29d5d6 -->|"retain-conditional L17"| n3793f560a9c2
+  nce7d0a29d5d6 -->|"retain-conditional L17"| n14a1c034b592
+  nce7d0a29d5d6 -->|"redirect-to-native-owner L20"| nab0a10c2d019
+  nce7d0a29d5d6 -->|"retain-conditional L33"| n1044ad0de29d
+  n64723975185f -.->|"defer L37"| n4e8364fdf5e7
+  n64723975185f -.->|"defer L37"| n4e8364fdf5e7
+  n64723975185f -.->|"defer L45"| n4e8364fdf5e7
+  n64723975185f -.->|"defer L45"| n4e8364fdf5e7
+  n64723975185f -.->|"defer L49"| n4e8364fdf5e7
+  n64723975185f -.->|"defer L49"| n4e8364fdf5e7
+  n64723975185f -->|"retain-conditional L53"| n51dc818ada31
+  n64723975185f -.->|"defer L64"| n0f0f4c096707
+  n64723975185f -.->|"defer L65"| n0f0f4c096707
+  n64723975185f -.->|"defer L66"| n0f0f4c096707
+  nc5e51be65c9b -.->|"defer L24"| n4e8364fdf5e7
+  nc5e51be65c9b -.->|"defer L24"| n4e8364fdf5e7
+  n580e40bdbdf2 -.->|"defer L23"| n4e8364fdf5e7
+  n580e40bdbdf2 -.->|"defer L23"| n4e8364fdf5e7
+  n229c08b06bb9 -.->|"defer L38"| n4e8364fdf5e7
+  n229c08b06bb9 -.->|"defer L38"| n4e8364fdf5e7
+  n4bc9d593dad3 -.->|"defer L14"| n4e8364fdf5e7
+  n4bc9d593dad3 -.->|"defer L14"| n4e8364fdf5e7
+  n4bc9d593dad3 -.->|"defer L22"| na986729b0041
+  n4bc9d593dad3 -.->|"defer L38"| n4e8364fdf5e7
+  n4bc9d593dad3 -->|"retain-conditional L65"| n6eef4526b020
+  na382fb3a7a6e -->|"retain-conditional L20"| nab0a10c2d019
+  na382fb3a7a6e -.->|"defer L29"| n0fa84dbb0e4d
+  na382fb3a7a6e -.->|"retain-optional L52"| n51dc818ada31
+  n3cf41f06be8b -->|"redirect-to-native-owner L3"| n253c34a57b61
+  n3cf41f06be8b -->|"redirect-to-native-owner L3"| nab0a10c2d019
+  n3cf41f06be8b -->|"retain-conditional L11"| n253c34a57b61
+  n3cf41f06be8b -->|"retain-conditional L11"| nab0a10c2d019
+  n3cf41f06be8b -->|"retain-conditional L14"| n253c34a57b61
+  n3cf41f06be8b -->|"retain-conditional L14"| nab0a10c2d019
+  n3cf41f06be8b -->|"retain-conditional L19"| n1044ad0de29d
+  n4162f0ff5a8f -->|"retain-conditional L19"| n1044ad0de29d
+  n4162f0ff5a8f -->|"redirect-to-native-owner L102"| n1044ad0de29d
+  n9fd9cf5f8d23 -->|"redirect-to-native-owner L10"| n4fd2cca0c94b
+  nd2cba3008b37 -.->|"defer L65"| n24d2c51ad54c
+  n84651d3a857e -->|"retain-conditional L20"| n5de09ca2a0ba
+  n84651d3a857e -->|"retain-conditional L118"| nd7b70a770400
+  n84651d3a857e -->|"retain-conditional L119"| n5ebd7028ce7f
+  n84651d3a857e -->|"retain-conditional L120"| n4bee5eaf45ff
+  n84651d3a857e -->|"retain-conditional L122"| n6f1cbd195380
+  n84651d3a857e -->|"retain-conditional L124"| nfb18b41f370a
+  n84651d3a857e -->|"retain-conditional L125"| n062fd5fa1e4d
+  n84651d3a857e -->|"retain-conditional L126"| n5de09ca2a0ba
+  n84651d3a857e -->|"retain-conditional L127"| na2f6a6b47fea
+  n84651d3a857e -->|"retain-conditional L128"| naad1ce8f74ad
+  n84651d3a857e -->|"retain-conditional L130"| n992504e20ebe
+  n84651d3a857e -->|"retain-conditional L132"| nc1764de78a82
+  n84651d3a857e -->|"retain-conditional L133"| nf4f74265ffbc
+  n84651d3a857e -->|"retain-conditional L135"| ne62280a0cf94
+  n84651d3a857e -->|"retain-conditional L136"| n3793f560a9c2
+  n84651d3a857e -->|"retain-conditional L137"| nccffb9e46647
+  n84651d3a857e -->|"retain-conditional L138"| nadda8d85e030
+  n84651d3a857e -->|"retain-conditional L139"| n21693f75a488
+  n84651d3a857e -->|"retain-conditional L140"| n006d1bc49992
+  classDef source fill:#e6f0ff,stroke:#537aaa
+  classDef external_automation fill:#fae8f0,stroke:#aa637f
+  classDef external fill:#fff,stroke:#aa5555,stroke-dasharray:4 3
