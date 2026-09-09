@@ -166,6 +166,15 @@ The durable result is not only code. It is a Project that knows more about itsel
 
 **Workcell** materialises the computational world required by development and application: workspaces, processes, services, containers, VMs, hosts, databases, browser surfaces and provider bindings. Factory reasons in Projects, Runs and Candidates; Workcell supplies the actual material embodiment.
 
+Factory's bounded ExecutionTelemetry read can preserve an accepted
+`workcell.resource-usage/v1` observation without turning Workcell identities or
+metrics into Factory facts. The owner revision and schema digest travel with the
+reading; exact replays collapse, conflicting replays fail, and unsupported or
+unavailable metrics remain independently explicit. The checked-in owner-evidence
+fixture was produced by the Workcell `0b93a4a` native CLI against a real local
+process. It proves the consumption seam, not historical usage by the fixture's
+illustrative Factory Execution.
+
 **Quaternal Logic** can provide optional formal/refraction faculties and can be used for deeper QL-native development experiments. Ordinary Factory operation must remain valid without QL.
 
 ## Quaternal Logic and the Factory

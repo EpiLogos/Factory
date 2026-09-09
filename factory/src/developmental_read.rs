@@ -467,7 +467,7 @@ impl FactoryDevelopmentalState {
             },
             temporal: correlation.temporal.clone(),
             model_usage: correlation.model_usage.deduplicated(),
-            material_usage: correlation.material_usage.clone(),
+            material_usage: correlation.material_usage.deduplicated(),
             handoff: correlation.handoff.clone(),
             return_state: FactoryExecutionReturnState {
                 agency_return_ref: agency.return_ref.clone(),
@@ -598,6 +598,25 @@ impl FactoryDevelopmentalState {
                     return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
                         correlation_ref: correlation.correlation_ref.to_string(),
                         detail: format!("modelUsage {} does not identify this Factory Execution/Agency correlation", usage.usage_ref),
+                    });
+                }
+            }
+            for owner_ref in &correlation.material_usage.observations {
+                let usage = owner_ref
+                    .resource_usage
+                    .as_ref()
+                    .expect("resource-usage link validation requires evidence");
+                if !usage
+                    .external_correlation_refs
+                    .iter()
+                    .any(|reference| reference == &correlation.correlation_ref.to_string())
+                {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation.correlation_ref.to_string(),
+                        detail: format!(
+                            "materialUsage {} does not identify this Factory Execution/Run/WorkflowUnit correlation",
+                            usage.usage_ref
+                        ),
                     });
                 }
             }
@@ -1253,6 +1272,11 @@ pub struct FactoryRevisionedOwnerRef {
     /// provider traces.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_usage: Option<FactoryActuationModelUsageObservation>,
+    /// Exact public Workcell owner evidence, present only for resource-usage
+    /// observation refs. Factory correlates this payload but never reassigns
+    /// Workcell, HarnessInstance or process identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_usage: Option<FactoryWorkcellResourceUsageObservation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_schema_digest: Option<String>,
 }
@@ -1295,6 +1319,10 @@ pub enum FactoryObservationStanding {
 pub const ACTUATION_MODEL_USAGE_CONTRACT: &str = "actuation.model-usage/v1";
 pub const ACTUATION_MODEL_USAGE_SCHEMA_SHA256: &str =
     "42215b3f06dffe5bfba53b0f51db6400d5b8739098c4fb1275f7a006579615cb";
+pub const WORKCELL_RESOURCE_USAGE_CONTRACT: &str = "workcell.resource-usage/v1";
+pub const WORKCELL_RESOURCE_USAGE_REVISION: &str = "0b93a4af54ff3d547941d4af342e6a738c22e7af";
+pub const WORKCELL_RESOURCE_USAGE_SCHEMA_SHA256: &str =
+    "4e0e1cf8848ed1faf74bcc362976b47f81aad99b33eea458a789cb688f1b3d5f";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1754,6 +1782,313 @@ impl FactoryActuationModelUsageObservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellResourceUsageObservation {
+    pub schema: String,
+    pub ok: bool,
+    pub status: String,
+    pub usage_ref: String,
+    pub workcell_ref: String,
+    pub harness_instance_ref: String,
+    pub harness_ref: String,
+    pub material_binding: FactoryWorkcellMaterialBinding,
+    pub interval: FactoryWorkcellUsageInterval,
+    pub provider: FactoryWorkcellUsageProvider,
+    pub metrics: FactoryWorkcellUsageMetrics,
+    pub external_correlation_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellMaterialBinding {
+    pub kind: String,
+    pub pid: u32,
+    pub process_start_marker: String,
+    pub executable: FactoryWorkcellExecutableEvidence,
+    pub instance_evidence_grade: FactoryWorkcellInstanceEvidenceGrade,
+    pub instance_seams: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellExecutableEvidence {
+    pub path: String,
+    pub sha256: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryWorkcellInstanceEvidenceGrade {
+    LivePid,
+    GatewayConfirmed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellUsageInterval {
+    pub started_at: String,
+    pub ended_at: String,
+    pub duration_ms: u64,
+    pub requested_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellUsageProvider {
+    pub provider_ref: String,
+    pub source: String,
+    pub platform: String,
+    pub collection: String,
+    pub raw_native_refs: Vec<String>,
+    pub privacy: FactoryWorkcellUsagePrivacy,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellUsagePrivacy {
+    pub argv_collected: bool,
+    pub environment_collected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellUsageMetrics {
+    pub cpu_time: FactoryWorkcellMetric,
+    pub cpu_utilisation: FactoryWorkcellMetric,
+    pub memory_rss: FactoryWorkcellMetric,
+    pub memory_peak_rss: FactoryWorkcellMetric,
+    pub gpu_utilisation: FactoryWorkcellMetric,
+    pub vram: FactoryWorkcellMetric,
+    pub network_bytes: FactoryWorkcellMetric,
+    pub storage_io_bytes: FactoryWorkcellMetric,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryWorkcellMetric {
+    pub standing: FactoryWorkcellMetricStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryWorkcellMetricStanding {
+    Observed,
+    ProviderReported,
+    Sampled,
+    Derived,
+    Unavailable,
+    Unsupported,
+}
+
+impl FactoryWorkcellResourceUsageObservation {
+    fn validate(
+        &self,
+        source_ref: &FactoryRevisionedOwnerRef,
+        correlation_ref: &Ref,
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        let invalid = |detail: String| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+            correlation_ref: correlation_ref.to_string(),
+            detail,
+        };
+        if self.schema != WORKCELL_RESOURCE_USAGE_CONTRACT || !self.ok || self.status != "ok" {
+            return Err(invalid(format!(
+                "materialUsage must be a successful {WORKCELL_RESOURCE_USAGE_CONTRACT} reading"
+            )));
+        }
+        if source_ref.reference != self.usage_ref
+            || source_ref.revision != WORKCELL_RESOURCE_USAGE_REVISION
+            || source_ref.contract_schema_digest.as_deref()
+                != Some(WORKCELL_RESOURCE_USAGE_SCHEMA_SHA256)
+            || source_ref.standing != FactoryObservationStanding::Observed
+        {
+            return Err(invalid(
+                "materialUsage owner ref must pin its usage_ref, accepted Workcell revision and schema digest".into(),
+            ));
+        }
+        let usage_hash = self.usage_ref.strip_prefix("usage:").filter(|value| {
+            value.len() == 64
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        });
+        if usage_hash.is_none()
+            || self
+                .workcell_ref
+                .strip_prefix("workcell:")
+                .is_none_or(str::is_empty)
+            || self
+                .harness_instance_ref
+                .strip_prefix("instance:")
+                .is_none_or(str::is_empty)
+            || self
+                .harness_ref
+                .strip_prefix("harness/")
+                .is_none_or(str::is_empty)
+        {
+            return Err(invalid(
+                "materialUsage carries invalid Workcell, HarnessInstance, Harness or usage identity".into(),
+            ));
+        }
+        if self.material_binding.kind != "process"
+            || self.material_binding.pid == 0
+            || self.material_binding.process_start_marker.trim().is_empty()
+            || self.material_binding.executable.path.trim().is_empty()
+            || self.material_binding.executable.sha256.trim().is_empty()
+        {
+            return Err(invalid(
+                "materialUsage requires complete owner-supplied process identity".into(),
+            ));
+        }
+        let started =
+            self.interval_marker(&self.interval.started_at, "started_at", correlation_ref)?;
+        let ended = self.interval_marker(&self.interval.ended_at, "ended_at", correlation_ref)?;
+        if ended < started
+            || ended - started != self.interval.duration_ms
+            || self.interval.requested_duration_ms > 60_000
+            || self.interval.duration_ms < self.interval.requested_duration_ms
+        {
+            return Err(invalid(
+                "materialUsage interval is not a truthful bounded observation".into(),
+            ));
+        }
+        if self.provider.provider_ref.trim().is_empty()
+            || self.provider.source.trim().is_empty()
+            || self.provider.platform.trim().is_empty()
+            || self.provider.collection != "bounded-on-demand"
+            || self.provider.raw_native_refs.is_empty()
+            || self
+                .provider
+                .raw_native_refs
+                .iter()
+                .any(|reference| reference.trim().is_empty())
+            || self.provider.privacy.argv_collected
+            || self.provider.privacy.environment_collected
+        {
+            return Err(invalid(
+                "materialUsage provider provenance or privacy disclosure is invalid".into(),
+            ));
+        }
+        for (name, metric, unit) in [
+            ("cpu_time", &self.metrics.cpu_time, "milliseconds"),
+            ("cpu_utilisation", &self.metrics.cpu_utilisation, "percent"),
+            ("memory_rss", &self.metrics.memory_rss, "bytes"),
+            ("memory_peak_rss", &self.metrics.memory_peak_rss, "bytes"),
+            ("gpu_utilisation", &self.metrics.gpu_utilisation, "percent"),
+            ("vram", &self.metrics.vram, "bytes"),
+            ("network_bytes", &self.metrics.network_bytes, "bytes"),
+            ("storage_io_bytes", &self.metrics.storage_io_bytes, "bytes"),
+        ] {
+            metric.validate(name, unit, correlation_ref)?;
+        }
+        let unique_correlations = self
+            .external_correlation_refs
+            .iter()
+            .collect::<BTreeSet<_>>();
+        if self
+            .external_correlation_refs
+            .iter()
+            .any(|reference| reference.trim().is_empty())
+            || unique_correlations.len() != self.external_correlation_refs.len()
+        {
+            return Err(invalid(
+                "materialUsage external correlation refs must remain unique, non-empty and opaque"
+                    .into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn interval_marker(
+        &self,
+        value: &str,
+        field: &str,
+        correlation_ref: &Ref,
+    ) -> Result<u64, FactoryDevelopmentalReadError> {
+        value
+            .strip_prefix("unix-ms:")
+            .and_then(|value| value.parse::<u64>().ok())
+            .ok_or_else(
+                || FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(),
+                    detail: format!("materialUsage interval.{field} must read unix-ms:<u64>"),
+                },
+            )
+    }
+}
+
+impl FactoryWorkcellMetric {
+    fn validate(
+        &self,
+        name: &str,
+        expected_unit: &str,
+        correlation_ref: &Ref,
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        let invalid = |detail: String| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+            correlation_ref: correlation_ref.to_string(),
+            detail,
+        };
+        let present =
+            |value: &Option<String>| value.as_deref().is_some_and(|v| !v.trim().is_empty());
+        match self.standing {
+            FactoryWorkcellMetricStanding::Observed
+            | FactoryWorkcellMetricStanding::ProviderReported
+            | FactoryWorkcellMetricStanding::Sampled => {
+                if self
+                    .value
+                    .is_none_or(|value| !value.is_finite() || value < 0.0)
+                    || self.unit.as_deref() != Some(expected_unit)
+                    || !present(&self.evidence)
+                    || self.derivation.is_some()
+                    || self.reason.is_some()
+                {
+                    return Err(invalid(format!(
+                        "materialUsage metric {name} requires owner evidence, a finite non-negative value and unit {expected_unit}"
+                    )));
+                }
+            }
+            FactoryWorkcellMetricStanding::Derived => {
+                if self
+                    .value
+                    .is_none_or(|value| !value.is_finite() || value < 0.0)
+                    || self.unit.as_deref() != Some(expected_unit)
+                    || !present(&self.derivation)
+                    || self.evidence.is_some()
+                    || self.reason.is_some()
+                {
+                    return Err(invalid(format!(
+                        "materialUsage derived metric {name} requires its owner derivation, value and unit {expected_unit}"
+                    )));
+                }
+            }
+            FactoryWorkcellMetricStanding::Unavailable
+            | FactoryWorkcellMetricStanding::Unsupported => {
+                if !present(&self.reason)
+                    || self.value.is_some()
+                    || self.unit.is_some()
+                    || self.evidence.is_some()
+                    || self.derivation.is_some()
+                {
+                    return Err(invalid(format!(
+                        "materialUsage absent metric {name} requires only a truthful reason"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactoryOwnerTelemetryLink {
     pub owner: FactoryTelemetryOwner,
@@ -1804,6 +2139,14 @@ impl FactoryOwnerTelemetryLink {
             }
             _ => {}
         }
+        if matches!(self.availability, FactoryTelemetryAvailability::Available)
+            && self.reason.is_some()
+        {
+            return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                correlation_ref: correlation_ref.to_string(),
+                detail: format!("{field} cannot carry an absence reason while available"),
+            });
+        }
         if !matches!(self.availability, FactoryTelemetryAvailability::Available)
             && self
                 .reason
@@ -1836,12 +2179,34 @@ impl FactoryOwnerTelemetryLink {
                 }
             }
             match expected_owner {
-                FactoryTelemetryOwner::Actuation => observation.model_usage.as_ref().ok_or_else(|| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
-                    correlation_ref: correlation_ref.to_string(), detail: format!("{field} owner observation lacks public Actuation model-usage evidence")
-                })?.validate(observation, correlation_ref)?,
-                _ if observation.model_usage.is_some() => return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
-                    correlation_ref: correlation_ref.to_string(), detail: format!("{field} cannot attach Actuation model-usage evidence")
-                }),
+                FactoryTelemetryOwner::Actuation => {
+                    if observation.resource_usage.is_some() {
+                        return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                            correlation_ref: correlation_ref.to_string(),
+                            detail: format!("{field} Actuation observation cannot attach Workcell resource-usage evidence"),
+                        });
+                    }
+                    observation.model_usage.as_ref().ok_or_else(|| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(), detail: format!("{field} owner observation lacks public Actuation model-usage evidence")
+                    })?.validate(observation, correlation_ref)?;
+                }
+                FactoryTelemetryOwner::Workcell => {
+                    if observation.model_usage.is_some() {
+                        return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                            correlation_ref: correlation_ref.to_string(),
+                            detail: format!("{field} Workcell observation cannot attach Actuation model-usage evidence"),
+                        });
+                    }
+                    observation.resource_usage.as_ref().ok_or_else(|| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(), detail: format!("{field} owner observation lacks public Workcell resource-usage evidence")
+                    })?.validate(observation, correlation_ref)?;
+                }
+                _ if observation.model_usage.is_some() || observation.resource_usage.is_some() => {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(),
+                        detail: format!("{field} cannot attach another owner's telemetry evidence"),
+                    });
+                }
                 _ => {}
             }
         }
@@ -2402,6 +2767,7 @@ mod tests {
             revision: revision.into(),
             standing: FactoryObservationStanding::Observed,
             model_usage: None,
+            resource_usage: None,
             contract_schema_digest: None,
         }
     }
@@ -2460,6 +2826,23 @@ mod tests {
                 "provider_facts": { "service_tier": "standard", "speed": "standard", "inference_geo": "not_available" }
             }
         })).unwrap()
+    }
+
+    fn workcell_resource_usage_owner_evidence() -> FactoryRevisionedOwnerRef {
+        let resource_usage: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/factory/fixtures/workcell-resource-usage-owner-evidence.json"
+        ))
+        .unwrap();
+        let usage_ref = resource_usage["usage_ref"].as_str().unwrap().to_owned();
+        FactoryRevisionedOwnerRef {
+            owner: FactoryTelemetryOwner::Workcell,
+            reference: usage_ref,
+            revision: WORKCELL_RESOURCE_USAGE_REVISION.into(),
+            standing: FactoryObservationStanding::Observed,
+            model_usage: None,
+            resource_usage: Some(serde_json::from_value(resource_usage).unwrap()),
+            contract_schema_digest: Some(WORKCELL_RESOURCE_USAGE_SCHEMA_SHA256.into()),
+        }
     }
 
     fn correlated_state() -> FactoryDevelopmentalState {
@@ -3029,6 +3412,171 @@ mod tests {
     }
 
     #[test]
+    fn public_cli_preserves_real_workcell_owner_evidence_and_deduplicates_replay() {
+        let mut state = correlated_state();
+        let observation = workcell_resource_usage_owner_evidence();
+        state.execution_correlations[1].material_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Workcell,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation.clone(), observation],
+            reason: None,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental.json");
+        FactoryDevelopmentalFileProvider::create(&path, state).unwrap();
+        let output = execute_cli(
+            &[
+                "development".into(),
+                "execution-telemetry".into(),
+                path.to_string_lossy().into_owned(),
+                "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4".into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let reading: FactoryExecutionTelemetryReading = serde_json::from_str(&output).unwrap();
+        assert_eq!(reading.material_usage.observations.len(), 1);
+        let source = &reading.material_usage.observations[0];
+        assert_eq!(source.revision, WORKCELL_RESOURCE_USAGE_REVISION);
+        assert_eq!(
+            source.contract_schema_digest.as_deref(),
+            Some(WORKCELL_RESOURCE_USAGE_SCHEMA_SHA256)
+        );
+        let usage = source.resource_usage.as_ref().unwrap();
+        assert_eq!(usage.schema, WORKCELL_RESOURCE_USAGE_CONTRACT);
+        assert_eq!(usage.material_binding.pid, 74503);
+        assert_eq!(usage.metrics.memory_rss.value, Some(1_163_264.0));
+        assert_eq!(
+            usage.metrics.gpu_utilisation.standing,
+            FactoryWorkcellMetricStanding::Unsupported
+        );
+        assert!(usage.metrics.gpu_utilisation.value.is_none());
+        assert!(!usage.provider.privacy.argv_collected);
+        assert!(!usage.provider.privacy.environment_collected);
+    }
+
+    #[test]
+    fn workcell_usage_rejects_conflicting_replay_and_foreign_factory_correlation() {
+        let mut conflict = correlated_state();
+        let observation = workcell_resource_usage_owner_evidence();
+        let mut conflicting = observation.clone();
+        conflicting
+            .resource_usage
+            .as_mut()
+            .unwrap()
+            .metrics
+            .memory_rss
+            .value = Some(1.0);
+        conflict.execution_correlations[1].material_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Workcell,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation.clone(), conflicting],
+            reason: None,
+        };
+        assert!(matches!(
+            conflict.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("conflicting duplicate")
+        ));
+
+        let mut unrelated = correlated_state();
+        let mut observation = observation;
+        observation
+            .resource_usage
+            .as_mut()
+            .unwrap()
+            .external_correlation_refs = vec!["execution:somewhere-else".into()];
+        unrelated.execution_correlations[1].material_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Workcell,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation],
+            reason: None,
+        };
+        assert!(matches!(
+            unrelated.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("Execution/Run/WorkflowUnit correlation")
+        ));
+    }
+
+    #[test]
+    fn workcell_usage_pins_owner_contract_and_rejects_identity_interval_and_absence_drift() {
+        let baseline = workcell_resource_usage_owner_evidence();
+        let assert_invalid = |observation: FactoryRevisionedOwnerRef, expected: &str| {
+            let mut candidate = correlated_state();
+            candidate.execution_correlations[1].material_usage = FactoryOwnerTelemetryLink {
+                owner: FactoryTelemetryOwner::Workcell,
+                availability: FactoryTelemetryAvailability::Available,
+                observations: vec![observation],
+                reason: None,
+            };
+            assert!(matches!(
+                candidate.validate(),
+                Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                    if detail.contains(expected)
+            ));
+        };
+
+        let mut wrong_revision = baseline.clone();
+        wrong_revision.revision = "824b36f2df9804ee22c516379e228dfe227d081e".into();
+        assert_invalid(wrong_revision, "accepted Workcell revision");
+        let mut wrong_digest = baseline.clone();
+        wrong_digest.contract_schema_digest = Some("0".repeat(64));
+        assert_invalid(wrong_digest, "schema digest");
+        let mut wrong_ref = baseline.clone();
+        wrong_ref.reference = format!("usage:{}", "0".repeat(64));
+        assert_invalid(wrong_ref, "usage_ref");
+        let mut wrong_standing = baseline.clone();
+        wrong_standing.standing = FactoryObservationStanding::Estimated;
+        assert_invalid(wrong_standing, "accepted Workcell revision");
+
+        let mut bad_process = baseline.clone();
+        bad_process
+            .resource_usage
+            .as_mut()
+            .unwrap()
+            .material_binding
+            .pid = 0;
+        assert_invalid(bad_process, "process identity");
+        let mut bad_interval = baseline.clone();
+        bad_interval
+            .resource_usage
+            .as_mut()
+            .unwrap()
+            .interval
+            .ended_at = "unix-ms:1788948664704".into();
+        assert_invalid(bad_interval, "bounded observation");
+        let mut duplicate_correlation = baseline.clone();
+        let usage = duplicate_correlation.resource_usage.as_mut().unwrap();
+        usage
+            .external_correlation_refs
+            .push(usage.external_correlation_refs[0].clone());
+        assert_invalid(duplicate_correlation, "must remain unique");
+        let mut invented_absence = baseline;
+        invented_absence
+            .resource_usage
+            .as_mut()
+            .unwrap()
+            .metrics
+            .gpu_utilisation
+            .value = Some(0.0);
+        assert_invalid(invented_absence, "absent metric gpu_utilisation");
+    }
+
+    #[test]
+    fn workcell_usage_deserialization_rejects_secret_like_or_unknown_owner_fields() {
+        let mut evidence: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/factory/fixtures/workcell-resource-usage-owner-evidence.json"
+        ))
+        .unwrap();
+        evidence["provider"]["argv"] = serde_json::json!(["--token", "secret"]);
+        assert!(
+            serde_json::from_value::<FactoryWorkcellResourceUsageObservation>(evidence).is_err()
+        );
+    }
+
+    #[test]
     fn actuation_usage_refuses_conflicts_and_false_availability() {
         let mut conflict = correlated_state();
         let observation = actuation_model_usage_conformance_fixture();
@@ -3335,6 +3883,18 @@ mod tests {
         let cases: serde_json::Value = serde_json::from_str(CASES).unwrap();
         assert_eq!(schema["$id"], "factory.developmental-read.schema/v1");
         assert_eq!(cases["schema"], "factory.developmental-read-cases/v1");
+        assert_eq!(
+            cases["executionCorrelationLaw"]["workcellBasis"],
+            WORKCELL_RESOURCE_USAGE_REVISION
+        );
+        assert_eq!(
+            cases["executionCorrelationLaw"]["workcellResourceUsageContract"],
+            WORKCELL_RESOURCE_USAGE_CONTRACT
+        );
+        assert_eq!(
+            cases["executionCorrelationLaw"]["workcellResourceUsageSchemaSha256"],
+            WORKCELL_RESOURCE_USAGE_SCHEMA_SHA256
+        );
 
         let state = state();
         let project =

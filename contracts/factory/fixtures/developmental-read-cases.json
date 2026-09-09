@@ -69,7 +69,9 @@
     "materialUsageOwner": "workcell",
     "unavailable": "unavailable",
     "actuationBasis": "b6ed67e57ef45c5b0434ad63e296a31ce56d2e99",
-    "workcellBasis": "ab7540b9d76ab5089387e8bc54970ce05ed85d6e",
+    "workcellBasis": "0b93a4af54ff3d547941d4af342e6a738c22e7af",
+    "workcellResourceUsageContract": "workcell.resource-usage/v1",
+    "workcellResourceUsageSchemaSha256": "4e0e1cf8848ed1faf74bcc362976b47f81aad99b33eea458a789cb688f1b3d5f",
     "metricValueLaw": "No token, cost, CPU, memory, GPU, network or storage value is emitted without an owner observation ref."
   }
 }
