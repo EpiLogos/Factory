@@ -4,10 +4,10 @@
   "captured_from": {
     "product": "central",
     "repository": "https://github.com/EpiLogos/Central",
-    "revision": "616749373a60f55e9fd99e4f2b0bebf2c73a674b",
+    "revision": "f3559dbf900b8409ff00b24a84b824c6cd6ec2c3",
     "surface": "ctrl agent-profile.read over AgentProfileStore::personal (save then read round-trip)",
     "captured_by": "executing the pinned revision in an isolated temp capture crate; no live Central ground was read or written",
-    "captured_at": "2026-09-06"
+    "captured_at": "2026-09-09"
   },
   "envelope": {
     "handoff": {
