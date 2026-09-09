@@ -1,19 +1,19 @@
 {
   "schema": "factory.agent-capability-intake-pins/v1",
-  "observed_at": "2026-09-06",
+  "observed_at": "2026-09-09",
   "source_of_truth": {
     "repository": "https://github.com/EpiLogos/O-I",
     "path": "suite/mainline.json",
-    "observed_at": "2026-09-06"
+    "observed_at": "2026-09-09"
   },
   "pins": {
     "central": {
       "repository": "https://github.com/EpiLogos/Central",
-      "revision": "616749373a60f55e9fd99e4f2b0bebf2c73a674b"
+      "revision": "f3559dbf900b8409ff00b24a84b824c6cd6ec2c3"
     },
     "ai-kit": {
       "repository": "https://github.com/EpiLogos/ai-kit",
-      "revision": "7d7f827024a448c3466b750988a694354b47b225"
+      "revision": "3a37348199677c9de73eef330084c814467cfdcd"
     }
   },
   "purpose": "This repo's composed-agent-capability intake binds its recorded evidence envelopes to exactly these pinned owner revisions. Fixtures and tests must never chase live heads.",

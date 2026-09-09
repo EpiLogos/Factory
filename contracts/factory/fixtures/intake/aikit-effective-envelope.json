@@ -4,16 +4,16 @@
   "captured_from": {
     "product": "ai-kit",
     "repository": "https://github.com/EpiLogos/ai-kit",
-    "revision": "7d7f827024a448c3466b750988a694354b47b225",
-    "surface": "aikit_core resolve + skillset::project (the `aikit set show` data shape) and GenerationId::from_hash",
+    "revision": "3a37348199677c9de73eef330084c814467cfdcd",
+    "surface": "aikit_core resolve + skillset::project and GenerationId::from_hash over the serialized resolved view",
     "captured_by": "executing the pinned revision in an isolated temp capture crate; no live AIKit home was read or written",
-    "captured_at": "2026-09-06"
+    "captured_at": "2026-09-09"
   },
   "envelope": {
     "complete": false,
     "generation": {
       "context_id": "ctx_FACTORYINTAKE00000000A",
-      "generation_id": "gen_8b8c6ee18ce734a7"
+      "generation_id": "gen_6c009b389c5f5dcc"
     },
     "members": 4,
     "projected": [
@@ -25,7 +25,7 @@
       "provenance": "composed"
     },
     "summary": "sets/factory-intake — 4 members, 1 projected, 3 withheld (not installed, retired, unreviewed)",
-    "surface": "aikit set show factory-intake --json (data shape)",
+    "surface": "aikit_core resolve + skillset::project and GenerationId::from_hash over the serialized resolved view",
     "withheld": [
       {
         "capability": "skill/factory/legacy-orientation",

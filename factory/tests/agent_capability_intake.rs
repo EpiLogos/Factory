@@ -9,7 +9,7 @@
 //! Fixture provenance: the envelopes under `contracts/factory/fixtures/intake/`
 //! were captured by executing the exact revisions pinned in
 //! `conformance-pins.json` (mirroring O:I `suite/mainline.json` at
-//! observed_at 2026-09-06) in an isolated temp capture crate.
+//! observed_at 2026-09-09) in an isolated temp capture crate.
 
 use epilogos_factory::agent_capability_intake::{
     AgentCapabilityIntake, AgentCapabilityRef, AuthoredAgentProfileRef, AuthoredProfileEvidence,
@@ -157,7 +157,7 @@ fn effective_ref_resolves_to_the_same_effective_evidence_on_independent_paths() 
     let reference =
         EffectiveSkillSetRef::new(typed.set_name.clone(), typed.generation_id.clone()).unwrap();
     let text = reference.to_string();
-    assert_eq!(text, "aikit.skillset/factory-intake@gen_8b8c6ee18ce734a7");
+    assert_eq!(text, "aikit.skillset/factory-intake@gen_6c009b389c5f5dcc");
     assert_eq!(text.parse::<EffectiveSkillSetRef>().unwrap(), reference);
 }
 
@@ -293,7 +293,7 @@ fn a_run_is_commissioned_entirely_from_stable_refs_with_honest_intake_facts() {
     );
     assert_eq!(
         intake_reading.effective_composition.to_string(),
-        "aikit.skillset/factory-intake@gen_8b8c6ee18ce734a7"
+        "aikit.skillset/factory-intake@gen_6c009b389c5f5dcc"
     );
     assert_eq!(
         intake_reading.retired_capability_refs,
