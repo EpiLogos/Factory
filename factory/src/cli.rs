@@ -7,6 +7,9 @@ use crate::build::{
     FACTORY_NATIVE_OWNER,
 };
 use crate::build_provider::{FactoryBuildFileProvider, FACTORY_BUILD_LOCAL_PROVIDER_STATE};
+use crate::conformance::{
+    create_developmental_conformance_state, FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
+};
 use crate::core::run::{ProjectRef, RunRef, WorkflowUnitRef};
 use crate::developmental_read::{
     FactoryDevelopmentalFileProvider, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
@@ -20,6 +23,10 @@ use crate::project_development::{
     ProjectDevelopmentLedger, PROJECT_DEVELOPMENT_VERSION,
 };
 use crate::project_development_store::{FileProjectDevelopmentStore, ProjectDevelopmentStore};
+use crate::routine_continuation::{
+    FactoryRoutineContinuationRequest, FACTORY_ROUTINE_CONTINUATION_ADMISSION,
+    FACTORY_ROUTINE_CONTINUATION_READING,
+};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{self, Display};
@@ -76,6 +83,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         Some("--version") | Some("version") => Ok(format!("factory {}", env!("CARGO_PKG_VERSION"))),
         Some("capabilities") => render_capabilities(json),
         Some("build") => build_command(&args[1..], json),
+        Some("conformance") => conformance_command(&args[1..], json),
         Some("development") => development_command(&args[1..], json, stdin_override),
         Some("action") => action_command(&args[1..], json, stdin_override),
         Some("verify") => verify_command(&args[1..], json),
@@ -88,8 +96,8 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 fn help() -> String {
     format!(
         "Software Factory {}\n\n\
-Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
-Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
+Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
+Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
@@ -104,12 +112,15 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
         commands: vec![
             "build.snapshot",
             "build.refresh",
+            "conformance.developmental-state",
             "development.project",
             "development.journey",
             "development.run",
             "development.workflow-units",
             "development.workflow-unit",
             "development.execution-telemetry",
+            "development.admit-routine-continuation",
+            "development.routine-continuation",
             "development.action",
             "development.observe",
             "development.observations",
@@ -129,7 +140,42 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT,
             FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
             FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT,
+            FACTORY_ROUTINE_CONTINUATION_ADMISSION,
+            FACTORY_ROUTINE_CONTINUATION_READING,
+            FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
         ],
+    }
+}
+
+fn conformance_command(args: &[String], json: bool) -> Result<String, CliError> {
+    let operation = args
+        .first()
+        .ok_or_else(|| CliError("missing conformance operation".into()))?;
+    if operation != "developmental-state" {
+        return Err(CliError(format!(
+            "unknown conformance operation `{operation}`"
+        )));
+    }
+    let output = args
+        .get(1)
+        .ok_or_else(|| CliError("missing conformance state output path".into()))?;
+    let manifest = create_developmental_conformance_state(std::path::Path::new(output))
+        .map_err(|error| CliError(error.to_string()))?;
+    if json {
+        serde_json::to_string_pretty(&manifest).map_err(CliError::from)
+    } else {
+        Ok(format!(
+            "{}\nProvider state: {}\nProject: {}\nJourney: {}\nRun: {}\nRoutine Run: {}\nWorkflowUnit: {}\nTelemetry: {}\nInvocation: {}",
+            manifest.contract,
+            manifest.provider_state,
+            manifest.project_ref,
+            manifest.journey_ref,
+            manifest.run_ref,
+            manifest.routine_run_ref,
+            manifest.workflow_unit_ref,
+            manifest.telemetry_ref,
+            manifest.invocation_ref
+        ))
     }
 }
 
@@ -377,6 +423,45 @@ fn development_command(
                     reading.condition.agency_ref,
                     reading.model_usage.availability,
                     reading.material_usage.availability
+                ))
+            }
+        }
+        "admit-routine-continuation" => {
+            let request_path = args.get(2).map(String::as_str).unwrap_or("-");
+            let input = read_input(request_path, stdin_override)?;
+            let request: FactoryRoutineContinuationRequest = serde_json::from_str(&input)?;
+            let admission = provider
+                .admit_routine_continuation(request)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&admission).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nInvocation: {}\nJourney: {}\nRun: {}\nStatus: {:?}",
+                    admission.contract,
+                    admission.continuation.invocation_evidence.invocation_ref,
+                    admission.continuation.journey_ref,
+                    admission.continuation.run_ref,
+                    admission.status
+                ))
+            }
+        }
+        "routine-continuation" => {
+            let invocation_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing invocation-ref".into()))?;
+            let reading = provider
+                .routine_continuation_reading(invocation_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nInvocation: {}\nJourney: {}\nRun: {}",
+                    reading.contract,
+                    reading.continuation.invocation_evidence.invocation_ref,
+                    reading.continuation.journey_ref,
+                    reading.continuation.run_ref
                 ))
             }
         }

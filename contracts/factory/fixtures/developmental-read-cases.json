@@ -10,11 +10,13 @@
     "run": "factory.run-reading/v1",
     "workflowUnitList": "factory.workflow-unit-list-reading/v1",
     "workflowUnit": "factory.workflow-unit-reading/v1",
-    "executionTelemetry": "factory.execution-telemetry-reading/v1"
+    "executionTelemetry": "factory.execution-telemetry-reading/v1",
+    "routineContinuation": "factory.routine-continuation-reading/v1"
   },
   "requiredOwner": "factory",
   "requiredRunRelations": [
     "owningJourneyRefs",
+    "routineInvocationRefs",
     "runMap",
     "thoughtAvailable",
     "agencies",

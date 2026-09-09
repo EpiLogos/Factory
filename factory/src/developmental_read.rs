@@ -20,15 +20,22 @@ use crate::journey::{
     Journey, JourneyCommission, JourneyParticipant, JourneyRecognitionLink, JourneyRef,
     JourneyReturn, JourneyStatus,
 };
+use crate::routine_continuation::{
+    FactoryRoutineContinuation, FactoryRoutineContinuationAdmission,
+    FactoryRoutineContinuationAdmissionStatus, FactoryRoutineContinuationReading,
+    FactoryRoutineContinuationRequest, RoutineContinuationError,
+};
 use crate::workflow::{
     compile_workflow, CompiledAgentRequirements, CompiledWorkflow, CompiledWorkflowUnit,
     WorkflowSource,
 };
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
+use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -56,6 +63,10 @@ pub struct FactoryDevelopmentalState {
     /// native owners; this is not a copied Activity or machine-metrics store.
     #[serde(default)]
     pub execution_correlations: Vec<FactoryExecutionCorrelation>,
+    /// Factory-owned consequences of accepted AIKit Routine invocation evidence.
+    /// The embedded evidence remains AIKit-owned and is preserved unchanged.
+    #[serde(default)]
+    pub routine_continuations: Vec<FactoryRoutineContinuation>,
 }
 
 impl FactoryDevelopmentalState {
@@ -70,6 +81,7 @@ impl FactoryDevelopmentalState {
             journeys,
             workflow_sources: Vec::new(),
             execution_correlations: Vec::new(),
+            routine_continuations: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -142,6 +154,58 @@ impl FactoryDevelopmentalState {
         }
         let compiled_workflows = self.compile_workflows()?;
         self.validate_execution_correlations(&compiled_workflows)?;
+        let mut invocation_refs = BTreeSet::new();
+        let mut trigger_refs = BTreeSet::new();
+        let mut delivery_refs = BTreeSet::new();
+        for continuation in &self.routine_continuations {
+            continuation.validate().map_err(|error| {
+                FactoryDevelopmentalReadError::InvalidRoutineContinuation(error.to_string())
+            })?;
+            if !invocation_refs.insert(&continuation.invocation_evidence.invocation_ref)
+                || !trigger_refs.insert(&continuation.invocation_evidence.trigger_observation_ref)
+            {
+                return Err(FactoryDevelopmentalReadError::InvalidRoutineContinuation(
+                    "duplicate invocation or trigger observation identity".into(),
+                ));
+            }
+            for delivery in &continuation.invocation_evidence.provider_deliveries {
+                if !delivery_refs.insert(&delivery.delivery_ref) {
+                    return Err(FactoryDevelopmentalReadError::InvalidRoutineContinuation(
+                        "provider delivery identity is attached to more than one continuation"
+                            .into(),
+                    ));
+                }
+            }
+            let journey = self
+                .journeys
+                .iter()
+                .find(|journey| journey.journey_ref == continuation.journey_ref)
+                .ok_or_else(|| {
+                    FactoryDevelopmentalReadError::InvalidRoutineContinuation(
+                        "continuation Journey does not exist".into(),
+                    )
+                })?;
+            let link = journey
+                .runs
+                .iter()
+                .find(|link| link.run_ref == continuation.run_ref);
+            let run = self.build.run(&continuation.run_ref);
+            if link.is_none() || run.is_none() {
+                return Err(FactoryDevelopmentalReadError::InvalidRoutineContinuation(
+                    "continuation Run is not present in both Journey and Build".into(),
+                ));
+            }
+            let link = link.expect("checked above");
+            let run = run.expect("checked above");
+            if link.journey_revision != continuation.journey_revision_before
+                || run.destination() != continuation.run_destination
+                || run.write_authority().owner() != continuation.write_owner
+            {
+                return Err(FactoryDevelopmentalReadError::InvalidRoutineContinuation(
+                    "continuation does not match its exact Journey revision or Run basis".into(),
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -214,6 +278,12 @@ impl FactoryDevelopmentalState {
             returns: journey.returns.clone(),
             recognitions: journey.recognitions.clone(),
             material_context_refs: journey.material_context_refs.clone(),
+            routine_invocation_refs: self
+                .routine_continuations
+                .iter()
+                .filter(|item| item.journey_ref == journey.journey_ref)
+                .map(|item| item.invocation_evidence.invocation_ref.clone())
+                .collect(),
             started_at: journey.started_at.clone(),
             completed_at: journey.completed_at.clone(),
         })
@@ -269,6 +339,12 @@ impl FactoryDevelopmentalState {
                 .iter()
                 .filter(|journey| journey.runs.iter().any(|link| &link.run_ref == run_ref))
                 .map(|journey| journey.journey_ref.clone())
+                .collect(),
+            routine_invocation_refs: self
+                .routine_continuations
+                .iter()
+                .filter(|item| &item.run_ref == run_ref)
+                .map(|item| item.invocation_evidence.invocation_ref.clone())
                 .collect(),
             lifecycle: run.lifecycle(),
             destination: run.destination().into(),
@@ -825,19 +901,52 @@ impl FactoryDevelopmentalFileProvider {
         Ok(provider)
     }
 
+    /// Create a new provider state without ever replacing an existing path.
+    /// This is the safe boundary for generated conformance state.
+    pub fn create_new(
+        path: impl Into<PathBuf>,
+        state: FactoryDevelopmentalState,
+    ) -> Result<Self, FactoryDevelopmentalProviderError> {
+        state.validate()?;
+        let provider = Self {
+            path: path.into(),
+            state,
+        };
+        if let Some(parent) = provider
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let stored = StoredFactoryDevelopmentalState {
+            schema: FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER.into(),
+            state: provider.state.clone(),
+        };
+        let bytes = serde_json::to_vec_pretty(&stored)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&provider.path)?;
+        use std::io::Write;
+        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
+            let _ = fs::remove_file(&provider.path);
+            return Err(error.into());
+        }
+        if let Some(parent) = provider
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            fs::File::open(parent)?.sync_all()?;
+        }
+        Ok(provider)
+    }
+
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, FactoryDevelopmentalProviderError> {
         let path = path.into();
-        let stored: StoredFactoryDevelopmentalState = serde_json::from_slice(&fs::read(&path)?)?;
-        if stored.schema != FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER {
-            return Err(
-                FactoryDevelopmentalProviderError::UnsupportedProviderSchema(stored.schema),
-            );
-        }
-        stored.state.validate()?;
-        Ok(Self {
-            path,
-            state: stored.state,
-        })
+        let state = Self::read_state(&path)?;
+        Ok(Self { path, state })
     }
 
     pub fn path(&self) -> &Path {
@@ -889,18 +998,55 @@ impl FactoryDevelopmentalFileProvider {
         Ok(self.state.execution_telemetry_reading(telemetry_ref)?)
     }
 
+    pub fn routine_continuation_reading(
+        &self,
+        invocation_ref: &str,
+    ) -> Result<FactoryRoutineContinuationReading, FactoryDevelopmentalProviderError> {
+        Ok(self.state.routine_continuation_reading(invocation_ref)?)
+    }
+
+    /// Apply the whole Journey + Run + continuation mutation to a clone and
+    /// publish it with one atomic replacement. Failure leaves memory and disk at
+    /// the previous complete state.
+    pub fn admit_routine_continuation(
+        &mut self,
+        request: FactoryRoutineContinuationRequest,
+    ) -> Result<FactoryRoutineContinuationAdmission, FactoryDevelopmentalProviderError> {
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let admission = candidate.admit_routine_continuation(request)?;
+        candidate.validate()?;
+        if admission.status != FactoryRoutineContinuationAdmissionStatus::AlreadyApplied {
+            self.persist_state(&candidate)?;
+        }
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
+        Ok(admission)
+    }
+
     pub fn execute_action(
         &mut self,
         invocation: &FactoryActionInvocation,
         authority: &FactoryActionAuthority,
     ) -> Result<FactoryActionReceipt, FactoryDevelopmentalProviderError> {
-        let receipt =
-            FactoryActionExecutor.execute(&mut self.state.build, invocation, authority)?;
-        self.persist()?;
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let receipt = FactoryActionExecutor.execute(&mut candidate.build, invocation, authority)?;
+        candidate.validate()?;
+        self.persist_state(&candidate)?;
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
         Ok(receipt)
     }
 
     fn persist(&self) -> Result<(), FactoryDevelopmentalProviderError> {
+        self.persist_state(&self.state)
+    }
+
+    fn persist_state(
+        &self,
+        state: &FactoryDevelopmentalState,
+    ) -> Result<(), FactoryDevelopmentalProviderError> {
         if let Some(parent) = self
             .path
             .parent()
@@ -910,21 +1056,73 @@ impl FactoryDevelopmentalFileProvider {
         }
         let stored = StoredFactoryDevelopmentalState {
             schema: FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER.into(),
-            state: self.state.clone(),
+            state: state.clone(),
         };
         let temporary = self.path.with_file_name(format!(
-            ".{}.tmp-{}",
+            ".{}.tmp-{}-{}",
             self.path
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("factory-developmental-state.json"),
-            std::process::id()
+            std::process::id(),
+            ulid::Ulid::new()
         ));
-        fs::write(&temporary, serde_json::to_vec_pretty(&stored)?)?;
+        let mut temporary_file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)?;
+        use std::io::Write;
+        temporary_file.write_all(&serde_json::to_vec_pretty(&stored)?)?;
+        temporary_file.sync_all()?;
         fs::rename(&temporary, &self.path).inspect_err(|_| {
             let _ = fs::remove_file(&temporary);
         })?;
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            fs::File::open(parent)?.sync_all()?;
+        }
         Ok(())
+    }
+
+    fn read_state(
+        path: &Path,
+    ) -> Result<FactoryDevelopmentalState, FactoryDevelopmentalProviderError> {
+        let stored: StoredFactoryDevelopmentalState = serde_json::from_slice(&fs::read(path)?)?;
+        if stored.schema != FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER {
+            return Err(
+                FactoryDevelopmentalProviderError::UnsupportedProviderSchema(stored.schema),
+            );
+        }
+        stored.state.validate()?;
+        Ok(stored.state)
+    }
+
+    fn lock(&self) -> Result<fs::File, FactoryDevelopmentalProviderError> {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            fs::create_dir_all(parent)?;
+        }
+        let lock_path = self.path.with_file_name(format!(
+            ".{}.lock",
+            self.path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("factory-developmental-state.json")
+        ));
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)?;
+        lock.lock_exclusive()?;
+        Ok(lock)
     }
 }
 
@@ -1000,6 +1198,7 @@ pub struct FactoryJourneyReading {
     pub returns: Vec<JourneyReturn>,
     pub recognitions: Vec<JourneyRecognitionLink>,
     pub material_context_refs: Vec<String>,
+    pub routine_invocation_refs: Vec<String>,
     pub started_at: String,
     pub completed_at: Option<String>,
 }
@@ -1013,6 +1212,7 @@ pub struct FactoryRunReading {
     pub revision: Revision,
     pub project_ref: ProjectRef,
     pub owning_journey_refs: Vec<JourneyRef>,
+    pub routine_invocation_refs: Vec<String>,
     pub lifecycle: RunLifecycle,
     pub destination: String,
     pub run_map: RunMap,
@@ -2590,6 +2790,7 @@ pub enum FactoryDevelopmentalReadError {
         source_ref: String,
         detail: String,
     },
+    InvalidRoutineContinuation(String),
     Build(FactoryBuildError),
 }
 
@@ -2614,6 +2815,7 @@ pub enum FactoryDevelopmentalProviderError {
     Read(FactoryDevelopmentalReadError),
     Build(FactoryBuildError),
     UnsupportedProviderSchema(String),
+    RoutineContinuation(RoutineContinuationError),
 }
 
 impl From<io::Error> for FactoryDevelopmentalProviderError {
@@ -2637,6 +2839,12 @@ impl From<FactoryDevelopmentalReadError> for FactoryDevelopmentalProviderError {
 impl From<FactoryBuildError> for FactoryDevelopmentalProviderError {
     fn from(error: FactoryBuildError) -> Self {
         Self::Build(error)
+    }
+}
+
+impl From<RoutineContinuationError> for FactoryDevelopmentalProviderError {
+    fn from(error: RoutineContinuationError) -> Self {
+        Self::RoutineContinuation(error)
     }
 }
 

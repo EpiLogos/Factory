@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/EpiLogos/agent-system-design/contracts/factory/routine-continuation-request.schema.json",
+  "title": "Factory Routine continuation request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "journeyRef", "destination", "writeOwner", "invocationEvidence"],
+  "properties": {
+    "contract": { "const": "factory.routine-continuation-request/v1" },
+    "journeyRef": { "type": "string", "pattern": "^journey:[0-9A-HJKMNP-TV-Z]{26}$" },
+    "destination": { "$ref": "#/$defs/nonempty" },
+    "writeOwner": { "$ref": "#/$defs/nonempty" },
+    "invocationEvidence": {
+      "$ref": "upstream/aikit.routine-invocation-evidence.v1.schema.json"
+    }
+  },
+  "$defs": {
+    "nonempty": { "type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$" }
+  }
+}

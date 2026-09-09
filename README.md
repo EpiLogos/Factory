@@ -187,6 +187,14 @@ The Factory remains a principal place where formal claims can become answerable 
 
 ## Current repository
 
+Routine-backed developmental continuation is available through
+`factory development admit-routine-continuation` and the corresponding
+`routine-continuation` Explain read. It consumes the pinned AIKit owner envelope
+without turning Factory into a scheduler or upgrading owner-attested authority;
+`factory conformance developmental-state` generates a validated provider state
+and all stable CLI locators for downstream contract checks. See
+`docs/canon/ROUTINE-JOURNEY-CONTINUATION.md`.
+
 This repository now contains several layers with different authority:
 
 ```text

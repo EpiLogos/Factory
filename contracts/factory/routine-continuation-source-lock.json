@@ -1,0 +1,11 @@
+{
+  "schema": "factory.source-lock/v1",
+  "owner": "aikit",
+  "repository": "https://github.com/EpiLogos/ai-kit",
+  "revision": "7864b3c700b26e90e7b814295c9a2675aae8dbf7",
+  "contract": "aikit.routine-invocation-evidence/v1",
+  "schema_path": "schemas/aikit.routine-invocation-evidence.v1.schema.json",
+  "schema_sha256": "69691cb240eb10a124a7afa9781445e506f4cb4e791b1f96b19d30becfdbad51",
+  "recorded_fixture": "contracts/factory/fixtures/aikit-routine-invocation-evidence.json",
+  "standing": "accepted-owner-main"
+}

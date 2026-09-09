@@ -8,6 +8,7 @@ pub mod build;
 pub mod build_cognitive;
 pub mod build_provider;
 pub mod cli;
+pub mod conformance;
 pub mod core;
 pub mod developmental_read;
 pub mod execution_intelligence;
@@ -22,6 +23,7 @@ pub mod journey_praxis;
 pub mod orchestration;
 pub mod project_development;
 pub mod project_development_store;
+pub mod routine_continuation;
 pub mod structural_ground;
 pub mod workflow;
 

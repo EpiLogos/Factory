@@ -65,7 +65,7 @@
     },
     "journeyReading": {
       "type": "object",
-      "required": ["contract", "provenance", "journeyRef", "revision", "projectRef", "commission", "status", "frontier", "participants", "flowRefs", "runRefs", "activityRefs", "returns", "recognitions", "materialContextRefs", "startedAt"],
+      "required": ["contract", "provenance", "journeyRef", "revision", "projectRef", "relatedProjects", "commission", "status", "frontier", "participants", "flowRefs", "runRefs", "agentSessionRefs", "activityRefs", "returns", "recognitions", "materialContextRefs", "routineInvocationRefs", "startedAt", "completedAt"],
       "properties": {
         "contract": { "const": "factory.journey-reading/v1" },
         "provenance": { "$ref": "#/$defs/provenance" },
@@ -84,13 +84,15 @@
         "returns": { "type": "array" },
         "recognitions": { "type": "array" },
         "materialContextRefs": { "type": "array" },
+        "routineInvocationRefs": { "$ref": "#/$defs/stringSet" },
         "startedAt": { "type": "string" },
         "completedAt": { "type": ["string", "null"] }
-      }
+      },
+      "additionalProperties": false
     },
     "runReading": {
       "type": "object",
-      "required": ["contract", "provenance", "runRef", "revision", "projectRef", "owningJourneyRefs", "lifecycle", "destination", "runMap", "thoughtAvailable", "thoughtRefs", "agencies", "executions", "evidence", "candidates", "humanRequests", "actions"],
+      "required": ["contract", "provenance", "runRef", "revision", "projectRef", "owningJourneyRefs", "routineInvocationRefs", "lifecycle", "destination", "runMap", "thoughtAvailable", "thoughtRefs", "agencies", "executions", "evidence", "candidates", "humanRequests", "actions"],
       "properties": {
         "contract": { "const": "factory.run-reading/v1" },
         "provenance": { "$ref": "#/$defs/provenance" },
@@ -98,6 +100,7 @@
         "revision": { "$ref": "#/$defs/revision" },
         "projectRef": { "$ref": "#/$defs/canonicalRef" },
         "owningJourneyRefs": { "type": "array" },
+        "routineInvocationRefs": { "$ref": "#/$defs/stringSet" },
         "lifecycle": { "type": "string" },
         "destination": { "type": "string" },
         "runMap": { "type": "object" },
@@ -109,7 +112,8 @@
         "candidates": { "type": "array" },
         "humanRequests": { "type": "array" },
         "actions": { "type": "array" }
-      }
+      },
+      "additionalProperties": false
     },
     "stringSet": {
       "type": "array",
