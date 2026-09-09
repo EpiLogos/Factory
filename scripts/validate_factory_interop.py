@@ -89,12 +89,36 @@ assert usage['timing']['latency'] == {'standing': 'not-reported'}
 assert usage['cost'] == {'standing': 'not-reported'}
 assert usage['outcome'] == {'state': 'partial', 'standing': 'normalized-from-native', 'reason': 'max_tokens'}
 assert usage['provenance']['raw_evidence_refs'] == ['trace:claude-code:fixture-line-1']
-assert telemetry_fixture['materialUsage'] == {
-    'owner': 'workcell',
-    'availability': 'unavailable',
-    'observations': [],
-    'reason': 'No stable owner-native resource-usage observation at Workcell ab7540b',
+material_usage = telemetry_fixture['materialUsage']
+assert material_usage['owner'] == 'workcell'
+assert material_usage['availability'] == 'available'
+assert len(material_usage['observations']) == 1
+material_ref = material_usage['observations'][0]
+assert material_ref['revision'] == '0b93a4af54ff3d547941d4af342e6a738c22e7af'
+assert material_ref['contractSchemaDigest'] == '4e0e1cf8848ed1faf74bcc362976b47f81aad99b33eea458a789cb688f1b3d5f'
+resource = material_ref['resourceUsage']
+assert resource['schema'] == 'workcell.resource-usage/v1'
+assert resource['usage_ref'] == material_ref['ref']
+assert resource['ok'] is True and resource['status'] == 'ok'
+assert resource['provider']['collection'] == 'bounded-on-demand'
+assert resource['provider']['privacy'] == {
+    'argv_collected': False,
+    'environment_collected': False,
 }
+assert resource['metrics']['cpu_time']['standing'] == 'observed'
+assert resource['metrics']['memory_rss']['standing'] == 'observed'
+assert resource['metrics']['cpu_utilisation']['standing'] == 'derived'
+for name in ('memory_peak_rss', 'gpu_utilisation', 'vram', 'network_bytes', 'storage_io_bytes'):
+    assert resource['metrics'][name]['standing'] == 'unsupported'
+    assert 'value' not in resource['metrics'][name]
+for expected in (
+    telemetry_fixture['provenance']['correlationRef'],
+    telemetry_fixture['runRef'],
+    telemetry_fixture['workflowUnitRef'],
+    telemetry_fixture['executionRef'],
+    *telemetry_fixture['condition']['workcellBindingRefs'],
+):
+    assert expected in resource['external_correlation_refs']
 for invented_metric in ('tokens', 'cost', 'cpu', 'memory', 'gpu', 'network', 'storage'):
     assert invented_metric not in telemetry_fixture
 

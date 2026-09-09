@@ -4,7 +4,7 @@
     "owner": "factory",
     "factoryStateRevision": 7,
     "correlationRef": "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3",
-    "source": "Factory conformance fixture over source-derived Actuation issue #39 / PR #40 owner evidence; not observed execution history"
+    "source": "Factory conformance fixture over source-derived Actuation evidence and a real Workcell 0b93a4a owner CLI reading; not observed Factory execution history"
   },
   "telemetryRef": "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4",
   "projectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAE",
@@ -112,9 +112,62 @@
   },
   "materialUsage": {
     "owner": "workcell",
-    "availability": "unavailable",
-    "observations": [],
-    "reason": "No stable owner-native resource-usage observation at Workcell ab7540b"
+    "availability": "available",
+    "observations": [{
+      "owner": "workcell",
+      "ref": "usage:6b045866ec21dab8806a8218f5e54b1767b31fc4c92aaa1fa0e6b3d9baf780f0",
+      "revision": "0b93a4af54ff3d547941d4af342e6a738c22e7af",
+      "standing": "observed",
+      "contractSchemaDigest": "4e0e1cf8848ed1faf74bcc362976b47f81aad99b33eea458a789cb688f1b3d5f",
+      "resourceUsage": {
+        "schema": "workcell.resource-usage/v1",
+        "ok": true,
+        "status": "ok",
+        "usage_ref": "usage:6b045866ec21dab8806a8218f5e54b1767b31fc4c92aaa1fa0e6b3d9baf780f0",
+        "workcell_ref": "workcell:factory-proof",
+        "harness_instance_ref": "instance:factory-proof:caca3a7473244ea04ff635b71383ed358b78164d44cc86e1cebb3948f296904d",
+        "harness_ref": "harness/factory-proof",
+        "material_binding": {
+          "kind": "process",
+          "pid": 74503,
+          "process_start_marker": "Wed Sep 9 11:16:35 2026",
+          "executable": { "path": "/bin/sleep", "sha256": "a2be9ba33f4fbf10a4f2702cd9b687ac98274ad28de509109ee86f2f4b0e2beb" },
+          "instance_evidence_grade": "live-pid",
+          "instance_seams": []
+        },
+        "interval": {
+          "started_at": "unix-ms:1788948995764",
+          "ended_at": "unix-ms:1788948995790",
+          "duration_ms": 26,
+          "requested_duration_ms": 20
+        },
+        "provider": {
+          "provider_ref": "provider:local-os:ps",
+          "source": "ps",
+          "platform": "macos",
+          "collection": "bounded-on-demand",
+          "raw_native_refs": ["local-os:ps:pid:74503:lstart,time,rss,comm"],
+          "privacy": { "argv_collected": false, "environment_collected": false }
+        },
+        "metrics": {
+          "cpu_time": { "standing": "observed", "value": 0, "unit": "milliseconds", "evidence": "ps time" },
+          "cpu_utilisation": { "standing": "derived", "value": 0.0, "unit": "percent", "derivation": "cpu_time delta / wall interval" },
+          "memory_rss": { "standing": "observed", "value": 1163264, "unit": "bytes", "evidence": "ps rss" },
+          "memory_peak_rss": { "standing": "unsupported", "reason": "the local ps projection does not establish peak RSS" },
+          "gpu_utilisation": { "standing": "unsupported", "reason": "the local ps provider does not expose GPU utilisation" },
+          "vram": { "standing": "unsupported", "reason": "the local ps provider does not expose VRAM allocation" },
+          "network_bytes": { "standing": "unsupported", "reason": "the local ps provider does not expose per-process network bytes" },
+          "storage_io_bytes": { "standing": "unsupported", "reason": "the portable local ps projection does not establish storage I/O bytes" }
+        },
+        "external_correlation_refs": [
+          "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3",
+          "run:01ARZ3NDEKTSV4RRFFQ69G5FAA",
+          "workflow-unit:01ARZ3NDEKTSV4RRFFQ69G5FAB",
+          "execution:implement-compiler",
+          "binding:lan-gpu"
+        ]
+      }
+    }]
   },
   "handoff": {
     "fromAgencyRef": "agency:parasakti/research",
