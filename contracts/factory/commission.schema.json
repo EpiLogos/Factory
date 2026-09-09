@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.commission.schema/v1",
+  "title": "Factory Commission receipt and reading",
+  "oneOf": [
+    { "$ref": "#/$defs/receipt" },
+    { "$ref": "#/$defs/reading" }
+  ],
+  "$defs": {
+    "nonempty": { "type": "string", "minLength": 1 },
+    "stableRef": { "type": "string", "pattern": "^\\S+$" },
+    "factoryRef": { "type": "string", "pattern": "^[a-z][a-z0-9-]*:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "commission": {
+      "type": "object",
+      "required": ["contract", "revision", "request", "projectRef", "journeyRef", "runRef"],
+      "properties": {
+        "contract": { "const": "factory.commission/v1" },
+        "revision": { "const": 1 },
+        "request": { "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission-request.schema.json" },
+        "projectRef": { "$ref": "#/$defs/factoryRef" },
+        "journeyRef": { "$ref": "#/$defs/factoryRef" },
+        "runRef": { "$ref": "#/$defs/factoryRef" }
+      },
+      "additionalProperties": false
+    },
+    "receipt": {
+      "type": "object",
+      "required": ["contract", "status", "commission"],
+      "properties": {
+        "contract": { "const": "factory.commission-receipt/v1" },
+        "status": { "enum": ["applied", "already-applied"] },
+        "commission": { "$ref": "#/$defs/commission" }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["subjectRef", "relation", "objectRef", "owner"],
+      "properties": {
+        "subjectRef": { "$ref": "#/$defs/stableRef" },
+        "relation": { "enum": ["commissioned", "contains", "bounded-as", "bounds", "composition-evidence-for", "supports-membership-reading"] },
+        "objectRef": { "$ref": "#/$defs/stableRef" },
+        "owner": { "enum": ["factory", "central"] }
+      },
+      "additionalProperties": false
+    },
+    "reading": {
+      "type": "object",
+      "required": ["contract", "commission", "traversal"],
+      "properties": {
+        "contract": { "const": "factory.commission-reading/v1" },
+        "commission": { "$ref": "#/$defs/commission" },
+        "traversal": { "type": "array", "minItems": 6, "items": { "$ref": "#/$defs/edge" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}

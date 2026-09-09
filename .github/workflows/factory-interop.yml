@@ -38,7 +38,7 @@ jobs:
           cache-on-failure: true
       - name: Validate Draft 2020-12 schemas and field ownership
         run: |
-          python3 -m pip install --disable-pip-version-check 'jsonschema>=4,<5'
+          python3 -m pip install --disable-pip-version-check 'jsonschema>=4.18,<5'
           python3 scripts/validate_factory_interop.py
       - name: Node reference consumer
         run: node tests/factory/interop.js

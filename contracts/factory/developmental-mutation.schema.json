@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.developmental-mutation.schema/v1",
+  "title": "Factory closed developmental mutation request and receipt",
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/receipt" }],
+  "$defs": {
+    "nonempty": { "type": "string", "minLength": 1 },
+    "stableRef": { "type": "string", "pattern": "^\\S+$" },
+    "factoryRef": { "type": "string", "pattern": "^[a-z][a-z0-9-]*:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "stableRefSet": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/stableRef" } },
+    "source": {
+      "type": "object",
+      "required": ["owner", "reference", "revision", "standing"],
+      "properties": { "owner": { "$ref": "#/$defs/stableRef" }, "reference": { "$ref": "#/$defs/stableRef" }, "revision": { "$ref": "#/$defs/stableRef" }, "standing": { "const": "owner-native-observation" } },
+      "additionalProperties": false
+    },
+    "return": {
+      "type": "object",
+      "required": ["return_ref", "run_refs", "basis_refs", "evidence_refs", "summary"],
+      "properties": { "return_ref": { "$ref": "#/$defs/stableRef" }, "run_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/factoryRef" } }, "basis_refs": { "$ref": "#/$defs/stableRefSet" }, "evidence_refs": { "$ref": "#/$defs/stableRefSet" }, "recognition_ref": { "anyOf": [{ "$ref": "#/$defs/stableRef" }, { "type": "null" }] }, "summary": { "$ref": "#/$defs/nonempty" } },
+      "additionalProperties": false
+    },
+    "recognition": {
+      "type": "object", "required": ["recognition_ref", "subject_ref", "basis_refs"],
+      "properties": { "recognition_ref": { "$ref": "#/$defs/stableRef" }, "subject_ref": { "$ref": "#/$defs/stableRef" }, "basis_refs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/stableRef" } } },
+      "additionalProperties": false
+    },
+    "mutation": {
+      "oneOf": [
+        { "type": "object", "required": ["kind", "runRef", "workflowSource"], "properties": { "kind": { "const": "attach-workflow-source" }, "runRef": { "$ref": "#/$defs/factoryRef" }, "workflowSource": { "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/agent-workflow-source.schema.json" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "journeyRef", "activityRef"], "properties": { "kind": { "const": "correlate-owner-activity" }, "journeyRef": { "$ref": "#/$defs/factoryRef" }, "activityRef": { "$ref": "#/$defs/stableRef" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "journeyRef", "returned"], "properties": { "kind": { "const": "record-owner-return" }, "journeyRef": { "$ref": "#/$defs/factoryRef" }, "returned": { "$ref": "#/$defs/return" } }, "additionalProperties": false },
+        { "type": "object", "required": ["kind", "journeyRef", "recognition"], "properties": { "kind": { "const": "record-owner-recognition" }, "journeyRef": { "$ref": "#/$defs/factoryRef" }, "recognition": { "$ref": "#/$defs/recognition" } }, "additionalProperties": false }
+      ]
+    },
+    "request": {
+      "type": "object", "required": ["contract", "mutationRef", "occurrenceRef", "source", "observedAt", "mutation"],
+      "properties": { "contract": { "const": "factory.developmental-mutation-request/v1" }, "mutationRef": { "$ref": "#/$defs/stableRef" }, "occurrenceRef": { "$ref": "#/$defs/stableRef" }, "source": { "$ref": "#/$defs/source" }, "observedAt": { "type": "string", "format": "date-time" }, "mutation": { "$ref": "#/$defs/mutation" } },
+      "additionalProperties": false
+    },
+    "record": { "type": "object", "required": ["contract", "request"], "properties": { "contract": { "const": "factory.developmental-mutation/v1" }, "request": { "$ref": "#/$defs/request" } }, "additionalProperties": false },
+    "receipt": { "type": "object", "required": ["contract", "status", "record"], "properties": { "contract": { "const": "factory.developmental-mutation-receipt/v1" }, "status": { "enum": ["applied", "already-applied"] }, "record": { "$ref": "#/$defs/record" } }, "additionalProperties": false }
+  }
+}

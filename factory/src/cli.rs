@@ -7,6 +7,10 @@ use crate::build::{
     FACTORY_NATIVE_OWNER,
 };
 use crate::build_provider::{FactoryBuildFileProvider, FACTORY_BUILD_LOCAL_PROVIDER_STATE};
+use crate::commission::{
+    FactoryCommissionRequest, FactoryDevelopmentalMutationRequest, FACTORY_COMMISSION_READING,
+    FACTORY_COMMISSION_RECEIPT, FACTORY_DEVELOPMENTAL_MUTATION_RECEIPT,
+};
 use crate::conformance::{
     create_developmental_conformance_state, FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
 };
@@ -97,7 +101,7 @@ fn help() -> String {
     format!(
         "Software Factory {}\n\n\
 Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
-Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
+Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
@@ -119,6 +123,9 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.workflow-units",
             "development.workflow-unit",
             "development.execution-telemetry",
+            "development.commission",
+            "development.commission-read",
+            "development.mutate",
             "development.admit-routine-continuation",
             "development.routine-continuation",
             "development.action",
@@ -140,6 +147,9 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT,
             FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
             FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT,
+            FACTORY_COMMISSION_RECEIPT,
+            FACTORY_COMMISSION_READING,
+            FACTORY_DEVELOPMENTAL_MUTATION_RECEIPT,
             FACTORY_ROUTINE_CONTINUATION_ADMISSION,
             FACTORY_ROUTINE_CONTINUATION_READING,
             FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
@@ -252,6 +262,29 @@ fn development_command(
                 .get(1)
                 .ok_or_else(|| CliError("missing development ledger root".into()))?;
             return observations_operation(ledger_root, &args[2..], json);
+        }
+        "commission" => {
+            let state_path = args
+                .get(1)
+                .ok_or_else(|| CliError("missing developmental state path".into()))?;
+            let request_path = args.get(2).map(String::as_str).unwrap_or("-");
+            let request: FactoryCommissionRequest =
+                serde_json::from_str(&read_input(request_path, stdin_override)?)?;
+            let receipt = FactoryDevelopmentalFileProvider::commission(state_path, request)
+                .map_err(|error| CliError(error.to_string()))?;
+            return if json {
+                serde_json::to_string_pretty(&receipt).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nCommission: {}\nProject: {}\nJourney: {}\nRun: {}\nStatus: {:?}",
+                    receipt.contract,
+                    receipt.commission.request.request_ref,
+                    receipt.commission.project_ref,
+                    receipt.commission.journey_ref,
+                    receipt.commission.run_ref,
+                    receipt.status
+                ))
+            };
         }
         _ => {}
     }
@@ -423,6 +456,45 @@ fn development_command(
                     reading.condition.agency_ref,
                     reading.model_usage.availability,
                     reading.material_usage.availability
+                ))
+            }
+        }
+        "commission-read" => {
+            let request_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing commission request-ref".into()))?;
+            let reading = provider
+                .commission_reading(request_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&reading).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nCommission: {}\nProject: {}\nJourney: {}\nRun: {}",
+                    reading.contract,
+                    reading.commission.request.request_ref,
+                    reading.commission.project_ref,
+                    reading.commission.journey_ref,
+                    reading.commission.run_ref
+                ))
+            }
+        }
+        "mutate" => {
+            let request_path = args.get(2).map(String::as_str).unwrap_or("-");
+            let request: FactoryDevelopmentalMutationRequest =
+                serde_json::from_str(&read_input(request_path, stdin_override)?)?;
+            let receipt = provider
+                .apply_developmental_mutation(request)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                serde_json::to_string_pretty(&receipt).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nMutation: {}\nOccurrence: {}\nStatus: {:?}",
+                    receipt.contract,
+                    receipt.record.request.mutation_ref,
+                    receipt.record.request.occurrence_ref,
+                    receipt.status
                 ))
             }
         }

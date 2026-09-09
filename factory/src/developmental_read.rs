@@ -14,6 +14,11 @@ use crate::build::{
     FactoryBuildSelection, FactoryBuildState, FactoryBuildViewProvider, HumanRequestRecord,
     FACTORY_NATIVE_OWNER,
 };
+use crate::commission::{
+    CommissionError, FactoryCommission, FactoryCommissionReading, FactoryCommissionReceipt,
+    FactoryCommissionRequest, FactoryDevelopmentalMutationReceipt,
+    FactoryDevelopmentalMutationRecord, FactoryDevelopmentalMutationRequest,
+};
 use crate::core::identity::{Ref, Revision};
 use crate::core::run::{ProjectRef, RunLifecycle, RunMap, RunMapAddress, RunRef, WorkflowUnitRef};
 use crate::journey::{
@@ -67,6 +72,13 @@ pub struct FactoryDevelopmentalState {
     /// The embedded evidence remains AIKit-owned and is preserved unchanged.
     #[serde(default)]
     pub routine_continuations: Vec<FactoryRoutineContinuation>,
+    /// Factory-owned Commission provenance. Central membership evidence is
+    /// retained here without being promoted to execution authority.
+    #[serde(default)]
+    pub commissions: Vec<FactoryCommission>,
+    /// Closed, replay-safe owner correlation operations applied to this state.
+    #[serde(default)]
+    pub developmental_mutations: Vec<FactoryDevelopmentalMutationRecord>,
 }
 
 impl FactoryDevelopmentalState {
@@ -82,6 +94,8 @@ impl FactoryDevelopmentalState {
             workflow_sources: Vec::new(),
             execution_correlations: Vec::new(),
             routine_continuations: Vec::new(),
+            commissions: Vec::new(),
+            developmental_mutations: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -203,6 +217,41 @@ impl FactoryDevelopmentalState {
             {
                 return Err(FactoryDevelopmentalReadError::InvalidRoutineContinuation(
                     "continuation does not match its exact Journey revision or Run basis".into(),
+                ));
+            }
+        }
+        let mut request_refs = BTreeSet::new();
+        for commission in &self.commissions {
+            commission.validate_against(self).map_err(|error| {
+                FactoryDevelopmentalReadError::InvalidCommission(error.to_string())
+            })?;
+            if !request_refs.insert(&commission.request.request_ref)
+                || commission.project_ref != *project_ref
+                || self.build.run(&commission.run_ref).is_none()
+                || !self.journeys.iter().any(|journey| {
+                    journey.journey_ref == commission.journey_ref
+                        && journey
+                            .runs
+                            .iter()
+                            .any(|link| link.run_ref == commission.run_ref)
+                })
+            {
+                return Err(FactoryDevelopmentalReadError::InvalidCommission(
+                    "Commission relation is not present in canonical state".into(),
+                ));
+            }
+        }
+        let mut mutation_refs = BTreeSet::new();
+        let mut occurrences = BTreeSet::new();
+        for mutation in &self.developmental_mutations {
+            mutation.validate_against(self).map_err(|error| {
+                FactoryDevelopmentalReadError::InvalidCommission(error.to_string())
+            })?;
+            if !mutation_refs.insert(&mutation.request.mutation_ref)
+                || !occurrences.insert(&mutation.request.occurrence_ref)
+            {
+                return Err(FactoryDevelopmentalReadError::InvalidCommission(
+                    "duplicate developmental mutation identity".into(),
                 ));
             }
         }
@@ -888,6 +937,33 @@ pub struct FactoryDevelopmentalFileProvider {
 }
 
 impl FactoryDevelopmentalFileProvider {
+    /// Create the first Commission state without clobbering, or append/replay
+    /// under the provider's exclusive lock when the path already exists.
+    pub fn commission(
+        path: impl Into<PathBuf>,
+        request: FactoryCommissionRequest,
+    ) -> Result<FactoryCommissionReceipt, FactoryDevelopmentalProviderError> {
+        let path = path.into();
+        let lock = Self::lock_path(&path)?;
+        if path.exists() {
+            let mut provider = Self {
+                state: Self::read_state(&path)?,
+                path,
+            };
+            let receipt = provider.state.admit_commission(request)?;
+            provider.state.validate()?;
+            if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
+                provider.persist()?;
+            }
+            FileExt::unlock(&lock)?;
+            return Ok(receipt);
+        }
+        let (state, receipt) = FactoryDevelopmentalState::from_commission(request)?;
+        Self::create_new(&path, state)?;
+        FileExt::unlock(&lock)?;
+        Ok(receipt)
+    }
+
     pub fn create(
         path: impl Into<PathBuf>,
         state: FactoryDevelopmentalState,
@@ -1005,6 +1081,47 @@ impl FactoryDevelopmentalFileProvider {
         Ok(self.state.routine_continuation_reading(invocation_ref)?)
     }
 
+    pub fn commission_reading(
+        &self,
+        request_ref: &str,
+    ) -> Result<FactoryCommissionReading, FactoryDevelopmentalProviderError> {
+        self.state
+            .commission_reading(request_ref)
+            .map_err(Into::into)
+    }
+
+    pub fn admit_commission(
+        &mut self,
+        request: FactoryCommissionRequest,
+    ) -> Result<FactoryCommissionReceipt, FactoryDevelopmentalProviderError> {
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let receipt = candidate.admit_commission(request)?;
+        candidate.validate()?;
+        if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
+            self.persist_state(&candidate)?;
+        }
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
+        Ok(receipt)
+    }
+
+    pub fn apply_developmental_mutation(
+        &mut self,
+        request: FactoryDevelopmentalMutationRequest,
+    ) -> Result<FactoryDevelopmentalMutationReceipt, FactoryDevelopmentalProviderError> {
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let receipt = candidate.apply_developmental_mutation(request)?;
+        candidate.validate()?;
+        if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
+            self.persist_state(&candidate)?;
+        }
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
+        Ok(receipt)
+    }
+
     /// Apply the whole Journey + Run + continuation mutation to a clone and
     /// publish it with one atomic replacement. Failure leaves memory and disk at
     /// the previous complete state.
@@ -1101,17 +1218,16 @@ impl FactoryDevelopmentalFileProvider {
     }
 
     fn lock(&self) -> Result<fs::File, FactoryDevelopmentalProviderError> {
-        if let Some(parent) = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
+        Self::lock_path(&self.path)
+    }
+
+    fn lock_path(path: &Path) -> Result<fs::File, FactoryDevelopmentalProviderError> {
+        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
-        let lock_path = self.path.with_file_name(format!(
+        let lock_path = path.with_file_name(format!(
             ".{}.lock",
-            self.path
-                .file_name()
+            path.file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("factory-developmental-state.json")
         ));
@@ -2791,6 +2907,7 @@ pub enum FactoryDevelopmentalReadError {
         detail: String,
     },
     InvalidRoutineContinuation(String),
+    InvalidCommission(String),
     Build(FactoryBuildError),
 }
 
@@ -2816,6 +2933,7 @@ pub enum FactoryDevelopmentalProviderError {
     Build(FactoryBuildError),
     UnsupportedProviderSchema(String),
     RoutineContinuation(RoutineContinuationError),
+    Commission(CommissionError),
 }
 
 impl From<io::Error> for FactoryDevelopmentalProviderError {
@@ -2845,6 +2963,12 @@ impl From<FactoryBuildError> for FactoryDevelopmentalProviderError {
 impl From<RoutineContinuationError> for FactoryDevelopmentalProviderError {
     fn from(error: RoutineContinuationError) -> Self {
         Self::RoutineContinuation(error)
+    }
+}
+
+impl From<CommissionError> for FactoryDevelopmentalProviderError {
+    fn from(error: CommissionError) -> Self {
+        Self::Commission(error)
     }
 }
 

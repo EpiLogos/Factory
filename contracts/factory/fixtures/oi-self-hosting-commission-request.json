@@ -1,0 +1,50 @@
+{
+  "contract": "factory.commission-request/v1",
+  "requestRef": "commission-request:factory-195-self-hosting-201",
+  "projectKey": "factory-programme-195",
+  "purpose": "Self-host the remaining O:I and AIKit consumer work and the O:I snapshot/#188 tranche without inferring execution",
+  "frontier": "Commissioned; all owner-native workflow units remain unexecuted",
+  "runDestination": "factory-programme/oi-aikit-consumer-and-oi-snapshot-188",
+  "writeOwner": "factory",
+  "commissionedAt": "2026-09-09T12:00:00Z",
+  "centralComposition": {
+    "owner": "central",
+    "developmentAgentSet": {
+      "ref": "oi-development-agency",
+      "revision": "r1",
+      "sourcePath": "Control/relations/agent-sets/agent-set-cbf7f912c48546eb.json",
+      "sha256": "f5d669ef436b1e1dbf21892aac8e50a34a97c1265b2bf9b81d13001f3b1346ec"
+    },
+    "guardianAgentSet": {
+      "ref": "oi-product-guardians",
+      "revision": "r1",
+      "sourcePath": "Control/relations/agent-sets/agent-set-94404c319e7e5e8a.json",
+      "sha256": "a0499c67d53bfb1d5232ee94659a04ad9bcd33fd08191fe6b213ec5752dfafde"
+    },
+    "resolvedAgentRefs": [
+      "agent/oi-guardian-anuttara",
+      "agent/oi-guardian-epii",
+      "agent/oi-guardian-mahamaya",
+      "agent/oi-guardian-nara",
+      "agent/oi-guardian-paramasiva",
+      "agent/oi-guardian-parasakti",
+      "agent:hermes"
+    ],
+    "agentProfileReceipts": [
+      { "ref": "profile/oi-guardian-anuttara", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-f38255302f31150c.json", "sha256": "688b26a8b8f07de09af135d9c6abe90f3165795437693116949031620d7bb61f" },
+      { "ref": "profile/oi-guardian-paramasiva", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-c994187eac1a0b69.json", "sha256": "ca27260d856d4c797e21cfc4c22da69ea16e6611d1643326ef25fcc550031ec7" },
+      { "ref": "profile/oi-guardian-parasakti", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-1a9349373c4c99c4.json", "sha256": "030068c24f6da573639f3de08fefb871f298721322aa9887a4a74dea9bf090d5" },
+      { "ref": "profile/oi-guardian-mahamaya", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-122a77317676932d.json", "sha256": "b058043e81d2e894991f5b5a4a2ebc1de9fd4ccdd44854ec67e06c47cecd30df" },
+      { "ref": "profile/oi-guardian-nara", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-24a7fe0350228fc8.json", "sha256": "43af85754d711339d4ed0d272e682e813e3b81b7c20b12fd161abac621ea54cd" },
+      { "ref": "profile/oi-guardian-epii", "revision": "oi-guardian-v1", "sourcePath": "Control/agents/profiles/profile-c822feb6bb9f63ef.json", "sha256": "2db9aa5829152d8c39c5e3c895809b9f9a12af423f04f2b46d91e37eb9e4e65e" }
+    ],
+    "authorityStanding": "membership-non-authoritative"
+  },
+  "rootAct": {
+    "actRef": "act:factory-195-self-hosting-root",
+    "agentRef": "agent:hermes",
+    "purpose": "Bound the remaining Factory programme work without scheduling or execution authority",
+    "scopeRefs": ["issue:201", "issue:188", "product:factory", "product:aikit", "product:oi"],
+    "standing": "commissioned-not-executed"
+  }
+}
