@@ -8,7 +8,8 @@
     { "$ref": "#/$defs/runReading" },
     { "$ref": "#/$defs/workflowUnitListReading" },
     { "$ref": "#/$defs/workflowUnitReading" },
-    { "$ref": "#/$defs/executionTelemetryReading" }
+    { "$ref": "#/$defs/executionTelemetryReading" },
+    { "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission.schema.json#/$defs/reading" }
   ],
   "$defs": {
     "canonicalRef": {

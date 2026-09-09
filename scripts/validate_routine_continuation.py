@@ -16,6 +16,8 @@ REQUEST_FIXTURE = ROOT / "contracts/factory/fixtures/routine-continuation-reques
 LOCK = ROOT / "contracts/factory/routine-continuation-source-lock.json"
 OUTPUT_SCHEMA = ROOT / "contracts/factory/routine-continuation.schema.json"
 DEVELOPMENTAL_SCHEMA = ROOT / "contracts/factory/developmental-read.schema.json"
+COMMISSION_SCHEMA = ROOT / "contracts/factory/commission.schema.json"
+COMMISSION_REQUEST_SCHEMA = ROOT / "contracts/factory/commission-request.schema.json"
 
 upstream_bytes = UPSTREAM.read_bytes()
 upstream = json.loads(upstream_bytes)
@@ -33,6 +35,13 @@ registry = Registry().with_resource(
     "https://github.com/EpiLogos/agent-system-design/contracts/factory/upstream/aikit.routine-invocation-evidence.v1.schema.json",
     Resource.from_contents(upstream),
 )
+registry = registry.with_resource(
+    "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission.schema.json",
+    Resource.from_contents(json.loads(COMMISSION_SCHEMA.read_text())),
+).with_resource(
+    "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission-request.schema.json",
+    Resource.from_contents(json.loads(COMMISSION_REQUEST_SCHEMA.read_text())),
+)
 errors = list(
     Draft202012Validator(request_schema, registry=registry).iter_errors(
         json.loads(REQUEST_FIXTURE.read_text())
@@ -45,7 +54,7 @@ Draft202012Validator.check_schema(output_schema)
 output_validator = Draft202012Validator(output_schema, registry=registry)
 developmental_schema = json.loads(DEVELOPMENTAL_SCHEMA.read_text())
 Draft202012Validator.check_schema(developmental_schema)
-developmental_validator = Draft202012Validator(developmental_schema)
+developmental_validator = Draft202012Validator(developmental_schema, registry=registry)
 binary = ROOT / "target/debug/factory"
 assert binary.is_file(), "build the native Factory binary before validating output contracts"
 with tempfile.TemporaryDirectory() as directory:

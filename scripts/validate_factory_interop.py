@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,12 +62,21 @@ for key, entry in schemas.items():
     assert not missing, f'{key}: fields without one semantic owner: {missing}'
 
 developmental_schema = load('contracts/factory/developmental-read.schema.json')
+commission_schema = load('contracts/factory/commission.schema.json')
+commission_request_schema = load('contracts/factory/commission-request.schema.json')
+registry = Registry().with_resource(
+    'https://github.com/EpiLogos/agent-system-design/contracts/factory/commission.schema.json',
+    Resource.from_contents(commission_schema),
+).with_resource(
+    'https://github.com/EpiLogos/agent-system-design/contracts/factory/commission-request.schema.json',
+    Resource.from_contents(commission_request_schema),
+)
 telemetry_fixture = load('contracts/factory/fixtures/execution-telemetry-reading.json')
 validation_schema = dict(developmental_schema)
 validation_schema.pop('$id', None)
 Draft202012Validator.check_schema(validation_schema)
 errors = sorted(
-    Draft202012Validator(validation_schema).iter_errors(telemetry_fixture),
+    Draft202012Validator(validation_schema, registry=registry).iter_errors(telemetry_fixture),
     key=lambda error: list(error.path),
 )
 assert not errors, 'execution telemetry: ' + '; '.join(error.message for error in errors)

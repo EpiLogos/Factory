@@ -8,6 +8,7 @@ pub mod build;
 pub mod build_cognitive;
 pub mod build_provider;
 pub mod cli;
+pub mod commission;
 pub mod conformance;
 pub mod core;
 pub mod developmental_read;

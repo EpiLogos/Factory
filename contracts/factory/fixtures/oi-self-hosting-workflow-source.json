@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "factory.agent-workflow-source/v1",
+  "coordinationContract": "factory.bounded-coordination/v1",
+  "source": {
+    "ref": "workflow-source:01K4Q7B8000VVK4R7NNH6E201A",
+    "revision": "factory-201-v1",
+    "digest": "e6aecc515dd6eba8acbe99ea68ca645a463f5cd306c0d8a290541972f5be11c5",
+    "flowRef": "issue:201"
+  },
+  "workflowKey": "factory-195-self-hosting",
+  "units": [
+    {
+      "key": "factory-guardian-owner-surface",
+      "developmentalConcern": "Factory Guardian concern: complete and verify the Factory-owned self-hosting surface",
+      "requiredDifference": "Factory Commission and correlations are accepted on owner main",
+      "returnContract": "owner-native Factory CI and PR evidence",
+      "subjectRef": "issue:01K4Q7B8000VVK4R7NNH6E201B",
+      "basisRevision": "issue-201",
+      "agentRequirements": { "agentRefs": [], "agentSetRefs": [], "agencyRefs": ["agency:01K4Q7B8000VVK4R7NNH6E202A"] },
+      "praxisRefs": ["praxis:01K4Q7B8000VVK4R7NNH6E203A"],
+      "capabilityRefs": ["capability:01K4Q7B8000VVK4R7NNH6E204A"],
+      "dependencies": [],
+      "independenceFrom": [],
+      "permittedEffects": ["factory-repository-change", "factory-owner-pr"],
+      "verificationObligations": ["factory-full-ci", "owner-main-acceptance"],
+      "returnAddress": "return-address:01K4Q7B8000VVK4R7NNH6E205A",
+      "stopConditions": "Stop on owner-law conflict or failed production gate",
+      "escalationConditions": "Escalate truthful unavailable owner evidence"
+    },
+    {
+      "key": "aikit-guardian-consumer",
+      "developmentalConcern": "AIKit Guardian concern: exercise the accepted Factory surface from the AIKit owner",
+      "requiredDifference": "AIKit consumes the exact accepted Factory contract",
+      "returnContract": "owner-native AIKit consumer evidence",
+      "subjectRef": "issue:01K4Q7B8000VVK4R7NNH6E201C",
+      "basisRevision": "post-factory-201",
+      "agentRequirements": { "agentRefs": [], "agentSetRefs": [], "agencyRefs": ["agency:01K4Q7B8000VVK4R7NNH6E202B"] },
+      "praxisRefs": ["praxis:01K4Q7B8000VVK4R7NNH6E203B"],
+      "capabilityRefs": ["capability:01K4Q7B8000VVK4R7NNH6E204B"],
+      "dependencies": ["factory-guardian-owner-surface"],
+      "independenceFrom": [],
+      "permittedEffects": ["aikit-repository-change", "aikit-owner-pr"],
+      "verificationObligations": ["aikit-full-ci", "exact-factory-contract-pin"],
+      "returnAddress": "return-address:01K4Q7B8000VVK4R7NNH6E205B",
+      "stopConditions": "Stop if Factory owner contract is not accepted",
+      "escalationConditions": "Escalate contract drift or owner rejection"
+    },
+    {
+      "key": "oi-snapshot-188",
+      "developmentalConcern": "Complete the bounded O:I snapshot and issue 188 work",
+      "requiredDifference": "The named O:I snapshot tranche has owner-native evidence",
+      "returnContract": "owner-native O:I snapshot/#188 return",
+      "subjectRef": "issue:01K4Q7B8000VVK4R7NNH6E201D",
+      "basisRevision": "issue-188",
+      "agentRequirements": { "agentRefs": [], "agentSetRefs": [], "agencyRefs": ["agency:01K4Q7B8000VVK4R7NNH6E202C"] },
+      "praxisRefs": ["praxis:01K4Q7B8000VVK4R7NNH6E203C"],
+      "capabilityRefs": ["capability:01K4Q7B8000VVK4R7NNH6E204C"],
+      "dependencies": ["factory-guardian-owner-surface", "aikit-guardian-consumer"],
+      "independenceFrom": [],
+      "permittedEffects": ["oi-owner-change", "oi-snapshot-return"],
+      "verificationObligations": ["oi-owner-verification", "issue-188-return"],
+      "returnAddress": "return-address:01K4Q7B8000VVK4R7NNH6E205C",
+      "stopConditions": "Stop if bounded scope expands beyond O:I snapshot/#188",
+      "escalationConditions": "Escalate absent owner-native evidence"
+    }
+  ],
+  "barriers": [],
+  "nesting": []
+}

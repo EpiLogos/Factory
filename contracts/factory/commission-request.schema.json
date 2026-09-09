@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.commission-request.schema/v1",
+  "title": "Factory Commission request",
+  "type": "object",
+  "required": ["contract", "requestRef", "projectKey", "purpose", "frontier", "runDestination", "writeOwner", "commissionedAt", "centralComposition", "rootAct"],
+  "properties": {
+    "contract": { "const": "factory.commission-request/v1" },
+    "requestRef": { "$ref": "#/$defs/stableRef" },
+    "projectKey": { "$ref": "#/$defs/stableRef" },
+    "purpose": { "$ref": "#/$defs/nonempty" },
+    "frontier": { "$ref": "#/$defs/nonempty" },
+    "runDestination": { "$ref": "#/$defs/nonempty" },
+    "writeOwner": { "const": "factory" },
+    "commissionedAt": { "type": "string", "format": "date-time" },
+    "centralComposition": { "$ref": "#/$defs/composition" },
+    "rootAct": { "$ref": "#/$defs/rootAct" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "nonempty": { "type": "string", "minLength": 1 },
+    "stableRef": { "type": "string", "pattern": "^\\S+$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "stringSet": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/stableRef" } },
+    "sourceReceipt": {
+      "type": "object",
+      "required": ["ref", "revision", "sourcePath", "sha256"],
+      "properties": { "ref": { "$ref": "#/$defs/stableRef" }, "revision": { "$ref": "#/$defs/stableRef" }, "sourcePath": { "type": "string", "pattern": "^Control/[^\\s]+$" }, "sha256": { "$ref": "#/$defs/sha256" } },
+      "additionalProperties": false
+    },
+    "composition": {
+      "type": "object",
+      "required": ["owner", "developmentAgentSet", "guardianAgentSet", "resolvedAgentRefs", "agentProfileReceipts", "authorityStanding"],
+      "properties": {
+        "owner": { "const": "central" },
+        "developmentAgentSet": { "$ref": "#/$defs/sourceReceipt" },
+        "guardianAgentSet": { "$ref": "#/$defs/sourceReceipt" },
+        "resolvedAgentRefs": { "$ref": "#/$defs/stringSet" },
+        "agentProfileReceipts": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/sourceReceipt" } },
+        "authorityStanding": { "const": "membership-non-authoritative" }
+      },
+      "additionalProperties": false
+    },
+    "rootAct": {
+      "type": "object",
+      "required": ["actRef", "agentRef", "purpose", "scopeRefs", "standing"],
+      "properties": { "actRef": { "$ref": "#/$defs/stableRef" }, "agentRef": { "$ref": "#/$defs/stableRef" }, "purpose": { "$ref": "#/$defs/nonempty" }, "scopeRefs": { "$ref": "#/$defs/stringSet" }, "standing": { "const": "commissioned-not-executed" } },
+      "additionalProperties": false
+    }
+  }
+}
