@@ -25,7 +25,7 @@ use crate::workflow::{
     WorkflowSource,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
@@ -466,7 +466,7 @@ impl FactoryDevelopmentalState {
                 workcell_binding_refs: execution.workcell_binding_refs.clone(),
             },
             temporal: correlation.temporal.clone(),
-            model_usage: correlation.model_usage.clone(),
+            model_usage: correlation.model_usage.deduplicated(),
             material_usage: correlation.material_usage.clone(),
             handoff: correlation.handoff.clone(),
             return_state: FactoryExecutionReturnState {
@@ -555,6 +555,51 @@ impl FactoryDevelopmentalState {
                     execution_ref: correlation.execution_ref.clone(),
                     agent_ref: agency.agent_ref.clone(),
                 });
+            }
+            for owner_ref in &correlation.model_usage.observations {
+                let usage = owner_ref
+                    .model_usage
+                    .as_ref()
+                    .expect("model-usage link validation requires evidence");
+                let owner_correlation = &usage.correlation;
+                let mismatch =
+                    owner_correlation
+                        .activity_ref
+                        .as_deref()
+                        .is_some_and(|activity_ref| {
+                            !correlation.temporal.activity_refs.iter().any(|reference| {
+                                reference.owner == FactoryTelemetryOwner::Actuation
+                                    && reference.reference == activity_ref
+                            })
+                        })
+                        || owner_correlation
+                            .agent_ref
+                            .as_deref()
+                            .is_some_and(|value| value != agency.agent_ref)
+                        || owner_correlation
+                            .agency_ref
+                            .as_deref()
+                            .is_some_and(|value| value != correlation.agency_ref)
+                        || owner_correlation
+                            .agent_session_ref
+                            .as_deref()
+                            .is_some_and(|left| {
+                                execution.agent_session_ref.as_deref() != Some(left)
+                            })
+                        || owner_correlation
+                            .harness_ref
+                            .as_deref()
+                            .is_some_and(|left| execution.harness_ref.as_deref() != Some(left))
+                        || agency
+                            .actuation_ref
+                            .as_deref()
+                            .is_some_and(|value| value != usage.actuation_ref);
+                if mismatch {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation.correlation_ref.to_string(),
+                        detail: format!("modelUsage {} does not identify this Factory Execution/Agency correlation", usage.usage_ref),
+                    });
+                }
             }
             if let Some(handoff) = &correlation.handoff {
                 let source = snapshot
@@ -1203,6 +1248,13 @@ pub struct FactoryRevisionedOwnerRef {
     pub reference: String,
     pub revision: String,
     pub standing: FactoryObservationStanding,
+    /// Exact public Actuation owner evidence, present only for model-usage
+    /// observation refs. Factory does not derive this payload or parse native
+    /// provider traces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_usage: Option<FactoryActuationModelUsageObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_schema_digest: Option<String>,
 }
 
 impl FactoryRevisionedOwnerRef {
@@ -1240,6 +1292,467 @@ pub enum FactoryObservationStanding {
     Estimated,
 }
 
+pub const ACTUATION_MODEL_USAGE_CONTRACT: &str = "actuation.model-usage/v1";
+pub const ACTUATION_MODEL_USAGE_SCHEMA_SHA256: &str =
+    "42215b3f06dffe5bfba53b0f51db6400d5b8739098c4fb1275f7a006579615cb";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryActuationModelUsageObservation {
+    pub schema: String,
+    pub usage_ref: String,
+    pub actuation_ref: String,
+    pub invocation_ref: String,
+    pub correlation: FactoryModelUsageCorrelation,
+    pub provider: FactoryModelUsageIdentity,
+    pub model: FactoryModelUsageIdentity,
+    pub tokens: FactoryModelUsageTokens,
+    pub cache: FactoryModelUsageCache,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub usage_classes: Vec<FactoryModelUsageClass>,
+    pub timing: FactoryModelUsageTiming,
+    pub cost: FactoryModelUsageCost,
+    pub outcome: FactoryModelUsageOutcome,
+    pub provenance: FactoryModelUsageProvenance,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub provider_facts: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageCorrelation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agency_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_session_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_session_ref: Option<String>,
+    #[serde(default)]
+    pub external_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageIdentity {
+    pub standing: FactoryModelUsageStanding,
+    #[serde(rename = "ref", default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryModelUsageStanding {
+    ProviderReported,
+    Observed,
+    NormalizedFromNative,
+    Derived,
+    Estimated,
+    Unavailable,
+    NotReported,
+}
+
+impl FactoryModelUsageStanding {
+    fn absent(self) -> bool {
+        matches!(self, Self::Unavailable | Self::NotReported)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageTokens {
+    pub standing: FactoryModelUsageStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageCache {
+    pub standing: FactoryModelUsageStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_input: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageClass {
+    pub class: String,
+    pub quantity: u64,
+    pub unit: String,
+    pub standing: FactoryModelUsageStanding,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageTiming {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    pub latency: FactoryModelUsageMeasurement,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageMeasurement {
+    pub standing: FactoryModelUsageStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milliseconds: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageCost {
+    pub standing: FactoryModelUsageStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pricing_basis: Option<FactoryModelUsagePricingBasis>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsagePricingBasis {
+    pub source_ref: String,
+    pub revision: String,
+    pub effective_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FactoryModelUsageOutcomeState {
+    Completed,
+    Partial,
+    Failed,
+    Cancelled,
+    Interrupted,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageOutcome {
+    pub state: FactoryModelUsageOutcomeState,
+    pub standing: FactoryModelUsageStanding,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryModelUsageProvenance {
+    pub reporter_ref: String,
+    pub native_event_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_request_ref: Option<String>,
+    pub native_schema: String,
+    pub observed_at: String,
+    pub raw_evidence_refs: Vec<String>,
+}
+
+impl FactoryActuationModelUsageObservation {
+    fn validate(
+        &self,
+        source_ref: &FactoryRevisionedOwnerRef,
+        correlation_ref: &Ref,
+    ) -> Result<(), FactoryDevelopmentalReadError> {
+        let invalid = |detail: String| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+            correlation_ref: correlation_ref.to_string(),
+            detail,
+        };
+        if self.schema != ACTUATION_MODEL_USAGE_CONTRACT {
+            return Err(invalid(format!(
+                "modelUsage observation schema must equal {ACTUATION_MODEL_USAGE_CONTRACT}"
+            )));
+        }
+        for (field, value) in [
+            ("usage_ref", &self.usage_ref),
+            ("actuation_ref", &self.actuation_ref),
+            ("invocation_ref", &self.invocation_ref),
+        ] {
+            if value.trim().is_empty() {
+                return Err(invalid(format!("modelUsage.{field} cannot be empty")));
+            }
+        }
+        if source_ref.reference != self.usage_ref {
+            return Err(invalid(
+                "modelUsage owner ref must equal its Actuation usage_ref".into(),
+            ));
+        }
+        if source_ref.revision.trim().is_empty() {
+            return Err(invalid(
+                "modelUsage owner contract revision cannot be empty".into(),
+            ));
+        }
+        if source_ref.contract_schema_digest.as_deref() != Some(ACTUATION_MODEL_USAGE_SCHEMA_SHA256)
+        {
+            return Err(invalid(
+                "modelUsage owner ref must pin the consumed Actuation schema digest".into(),
+            ));
+        }
+        let timestamp = |field: &str, value: &str| {
+            chrono::DateTime::parse_from_rfc3339(value)
+                .map_err(|_| invalid(format!("modelUsage {field} must be RFC 3339")))
+        };
+        for identity in [&self.provider, &self.model] {
+            let has_identity = identity
+                .reference
+                .as_deref()
+                .is_some_and(|v| !v.trim().is_empty())
+                || identity
+                    .name
+                    .as_deref()
+                    .is_some_and(|v| !v.trim().is_empty());
+            if identity.standing.absent()
+                && (has_identity || identity.revision.is_some() || identity.variant.is_some())
+            {
+                return Err(invalid(
+                    "unavailable modelUsage identity cannot carry values".into(),
+                ));
+            }
+            if !identity.standing.absent() && !has_identity {
+                return Err(invalid(
+                    "available modelUsage identity requires ref or name".into(),
+                ));
+            }
+            for value in [
+                identity.reference.as_deref(),
+                identity.name.as_deref(),
+                identity.revision.as_deref(),
+                identity.variant.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if value.trim().is_empty() {
+                    return Err(invalid("modelUsage identity fields cannot be empty".into()));
+                }
+            }
+        }
+        for value in [
+            self.correlation.activity_ref.as_deref(),
+            self.correlation.agent_ref.as_deref(),
+            self.correlation.agency_ref.as_deref(),
+            self.correlation.agent_session_ref.as_deref(),
+            self.correlation.harness_ref.as_deref(),
+            self.correlation.body_ref.as_deref(),
+            self.correlation.native_session_ref.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(self.correlation.external_refs.iter().map(String::as_str))
+        {
+            if value.trim().is_empty() {
+                return Err(invalid(
+                    "modelUsage correlation refs cannot be empty".into(),
+                ));
+            }
+        }
+        if self.tokens.standing.absent()
+            && (self.tokens.input.is_some() || self.tokens.output.is_some())
+        {
+            return Err(invalid(
+                "unavailable modelUsage tokens cannot carry counts".into(),
+            ));
+        }
+        if self.cache.standing.absent()
+            && (self.cache.read_input.is_some()
+                || self.cache.creation_input.is_some()
+                || self.cache.output.is_some())
+        {
+            return Err(invalid(
+                "unavailable modelUsage cache cannot carry counts".into(),
+            ));
+        }
+        const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+        for value in [
+            self.tokens.input,
+            self.tokens.output,
+            self.cache.read_input,
+            self.cache.creation_input,
+            self.cache.output,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if value > MAX_SAFE_INTEGER {
+                return Err(invalid(
+                    "modelUsage counts must be JavaScript-safe integers".into(),
+                ));
+            }
+        }
+        for class in &self.usage_classes {
+            if class.class.trim().is_empty()
+                || class.unit.trim().is_empty()
+                || class.quantity > MAX_SAFE_INTEGER
+            {
+                return Err(invalid(
+                    "modelUsage usage_classes require available, safe-integer owner evidence"
+                        .into(),
+                ));
+            }
+        }
+        match (
+            self.timing.latency.standing.absent(),
+            self.timing.latency.milliseconds,
+        ) {
+            (true, Some(_)) | (false, None) => {
+                return Err(invalid(
+                    "modelUsage latency value must match its standing".into(),
+                ))
+            }
+            (_, Some(value)) if !value.is_finite() || value < 0.0 => {
+                return Err(invalid(
+                    "modelUsage latency must be finite and non-negative".into(),
+                ))
+            }
+            _ => {}
+        }
+        let started = self
+            .timing
+            .started_at
+            .as_deref()
+            .map(|value| timestamp("timing.started_at", value))
+            .transpose()?;
+        let completed = self
+            .timing
+            .completed_at
+            .as_deref()
+            .map(|value| timestamp("timing.completed_at", value))
+            .transpose()?;
+        if started
+            .zip(completed)
+            .is_some_and(|(started, completed)| completed < started)
+        {
+            return Err(invalid("modelUsage completion cannot precede start".into()));
+        }
+        if self.cost.standing.absent() {
+            if self.cost.amount.is_some()
+                || self.cost.currency.is_some()
+                || self.cost.pricing_basis.is_some()
+            {
+                return Err(invalid(
+                    "unavailable modelUsage cost cannot carry monetary values".into(),
+                ));
+            }
+        } else {
+            let amount = self
+                .cost
+                .amount
+                .ok_or_else(|| invalid("reported modelUsage cost requires amount".into()))?;
+            if !amount.is_finite()
+                || amount < 0.0
+                || self
+                    .cost
+                    .currency
+                    .as_deref()
+                    .is_none_or(|v| v.trim().is_empty())
+            {
+                return Err(invalid(
+                    "reported modelUsage cost requires non-negative finite amount and currency"
+                        .into(),
+                ));
+            }
+            if self.cost.standing == FactoryModelUsageStanding::Derived
+                && self.cost.pricing_basis.is_none()
+            {
+                return Err(invalid(
+                    "derived modelUsage cost requires exact pricing basis".into(),
+                ));
+            }
+            if let Some(basis) = &self.cost.pricing_basis {
+                if basis.source_ref.trim().is_empty() || basis.revision.trim().is_empty() {
+                    return Err(invalid(
+                        "modelUsage pricing basis requires exact source and revision".into(),
+                    ));
+                }
+                timestamp("cost.pricing_basis.effective_at", &basis.effective_at)?;
+            }
+            if self.cost.standing != FactoryModelUsageStanding::Derived
+                && self.cost.pricing_basis.is_some()
+            {
+                return Err(invalid(
+                    "pricing basis is valid only for derived modelUsage cost".into(),
+                ));
+            }
+        }
+        if self.provenance.raw_evidence_refs.is_empty() {
+            return Err(invalid(
+                "modelUsage provenance requires raw evidence refs".into(),
+            ));
+        }
+        if self
+            .provenance
+            .raw_evidence_refs
+            .iter()
+            .any(|value| value.trim().is_empty())
+            || self
+                .provenance
+                .native_request_ref
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+            || self
+                .outcome
+                .reason
+                .as_deref()
+                .is_some_and(|value| value.trim().is_empty())
+        {
+            return Err(invalid(
+                "modelUsage optional and raw provenance refs cannot be empty".into(),
+            ));
+        }
+        for value in [
+            &self.provenance.reporter_ref,
+            &self.provenance.native_event_ref,
+            &self.provenance.native_schema,
+            &self.provenance.observed_at,
+        ] {
+            if value.trim().is_empty() {
+                return Err(invalid(
+                    "modelUsage provenance cannot contain empty required refs".into(),
+                ));
+            }
+        }
+        timestamp("provenance.observed_at", &self.provenance.observed_at)?;
+        let admitted = ["service_tier", "speed", "inference_geo"];
+        for (key, value) in &self.provider_facts {
+            if !admitted.contains(&key.as_str())
+                || !(value.is_null()
+                    || value.is_string()
+                    || value.is_number()
+                    || value.is_boolean())
+            {
+                return Err(invalid(format!(
+                    "modelUsage provider fact {key} is not admitted scalar evidence"
+                )));
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactoryOwnerTelemetryLink {
@@ -1252,6 +1765,15 @@ pub struct FactoryOwnerTelemetryLink {
 }
 
 impl FactoryOwnerTelemetryLink {
+    fn deduplicated(&self) -> Self {
+        let mut result = self.clone();
+        let mut seen = BTreeSet::new();
+        result.observations.retain(|observation| {
+            seen.insert((observation.reference.clone(), observation.revision.clone()))
+        });
+        result
+    }
+
     fn validate(
         &self,
         expected_owner: FactoryTelemetryOwner,
@@ -1293,6 +1815,7 @@ impl FactoryOwnerTelemetryLink {
                 detail: format!("{field} absence requires a reason"),
             });
         }
+        let mut observations = BTreeMap::new();
         for observation in &self.observations {
             if observation.owner != expected_owner {
                 return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
@@ -1301,6 +1824,26 @@ impl FactoryOwnerTelemetryLink {
                 });
             }
             observation.validate(field, correlation_ref)?;
+            let identity = (observation.reference.clone(), observation.revision.clone());
+            if let Some(existing) = observations.insert(identity, observation) {
+                if existing != observation {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(),
+                        detail: format!(
+                            "{field} contains conflicting duplicate owner observations"
+                        ),
+                    });
+                }
+            }
+            match expected_owner {
+                FactoryTelemetryOwner::Actuation => observation.model_usage.as_ref().ok_or_else(|| FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(), detail: format!("{field} owner observation lacks public Actuation model-usage evidence")
+                })?.validate(observation, correlation_ref)?,
+                _ if observation.model_usage.is_some() => return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                    correlation_ref: correlation_ref.to_string(), detail: format!("{field} cannot attach Actuation model-usage evidence")
+                }),
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -1858,6 +2401,8 @@ mod tests {
             reference: reference.into(),
             revision: revision.into(),
             standing: FactoryObservationStanding::Observed,
+            model_usage: None,
+            contract_schema_digest: None,
         }
     }
 
@@ -1868,6 +2413,53 @@ mod tests {
             observations: vec![],
             reason: Some(reason.into()),
         }
+    }
+
+    /// Actuation issue #39 / PR #40 source-derived conformance evidence: the owner test says
+    /// these values mirror a real transcript shape, while all identifiers are
+    /// fixture-local. This is not claimed as observed Factory execution history.
+    fn actuation_model_usage_conformance_fixture() -> FactoryRevisionedOwnerRef {
+        serde_json::from_value(serde_json::json!({
+            "owner": "actuation",
+            "ref": "model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX",
+            "revision": "5fefe920790b1beec05c258c9d65328539ba4e44",
+            "standing": "normalized-from-native",
+            "contractSchemaDigest": ACTUATION_MODEL_USAGE_SCHEMA_SHA256,
+            "modelUsage": {
+                "schema": "actuation.model-usage/v1",
+                "usage_ref": "model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX",
+                "actuation_ref": "actuation:inspect-source",
+                "invocation_ref": "invocation:claude-code:req_011CdAMUXikJ2yx4sMo5Phue",
+                "correlation": {
+                    "activity_ref": "activity:inspect-source",
+                    "agent_ref": "agent:parasakti",
+                    "agency_ref": "agency:parasakti/research",
+                    "agent_session_ref": "agent-session:research",
+                    "harness_ref": "harness:codex",
+                    "native_session_ref": "claude-code:session:37091766-f305-4178-bbc3-4ff417dbcef7",
+                    "external_refs": ["factory:run:external-only"]
+                },
+                "provider": { "standing": "not-reported" },
+                "model": { "standing": "normalized-from-native", "name": "claude-fable-5", "variant": "standard" },
+                "tokens": { "standing": "normalized-from-native", "input": 2, "output": 64000 },
+                "cache": { "standing": "normalized-from-native", "read_input": 26788, "creation_input": 53010 },
+                "usage_classes": [
+                    { "class": "server_tool_use.web_search_requests", "quantity": 0, "unit": "requests", "standing": "normalized-from-native" }
+                ],
+                "timing": { "completed_at": "2026-07-18T23:16:15.618Z", "latency": { "standing": "not-reported" } },
+                "cost": { "standing": "not-reported" },
+                "outcome": { "state": "partial", "standing": "normalized-from-native", "reason": "max_tokens" },
+                "provenance": {
+                    "reporter_ref": "harness:claude-code",
+                    "native_event_ref": "claude-code:message:msg_011CdAMUYyuCjjHDEJwMTTeX",
+                    "native_request_ref": "claude-code:request:req_011CdAMUXikJ2yx4sMo5Phue",
+                    "native_schema": "claude-code.transcript/assistant-message",
+                    "observed_at": "2026-07-18T23:16:15.618Z",
+                    "raw_evidence_refs": ["trace:claude-code:fixture-line-1"]
+                },
+                "provider_facts": { "service_tier": "standard", "speed": "standard", "inference_geo": "not_available" }
+            }
+        })).unwrap()
     }
 
     fn correlated_state() -> FactoryDevelopmentalState {
@@ -2374,6 +2966,248 @@ mod tests {
         assert_eq!(
             reading.temporal.flow.as_ref().unwrap().reference,
             "flow:factory-agentic-w4"
+        );
+    }
+
+    #[test]
+    fn public_cli_preserves_actuation_conformance_usage_and_deduplicates_replay() {
+        let mut state = correlated_state();
+        let observation = actuation_model_usage_conformance_fixture();
+        state.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation.clone(), observation],
+            reason: None,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental.json");
+        FactoryDevelopmentalFileProvider::create(&path, state).unwrap();
+        let output = execute_cli(
+            &[
+                "development".into(),
+                "execution-telemetry".into(),
+                path.to_string_lossy().into_owned(),
+                "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA2".into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let reading: FactoryExecutionTelemetryReading = serde_json::from_str(&output).unwrap();
+        assert_eq!(reading.model_usage.observations.len(), 1);
+        let source = &reading.model_usage.observations[0];
+        assert_eq!(source.revision, "5fefe920790b1beec05c258c9d65328539ba4e44");
+        assert_eq!(
+            source.contract_schema_digest.as_deref(),
+            Some(ACTUATION_MODEL_USAGE_SCHEMA_SHA256)
+        );
+        let usage = source.model_usage.as_ref().unwrap();
+        assert_eq!(usage.model.name.as_deref(), Some("claude-fable-5"));
+        assert_eq!(
+            (usage.tokens.input, usage.tokens.output),
+            (Some(2), Some(64000))
+        );
+        assert_eq!(
+            (usage.cache.read_input, usage.cache.creation_input),
+            (Some(26788), Some(53010))
+        );
+        assert_eq!(
+            usage.timing.latency.standing,
+            FactoryModelUsageStanding::NotReported
+        );
+        assert_eq!(usage.cost.standing, FactoryModelUsageStanding::NotReported);
+        assert!(
+            usage.cost.amount.is_none(),
+            "Factory must not invent a price"
+        );
+        assert_eq!(usage.outcome.state, FactoryModelUsageOutcomeState::Partial);
+        assert_eq!(usage.outcome.reason.as_deref(), Some("max_tokens"));
+        assert_eq!(
+            usage.provenance.raw_evidence_refs,
+            vec!["trace:claude-code:fixture-line-1"]
+        );
+    }
+
+    #[test]
+    fn actuation_usage_refuses_conflicts_and_false_availability() {
+        let mut conflict = correlated_state();
+        let observation = actuation_model_usage_conformance_fixture();
+        let mut conflicting = observation.clone();
+        conflicting.model_usage.as_mut().unwrap().tokens.output = Some(1);
+        conflict.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation.clone(), conflicting],
+            reason: None,
+        };
+        assert!(
+            matches!(conflict.validate(), Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. }) if detail.contains("conflicting duplicate"))
+        );
+
+        let mut invented = correlated_state();
+        let mut invalid = observation;
+        let usage = invalid.model_usage.as_mut().unwrap();
+        usage.cost.amount = Some(0.0);
+        invented.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![invalid],
+            reason: None,
+        };
+        assert!(
+            matches!(invented.validate(), Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. }) if detail.contains("cost cannot carry"))
+        );
+    }
+
+    #[test]
+    fn actuation_usage_cannot_attach_an_unrelated_activity() {
+        let mut state = correlated_state();
+        let mut observation = actuation_model_usage_conformance_fixture();
+        observation
+            .model_usage
+            .as_mut()
+            .unwrap()
+            .correlation
+            .activity_ref = Some("activity:other-work".into());
+        state.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation],
+            reason: None,
+        };
+        assert!(matches!(
+            state.validate(),
+            Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. })
+                if detail.contains("does not identify this Factory Execution/Agency correlation")
+        ));
+    }
+
+    #[test]
+    fn cancelled_usage_retains_owner_reason_and_raw_provenance() {
+        let mut state = correlated_state();
+        let mut observation = actuation_model_usage_conformance_fixture();
+        let usage = observation.model_usage.as_mut().unwrap();
+        usage.outcome.state = FactoryModelUsageOutcomeState::Cancelled;
+        usage.outcome.reason = Some("operator_cancelled".into());
+        state.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation],
+            reason: None,
+        };
+        let reading = state
+            .execution_telemetry_reading(&"telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA2".parse().unwrap())
+            .unwrap();
+        let usage = reading.model_usage.observations[0]
+            .model_usage
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            usage.outcome.state,
+            FactoryModelUsageOutcomeState::Cancelled
+        );
+        assert_eq!(usage.outcome.reason.as_deref(), Some("operator_cancelled"));
+        assert_eq!(
+            usage.provenance.native_request_ref.as_deref(),
+            Some("claude-code:request:req_011CdAMUXikJ2yx4sMo5Phue")
+        );
+    }
+
+    #[test]
+    fn supplied_provider_latency_and_cost_cross_without_factory_derivation() {
+        let mut state = correlated_state();
+        let mut observation = actuation_model_usage_conformance_fixture();
+        let usage = observation.model_usage.as_mut().unwrap();
+        usage.provider = FactoryModelUsageIdentity {
+            standing: FactoryModelUsageStanding::ProviderReported,
+            reference: Some("provider:anthropic".into()),
+            name: Some("Anthropic".into()),
+            revision: None,
+            variant: None,
+        };
+        usage.timing.latency = FactoryModelUsageMeasurement {
+            standing: FactoryModelUsageStanding::ProviderReported,
+            milliseconds: Some(1250.5),
+        };
+        usage.cost = FactoryModelUsageCost {
+            standing: FactoryModelUsageStanding::ProviderReported,
+            amount: Some(0.42),
+            currency: Some("USD".into()),
+            pricing_basis: None,
+        };
+        state.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations: vec![observation],
+            reason: None,
+        };
+        let reading = state
+            .execution_telemetry_reading(&"telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA2".parse().unwrap())
+            .unwrap();
+        let usage = reading.model_usage.observations[0]
+            .model_usage
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            usage.provider.reference.as_deref(),
+            Some("provider:anthropic")
+        );
+        assert_eq!(usage.timing.latency.milliseconds, Some(1250.5));
+        assert_eq!(usage.cost.amount, Some(0.42));
+        assert_eq!(usage.cost.currency.as_deref(), Some("USD"));
+        assert!(usage.cost.pricing_basis.is_none());
+    }
+
+    #[test]
+    fn actuation_owner_semantic_edges_fail_closed() {
+        let assert_invalid = |mut observation: FactoryRevisionedOwnerRef,
+                              mutate: fn(&mut FactoryActuationModelUsageObservation),
+                              expected: &str| {
+            mutate(observation.model_usage.as_mut().unwrap());
+            let mut state = correlated_state();
+            state.execution_correlations[0].model_usage = FactoryOwnerTelemetryLink {
+                owner: FactoryTelemetryOwner::Actuation,
+                availability: FactoryTelemetryAvailability::Available,
+                observations: vec![observation],
+                reason: None,
+            };
+            assert!(
+                matches!(state.validate(), Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation { detail, .. }) if detail.contains(expected)),
+                "expected {expected}"
+            );
+        };
+        assert_invalid(
+            actuation_model_usage_conformance_fixture(),
+            |usage| {
+                usage.tokens.output = Some(9_007_199_254_740_992);
+            },
+            "safe integers",
+        );
+        assert_invalid(
+            actuation_model_usage_conformance_fixture(),
+            |usage| {
+                usage.timing.started_at = Some("2026-07-19T00:00:00Z".into());
+            },
+            "completion cannot precede",
+        );
+        assert_invalid(
+            actuation_model_usage_conformance_fixture(),
+            |usage| {
+                usage.cost = FactoryModelUsageCost {
+                    standing: FactoryModelUsageStanding::Derived,
+                    amount: Some(1.25),
+                    currency: Some("USD".into()),
+                    pricing_basis: None,
+                };
+            },
+            "pricing basis",
+        );
+        assert_invalid(
+            actuation_model_usage_conformance_fixture(),
+            |usage| {
+                usage.provenance.observed_at = "not-a-timestamp".into();
+            },
+            "RFC 3339",
         );
     }
 
