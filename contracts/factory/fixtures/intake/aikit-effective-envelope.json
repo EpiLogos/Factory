@@ -25,7 +25,7 @@
       "provenance": "composed"
     },
     "summary": "sets/factory-intake — 4 members, 1 projected, 3 withheld (not installed, retired, unreviewed)",
-    "surface": "aikit set show factory-intake --json (data shape)",
+    "surface": "aikit_core resolve + skillset::project and GenerationId::from_hash over the serialized resolved view",
     "withheld": [
       {
         "capability": "skill/factory/legacy-orientation",
