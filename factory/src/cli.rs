@@ -15,7 +15,12 @@ use crate::developmental_read::{
     FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT, FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
 };
 use crate::journey::JourneyRef;
-use serde::Serialize;
+use crate::project_development::{
+    DevelopmentObservation, DevelopmentObservationKind, OwnerReturnProposal,
+    ProjectDevelopmentLedger, PROJECT_DEVELOPMENT_VERSION,
+};
+use crate::project_development_store::{FileProjectDevelopmentStore, ProjectDevelopmentStore};
+use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{self, Display};
 use std::fs;
@@ -85,6 +90,7 @@ fn help() -> String {
         "Software Factory {}\n\n\
 Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
+Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
     )
@@ -105,6 +111,8 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.workflow-unit",
             "development.execution-telemetry",
             "development.action",
+            "development.observe",
+            "development.observations",
             "action.list",
             "action.invoke",
             "verify",
@@ -179,6 +187,29 @@ fn development_command(
     let operation = args
         .first()
         .ok_or_else(|| CliError("missing development operation".into()))?;
+
+    // The run-scoped development ledger is a different provider from the
+    // developmental read state: it retains the observations a Run returns to
+    // its native owners, and it is addressed by a ledger root rather than by a
+    // developmental state document. Route those operations before the read
+    // provider is opened, so recording an observation never demands a state
+    // document the recorder does not own.
+    match operation.as_str() {
+        "observe" => {
+            let ledger_root = args
+                .get(1)
+                .ok_or_else(|| CliError("missing development ledger root".into()))?;
+            return observe_operation(ledger_root, &args[2..], json, stdin_override);
+        }
+        "observations" => {
+            let ledger_root = args
+                .get(1)
+                .ok_or_else(|| CliError("missing development ledger root".into()))?;
+            return observations_operation(ledger_root, &args[2..], json);
+        }
+        _ => {}
+    }
+
     let state_path = args
         .get(1)
         .ok_or_else(|| CliError("missing developmental state path".into()))?;
@@ -369,6 +400,194 @@ fn development_command(
         }
         other => Err(CliError(format!("unknown development operation `{other}`"))),
     }
+}
+
+/// The request body `factory development observe` accepts.
+///
+/// `run_ref` is not part of the request: the Run the observation belongs to is
+/// named on the command line, so a request body can never smuggle an
+/// observation into a different Run's ledger. A body that does carry `run_ref`
+/// must agree with it — a disagreement is refused rather than silently
+/// preferred one way or the other.
+#[derive(Debug, Deserialize)]
+struct ObservationRequest {
+    #[serde(default)]
+    run_ref: Option<String>,
+    observation_ref: String,
+    kind: DevelopmentObservationKind,
+    statement: String,
+    #[serde(default)]
+    subject_refs: Vec<String>,
+    #[serde(default)]
+    evidence_refs: Vec<String>,
+    #[serde(default)]
+    owner_return: Option<OwnerReturnProposal>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FactoryObservationReceipt<'a> {
+    contract: &'a str,
+    run_ref: String,
+    observation_ref: &'a str,
+    observation_count: usize,
+    owner_return_required: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FactoryObservationReading<'a> {
+    contract: &'a str,
+    run_ref: String,
+    observation_count: usize,
+    observations: &'a [DevelopmentObservation],
+}
+
+/// Record one `DevelopmentObservation` into the Run's development ledger.
+///
+/// Additive by construction: the ledger keeps every observation already
+/// recorded for the Run and refuses a duplicate `observation_ref`, so several
+/// deferred pieces of work can stand open at once without any of them
+/// overwriting another. A ledger that does not exist yet is created for the
+/// named Run — the store is the Run's own retention, not an identity mint:
+/// the RunRef is supplied by the caller and only ever validated here.
+fn observe_operation(
+    ledger_root: &str,
+    args: &[String],
+    json: bool,
+    stdin_override: Option<&str>,
+) -> Result<String, CliError> {
+    let run_ref = args
+        .first()
+        .ok_or_else(|| CliError("missing run-ref".into()))?
+        .parse::<RunRef>()
+        .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+    let request_path = args.get(1).map(String::as_str).unwrap_or("-");
+    let input = read_input(request_path, stdin_override)?;
+    let request: ObservationRequest = serde_json::from_str(&input)?;
+    if let Some(declared) = &request.run_ref {
+        let declared = declared
+            .parse::<RunRef>()
+            .map_err(|error| CliError(format!("invalid run_ref in request: {error}")))?;
+        if declared != run_ref {
+            return Err(CliError(format!(
+                "request run_ref {declared} does not match the addressed Run {run_ref}"
+            )));
+        }
+    }
+
+    let store = FileProjectDevelopmentStore::new(ledger_root);
+    let mut ledger = store
+        .load(&run_ref)
+        .map_err(|error| CliError(error.to_string()))?
+        .unwrap_or_else(|| ProjectDevelopmentLedger::new(run_ref.clone()));
+
+    let observation = DevelopmentObservation {
+        run_ref: run_ref.clone(),
+        observation_ref: request.observation_ref,
+        kind: request.kind,
+        statement: request.statement,
+        subject_refs: request.subject_refs,
+        evidence_refs: request.evidence_refs,
+        owner_return: request.owner_return,
+    };
+    ledger
+        .add_observation(observation)
+        .map_err(|error| CliError(error.to_string()))?;
+    store
+        .save(&ledger)
+        .map_err(|error| CliError(error.to_string()))?;
+
+    let recorded = ledger
+        .observations
+        .last()
+        .expect("the observation just recorded is in the ledger");
+    let receipt = FactoryObservationReceipt {
+        contract: PROJECT_DEVELOPMENT_VERSION,
+        run_ref: run_ref.to_string(),
+        observation_ref: &recorded.observation_ref,
+        observation_count: ledger.observations.len(),
+        owner_return_required: recorded
+            .owner_return
+            .as_ref()
+            .is_some_and(|proposal| proposal.recognition_required),
+    };
+    if json {
+        return serde_json::to_string_pretty(&receipt).map_err(CliError::from);
+    }
+    Ok(format!(
+        "{}\nRun: {}\nObservation: {} ({:?})\nOpen observations: {}\nOwner return required: {}",
+        receipt.contract,
+        receipt.run_ref,
+        receipt.observation_ref,
+        recorded.kind,
+        receipt.observation_count,
+        receipt.owner_return_required
+    ))
+}
+
+/// Read a Run's recorded observations back out of its development ledger.
+///
+/// A Run with no ledger reads as zero observations rather than as an error:
+/// "nothing was deferred here" is a real answer, and it is the answer a
+/// verification wants when it asks whether a close-out registered anything.
+fn observations_operation(
+    ledger_root: &str,
+    args: &[String],
+    json: bool,
+) -> Result<String, CliError> {
+    let run_ref = args
+        .first()
+        .ok_or_else(|| CliError("missing run-ref".into()))?
+        .parse::<RunRef>()
+        .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+    let store = FileProjectDevelopmentStore::new(ledger_root);
+    let ledger = store
+        .load(&run_ref)
+        .map_err(|error| CliError(error.to_string()))?;
+    let observations = ledger
+        .as_ref()
+        .map(|ledger| ledger.observations.as_slice())
+        .unwrap_or(&[]);
+    let reading = FactoryObservationReading {
+        contract: PROJECT_DEVELOPMENT_VERSION,
+        run_ref: run_ref.to_string(),
+        observation_count: observations.len(),
+        observations,
+    };
+    if json {
+        return serde_json::to_string_pretty(&reading).map_err(CliError::from);
+    }
+    if observations.is_empty() {
+        return Ok(format!(
+            "{}\nRun: {}\nNo development observations recorded.",
+            reading.contract, reading.run_ref
+        ));
+    }
+    let lines = observations
+        .iter()
+        .map(|observation| {
+            let owner = observation
+                .owner_return
+                .as_ref()
+                .map(|proposal| {
+                    format!(
+                        " -> {} ({}, recognition required: {})",
+                        proposal.owner_ref, proposal.proposal_ref, proposal.recognition_required
+                    )
+                })
+                .unwrap_or_default();
+            format!(
+                "{}\t{:?}\t{}{}",
+                observation.observation_ref, observation.kind, observation.statement, owner
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!(
+        "{}\nRun: {}\nObservations: {}\n{}",
+        reading.contract, reading.run_ref, reading.observation_count, lines
+    ))
 }
 
 fn action_command(
