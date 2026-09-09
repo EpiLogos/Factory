@@ -12,6 +12,8 @@ pub mod commission;
 pub mod conformance;
 pub mod core;
 pub mod developmental_read;
+pub mod development_field;
+pub mod development_field_cli;
 pub mod execution_intelligence;
 pub mod git_development;
 // JourneyRef implements the standard AsRef trait below. Keep the legacy inherent
