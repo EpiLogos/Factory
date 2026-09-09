@@ -4,7 +4,7 @@
     "owner": "factory",
     "factoryStateRevision": 7,
     "correlationRef": "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3",
-    "source": "Factory execution correlation over owner-native refs"
+    "source": "Factory conformance fixture over source-derived Actuation issue #39 / PR #40 owner evidence; not observed execution history"
   },
   "telemetryRef": "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4",
   "projectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAE",
@@ -69,9 +69,46 @@
   },
   "modelUsage": {
     "owner": "actuation",
-    "availability": "unavailable",
-    "observations": [],
-    "reason": "No stable owner-native model-usage observation at Actuation b6ed67e"
+    "availability": "available",
+    "observations": [{
+      "owner": "actuation",
+      "ref": "model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX",
+      "revision": "5fefe920790b1beec05c258c9d65328539ba4e44",
+      "standing": "normalized-from-native",
+      "contractSchemaDigest": "42215b3f06dffe5bfba53b0f51db6400d5b8739098c4fb1275f7a006579615cb",
+      "modelUsage": {
+        "schema": "actuation.model-usage/v1",
+        "usage_ref": "model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX",
+        "actuation_ref": "actuation:implement-compiler",
+        "invocation_ref": "invocation:claude-code:req_011CdAMUXikJ2yx4sMo5Phue",
+        "correlation": {
+          "activity_ref": "activity:implement-compiler",
+          "agent_ref": "agent:parasakti",
+          "agency_ref": "agency:parasakti/implementation",
+          "agent_session_ref": "agent-session:implementation",
+          "harness_ref": "harness:pi",
+          "native_session_ref": "claude-code:session:37091766-f305-4178-bbc3-4ff417dbcef7",
+          "external_refs": ["factory:run:external-only"]
+        },
+        "provider": { "standing": "not-reported" },
+        "model": { "standing": "normalized-from-native", "name": "claude-fable-5", "variant": "standard" },
+        "tokens": { "standing": "normalized-from-native", "input": 2, "output": 64000 },
+        "cache": { "standing": "normalized-from-native", "read_input": 26788, "creation_input": 53010 },
+        "usage_classes": [{ "class": "server_tool_use.web_search_requests", "quantity": 0, "unit": "requests", "standing": "normalized-from-native" }],
+        "timing": { "completed_at": "2026-07-18T23:16:15.618Z", "latency": { "standing": "not-reported" } },
+        "cost": { "standing": "not-reported" },
+        "outcome": { "state": "partial", "standing": "normalized-from-native", "reason": "max_tokens" },
+        "provenance": {
+          "reporter_ref": "harness:claude-code",
+          "native_event_ref": "claude-code:message:msg_011CdAMUYyuCjjHDEJwMTTeX",
+          "native_request_ref": "claude-code:request:req_011CdAMUXikJ2yx4sMo5Phue",
+          "native_schema": "claude-code.transcript/assistant-message",
+          "observed_at": "2026-07-18T23:16:15.618Z",
+          "raw_evidence_refs": ["trace:claude-code:fixture-line-1"]
+        },
+        "provider_facts": { "service_tier": "standard", "speed": "standard", "inference_geo": "not_available" }
+      }
+    }]
   },
   "materialUsage": {
     "owner": "workcell",

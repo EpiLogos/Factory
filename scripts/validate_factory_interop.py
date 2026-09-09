@@ -70,12 +70,25 @@ errors = sorted(
     key=lambda error: list(error.path),
 )
 assert not errors, 'execution telemetry: ' + '; '.join(error.message for error in errors)
-assert telemetry_fixture['modelUsage'] == {
-    'owner': 'actuation',
-    'availability': 'unavailable',
-    'observations': [],
-    'reason': 'No stable owner-native model-usage observation at Actuation b6ed67e',
-}
+model_usage = telemetry_fixture['modelUsage']
+# Actuation issue #39 / PR #40 source-derived conformance evidence. Its owner test states that
+# the shape/fields came from a real transcript while identifiers are fixture-local;
+# this fixture does not claim the values are observed Factory execution history.
+assert model_usage['owner'] == 'actuation'
+assert model_usage['availability'] == 'available'
+assert len(model_usage['observations']) == 1
+owner_ref = model_usage['observations'][0]
+assert owner_ref['revision'] == '5fefe920790b1beec05c258c9d65328539ba4e44'
+assert owner_ref['contractSchemaDigest'] == '42215b3f06dffe5bfba53b0f51db6400d5b8739098c4fb1275f7a006579615cb'
+usage = owner_ref['modelUsage']
+assert usage['schema'] == 'actuation.model-usage/v1'
+assert usage['model'] == {'standing': 'normalized-from-native', 'name': 'claude-fable-5', 'variant': 'standard'}
+assert usage['tokens'] == {'standing': 'normalized-from-native', 'input': 2, 'output': 64000}
+assert usage['cache'] == {'standing': 'normalized-from-native', 'read_input': 26788, 'creation_input': 53010}
+assert usage['timing']['latency'] == {'standing': 'not-reported'}
+assert usage['cost'] == {'standing': 'not-reported'}
+assert usage['outcome'] == {'state': 'partial', 'standing': 'normalized-from-native', 'reason': 'max_tokens'}
+assert usage['provenance']['raw_evidence_refs'] == ['trace:claude-code:fixture-line-1']
 assert telemetry_fixture['materialUsage'] == {
     'owner': 'workcell',
     'availability': 'unavailable',
