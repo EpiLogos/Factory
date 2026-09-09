@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.routine-continuation.schema/v1",
+  "title": "Factory Routine continuation public outputs",
+  "oneOf": [
+    { "$ref": "#/$defs/admission" },
+    { "$ref": "#/$defs/reading" },
+    { "$ref": "#/$defs/conformanceManifest" }
+  ],
+  "$defs": {
+    "nonempty": { "type": "string", "minLength": 1 },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runRef": { "type": "string", "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "journeyRef": { "type": "string", "pattern": "^journey:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "workflowUnitRef": { "type": "string", "pattern": "^workflow-unit:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "telemetryRef": { "type": "string", "pattern": "^telemetry:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "continuationRef": { "type": "string", "pattern": "^routine-continuation:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+    "stringSet": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/nonempty" },
+      "uniqueItems": true
+    },
+    "continuation": {
+      "type": "object",
+      "required": ["contract", "continuationRef", "revision", "journeyRef", "journeyRevisionBefore", "runRef", "runDestination", "writeOwner", "admittedAt", "ownerContractRevision", "ownerSchemaSha256", "invocationEvidence", "activityRefs", "returnRefs"],
+      "properties": {
+        "contract": { "const": "factory.routine-continuation/v1" },
+        "continuationRef": { "$ref": "#/$defs/continuationRef" },
+        "revision": { "type": "integer", "minimum": 1 },
+        "journeyRef": { "$ref": "#/$defs/journeyRef" },
+        "journeyRevisionBefore": { "type": "integer", "minimum": 1 },
+        "runRef": { "$ref": "#/$defs/runRef" },
+        "runDestination": { "$ref": "#/$defs/nonempty" },
+        "writeOwner": { "$ref": "#/$defs/nonempty" },
+        "admittedAt": { "type": "string", "format": "date-time" },
+        "ownerContractRevision": { "const": "7864b3c700b26e90e7b814295c9a2675aae8dbf7" },
+        "ownerSchemaSha256": { "const": "69691cb240eb10a124a7afa9781445e506f4cb4e791b1f96b19d30becfdbad51" },
+        "invocationEvidence": { "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/upstream/aikit.routine-invocation-evidence.v1.schema.json" },
+        "activityRefs": { "$ref": "#/$defs/stringSet" },
+        "returnRefs": { "$ref": "#/$defs/stringSet" }
+      },
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["subjectRef", "relation", "objectRef", "owner"],
+      "properties": {
+        "subjectRef": { "$ref": "#/$defs/nonempty" },
+        "relation": { "enum": ["continued-by", "admitted-from", "invokes", "proven-by", "triggered-by", "authority-attested-by", "delivered-by", "observed-as-activity", "returned-as"] },
+        "objectRef": { "$ref": "#/$defs/nonempty" },
+        "owner": { "enum": ["factory", "aikit", "provider", "actuation"] }
+      },
+      "additionalProperties": false
+    },
+    "admission": {
+      "type": "object",
+      "required": ["contract", "status", "continuation"],
+      "properties": {
+        "contract": { "const": "factory.routine-continuation-admission/v1" },
+        "status": { "enum": ["applied", "already-applied", "delivery-recorded"] },
+        "continuation": { "$ref": "#/$defs/continuation" }
+      },
+      "additionalProperties": false
+    },
+    "reading": {
+      "type": "object",
+      "required": ["contract", "continuation", "traversal"],
+      "properties": {
+        "contract": { "const": "factory.routine-continuation-reading/v1" },
+        "continuation": { "$ref": "#/$defs/continuation" },
+        "traversal": { "type": "array", "items": { "$ref": "#/$defs/edge" } }
+      },
+      "additionalProperties": false
+    },
+    "conformanceManifest": {
+      "type": "object",
+      "required": ["contract", "providerState", "projectRef", "journeyRef", "runRef", "routineRunRef", "workflowUnitRef", "telemetryRef", "invocationRef", "aikitOwnerRevision", "aikitSchemaSha256"],
+      "properties": {
+        "contract": { "const": "factory.developmental-conformance-manifest/v1" },
+        "providerState": { "$ref": "#/$defs/nonempty" },
+        "projectRef": { "type": "string", "pattern": "^project:[0-7][0-9A-HJKMNP-TV-Z]{25}$" },
+        "journeyRef": { "$ref": "#/$defs/journeyRef" },
+        "runRef": { "$ref": "#/$defs/runRef" },
+        "routineRunRef": { "$ref": "#/$defs/runRef" },
+        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
+        "telemetryRef": { "$ref": "#/$defs/telemetryRef" },
+        "invocationRef": { "$ref": "#/$defs/nonempty" },
+        "aikitOwnerRevision": { "const": "7864b3c700b26e90e7b814295c9a2675aae8dbf7" },
+        "aikitSchemaSha256": { "const": "69691cb240eb10a124a7afa9781445e506f4cb4e791b1f96b19d30becfdbad51" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

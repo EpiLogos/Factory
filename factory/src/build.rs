@@ -178,6 +178,17 @@ impl FactoryBuildState {
         self.runs.get(run_ref)
     }
 
+    /// Add one newly commissioned bounded Run to this Factory-owned Project.
+    /// Callers must already have established the developmental reason for the
+    /// Run; this method owns only the canonical Run registry mutation.
+    pub fn insert_run(&mut self, run: Run) -> Result<(), FactoryBuildError> {
+        if run.project_ref() != self.project.reference() {
+            return Err(FactoryBuildError::ProjectRunMismatch);
+        }
+        self.runs.insert(run)?;
+        self.bump_revision()
+    }
+
     pub fn run_mutation_authority(&self, run_ref: &RunRef) -> Option<RunMutationAuthority> {
         self.runs.get(run_ref).map(Run::mutation_authority)
     }

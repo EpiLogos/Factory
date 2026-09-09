@@ -36,3 +36,7 @@ jobs:
         run: cargo test --manifest-path factory/Cargo.toml --all-targets
       - name: Agent capability intake conformance lane
         run: python3 scripts/validate_agent_capability_intake.py
+      - name: Routine continuation contract lane
+        run: |
+          python3 -m pip install --disable-pip-version-check 'jsonschema>=4,<5'
+          python3 scripts/validate_routine_continuation.py
