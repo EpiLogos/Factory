@@ -208,7 +208,7 @@ impl FileAttemptStore {
         transact_developmental_state(&self.path, |native| {
             (|| -> Result<FactoryAttemptActionReceipt, FactoryAttemptError> {
                 let mut view = view_for(native, &request.run_ref)?;
-                if let Some(applied) = view.action_receipts.get(&request.projection_ref) {
+                if let Some(applied) = view.action_receipts.get(&request_digest) {
                     if applied.request_digest != request_digest {
                         return Err(invalid("projection identity was already used for another Action request"));
                     }
@@ -233,7 +233,7 @@ impl FileAttemptStore {
                     operation, attempt_refs,
                     standing: "native Factory developmental transaction; source/Run/attempt committed together; owner observations are not whole-feature acceptance".into(),
                 };
-                view.action_receipts.insert(request.projection_ref.clone(), PersistedAttemptAction {
+                view.action_receipts.insert(request_digest.clone(), PersistedAttemptAction {
                     request_digest: request_digest.clone(), request: request.clone(), receipt: receipt.clone(),
                 });
                 validate_state(&view)?;

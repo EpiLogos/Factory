@@ -1309,8 +1309,8 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
         }
     }
     for (reference, applied) in &state.action_receipts {
-        if reference != &applied.request.projection_ref
-            || reference != &applied.receipt.projection_ref
+        if reference != &applied.request_digest
+            || applied.request.projection_ref != applied.receipt.projection_ref
             || applied.receipt.run_ref != *state.run.reference()
             || applied.request.run_ref != *state.run.reference()
             || applied.receipt.previous_revision.checked_add(1)
