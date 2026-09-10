@@ -122,7 +122,7 @@ fn action_request(
 /// Persist evidence with fresh CAS after transport, without ever repeating the
 /// external effect on a conflict. The finite retries concern local retention.
 fn retain(
-    store: &FileAttemptStore,
+    store: &mut FileAttemptStore,
     request: &FactoryAttemptOwnerRequest,
     suffix: &str,
     operation: FactoryAttemptOperation,
@@ -222,7 +222,7 @@ pub fn execute_attempt_owner_action(
     {
         return Err(error("invalid attempt owner Action identity or contract"));
     }
-    let store = FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(error)?;
+    let mut store = FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(error)?;
     let reading = store.reading().map_err(error)?;
     let attempt = record(&reading, &request.attempt_ref)?;
     let encoded = serde_json::to_vec(&request).map_err(error)?;
@@ -405,7 +405,7 @@ pub fn execute_attempt_owner_action(
                 json!({"failure": failure.to_string(), "instruction": "observe exact owner delivery; do not resend"}),
             );
             retain(
-                &store,
+                &mut store,
                 &request,
                 "uncertain",
                 FactoryAttemptOperation::RecordObservation {
@@ -418,7 +418,7 @@ pub fn execute_attempt_owner_action(
     };
     // Retain the actual owner receipt before any consequential interpretation.
     retain(
-        &store,
+        &mut store,
         &request,
         "owner-evidence",
         FactoryAttemptOperation::RecordObservation {
@@ -443,7 +443,7 @@ pub fn execute_attempt_owner_action(
             })
     {
         retain(
-            &store,
+            &mut store,
             &request,
             "bind",
             FactoryAttemptOperation::BindDispatch {
@@ -471,7 +471,7 @@ pub fn execute_attempt_owner_action(
         json!({"ownerReceiptRef": owner.receipt_ref, "meaning": "transport observation only; task Return is separate"}),
     );
     retain(
-        &store,
+        &mut store,
         &request,
         "transport-result",
         FactoryAttemptOperation::RecordObservation {
@@ -508,7 +508,7 @@ pub fn execute_attempt_owner_action(
             resolution.payload["detail"] =
                 json!({"ownerReceiptRef": owner.receipt_ref, "reconciledBy": request.request_ref});
             retain(
-                &store,
+                &mut store,
                 &request,
                 "reconcile",
                 FactoryAttemptOperation::RecordObservation {
