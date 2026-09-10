@@ -24,6 +24,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -69,8 +70,9 @@ jobs:
         if: failure()
         run: |
           mkdir -p /tmp/factory-prepare-diagnostics
-          git diff -- factory docs .github/workflows/factory-native-evidence.yml > /tmp/factory-prepare-diagnostics/candidate.patch
-          tar -czf /tmp/factory-prepare-diagnostics/source.tar.gz factory/src factory/tests
+          git diff ${{ github.sha }} -- factory docs .github/workflows > /tmp/factory-prepare-diagnostics/candidate.patch
+          git rev-parse HEAD > /tmp/factory-prepare-diagnostics/commit-sha.txt
+          tar -czf /tmp/factory-prepare-diagnostics/source.tar.gz factory/src factory/tests docs/CAW-NATIVE-ATTEMPT-OPERATIONS.md .github/workflows/factory-native-evidence.yml
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
