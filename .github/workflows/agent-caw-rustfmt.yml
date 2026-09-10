@@ -20,9 +20,24 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - name: Apply bounded compile fixes
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('factory/src/attempt_runtime.rs')
+          text = path.read_text()
+          text = text.replace(
+              'ExecutableOrchestration, ExecutionLaunch, LegRecord, LegStatus, OrchestrationError,',
+              'ExecutableOrchestration, ExecutionLaunch, LegRecord, OrchestrationError,'
+          )
+          text = text.replace(
+              '.create(true)\n        .read(true)\n        .write(true)\n        .open(lock_path)?;',
+              '.create(true)\n        .truncate(false)\n        .read(true)\n        .write(true)\n        .open(lock_path)?;'
+          )
+          path.write_text(text)
       - name: Format Factory Rust
         run: cargo fmt --manifest-path factory/Cargo.toml
-      - name: Commit formatting
+      - name: Commit fixes
         shell: bash
         run: |
           if git diff --quiet; then
@@ -31,5 +46,5 @@ jobs:
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add factory
-          git commit -m "style(factory): rustfmt CAW native attempt implementation"
+          git commit -m "fix(factory): satisfy native attempt compile gate"
           git push origin HEAD:agent/caw-221-native-attempts
