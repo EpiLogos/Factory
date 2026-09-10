@@ -21,8 +21,9 @@ jobs:
         with:
           components: rustfmt
       - name: Apply bounded attempt invariant fixes
-        shell: python
+        shell: bash
         run: |
+          python - <<'PY'
           from pathlib import Path
           path = Path('factory/src/attempt_runtime.rs')
           text = path.read_text()
@@ -57,60 +58,65 @@ jobs:
           )
 
           old = '''fn latest_attempt_for_unit<'a>(
-    state: &'a StoredAttemptState,
-    unit: &WorkflowUnitRef,
-) -> Result<&'a FactoryAttemptRecord, FactoryAttemptError> {
-    state
-        .attempts
-        .values()
-        .rev()
-        .find(|record| &record.workflow_unit_ref == unit)
-        .ok_or_else(|| FactoryAttemptError::InvalidOperation("no prior attempt for retry".into()))
-}
-'''
+              state: &'a StoredAttemptState,
+              unit: &WorkflowUnitRef,
+          ) -> Result<&'a FactoryAttemptRecord, FactoryAttemptError> {
+              state
+                  .attempts
+                  .values()
+                  .rev()
+                  .find(|record| &record.workflow_unit_ref == unit)
+                  .ok_or_else(|| FactoryAttemptError::InvalidOperation("no prior attempt for retry".into()))
+          }
+          '''
           new = '''fn current_attempt_for_unit<'a>(
-    state: &'a StoredAttemptState,
-    engine: &ExecutableOrchestration,
-    unit: &WorkflowUnitRef,
-) -> Result<&'a FactoryAttemptRecord, FactoryAttemptError> {
-    let execution_ref = &engine
-        .leg(unit)
-        .ok_or_else(|| FactoryAttemptError::InvalidOperation("no current leg for retry".into()))?
-        .execution_ref;
-    state
-        .attempts
-        .values()
-        .find(|record| {
-            &record.workflow_unit_ref == unit
-                && (record.execution_ref.as_deref() == Some(execution_ref.as_str())
-                    || record.reserved_execution_ref == *execution_ref)
-        })
-        .ok_or_else(|| {
-            FactoryAttemptError::CorruptState(
-                "current coordinator execution has no durable attempt record".into(),
-            )
-        })
-}
-'''
+              state: &'a StoredAttemptState,
+              engine: &ExecutableOrchestration,
+              unit: &WorkflowUnitRef,
+          ) -> Result<&'a FactoryAttemptRecord, FactoryAttemptError> {
+              let execution_ref = &engine
+                  .leg(unit)
+                  .ok_or_else(|| FactoryAttemptError::InvalidOperation("no current leg for retry".into()))?
+                  .execution_ref;
+              state
+                  .attempts
+                  .values()
+                  .find(|record| {
+                      &record.workflow_unit_ref == unit
+                          && (record.execution_ref.as_deref() == Some(execution_ref.as_str())
+                              || record.reserved_execution_ref == *execution_ref)
+                  })
+                  .ok_or_else(|| {
+                      FactoryAttemptError::CorruptState(
+                          "current coordinator execution has no durable attempt record".into(),
+                      )
+                  })
+          }
+          '''
+          if old not in text:
+              raise SystemExit('latest_attempt_for_unit source shape not found')
           text = text.replace(old, new)
 
           marker = '        validate_disposition(&record.disposition, state.run.reference(), unit, None)?;\n'
           addition = '''        validate_disposition(&record.disposition, state.run.reference(), unit, None)?;
-        if let Some(grant_ref) = &record.disposition.budget.retry_grant_ref {
-            let grant = engine.retry_grant(grant_ref).ok_or_else(|| {
-                FactoryAttemptError::CorruptState(
-                    "attempt refers to a retry grant absent from the coordinator".into(),
-                )
-            })?;
-            if record.disposition.budget.maximum_attempts != Some(grant.attempts_allowed) {
-                return Err(FactoryAttemptError::CorruptState(
-                    "attempt retry budget differs from the persisted grant".into(),
-                ));
-            }
-        }
-'''
+                  if let Some(grant_ref) = &record.disposition.budget.retry_grant_ref {
+                      let grant = engine.retry_grant(grant_ref).ok_or_else(|| {
+                          FactoryAttemptError::CorruptState(
+                              "attempt refers to a retry grant absent from the coordinator".into(),
+                          )
+                      })?;
+                      if record.disposition.budget.maximum_attempts != Some(grant.attempts_allowed) {
+                          return Err(FactoryAttemptError::CorruptState(
+                              "attempt retry budget differs from the persisted grant".into(),
+                          ));
+                      }
+                  }
+          '''
+          if marker not in text:
+              raise SystemExit('validate_disposition marker not found')
           text = text.replace(marker, addition)
           path.write_text(text)
+          PY
       - name: Format Factory Rust
         run: cargo fmt --manifest-path factory/Cargo.toml
       - name: Commit fixes
