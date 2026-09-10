@@ -21,10 +21,8 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-pub const AIKIT_CAW_CONTRACT_REVISION: &str =
-    "3d23d1eefbb999b0a5058ed0b4ca98dd2575b632";
-pub const WORKCELL_CAW_CONTRACT_REVISION: &str =
-    "f3a5be9fc751ee94b78aff11411e0cde65a46e4c";
+pub const AIKIT_CAW_CONTRACT_REVISION: &str = "3d23d1eefbb999b0a5058ed0b4ca98dd2575b632";
+pub const WORKCELL_CAW_CONTRACT_REVISION: &str = "f3a5be9fc751ee94b78aff11411e0cde65a46e4c";
 pub const AIKIT_DELIVERY_CONTRACT: &str = "aikit.encounter-delivery/v1";
 pub const WORKCELL_WRITE_BOUNDARY_CONTRACT: &str = "workcell.write-boundary-result/v1";
 pub const WORKCELL_CONTROL_CONTRACT: &str = "workcell.control/v1";
@@ -167,11 +165,7 @@ fn invoke_aikit(
     contract_revision: &str,
     request: &Value,
 ) -> Result<OwnerOperationReceipt, NativeOwnerError> {
-    require_revision(
-        "AIKit",
-        contract_revision,
-        AIKIT_CAW_CONTRACT_REVISION,
-    )?;
+    require_revision("AIKit", contract_revision, AIKIT_CAW_CONTRACT_REVISION)?;
     if !cwd.is_absolute() {
         return Err(NativeOwnerError::InvalidInvocation(
             "AIKit encounter cwd must be an absolute Project path".into(),
@@ -353,10 +347,7 @@ fn invoke_workcell_boundary(
         OwnerOperationPhase::Failed
     };
     let mut evidence_refs = BTreeSet::new();
-    if let Some(digest) = payload
-        .get("requirements_digest")
-        .and_then(Value::as_str)
-    {
+    if let Some(digest) = payload.get("requirements_digest").and_then(Value::as_str) {
         evidence_refs.insert(format!("workcell-requirements:{digest}"));
     }
     if let Some(policy) = payload.get("policy_revision").and_then(Value::as_str) {
@@ -414,7 +405,7 @@ fn invoke_workcell_world(
         command.arg("--endpoint").arg(endpoint);
     }
     if let Some(authorization) = authorization {
-        command.env("WORKCELL_CONTROL_TOKEN", authorization);
+        command.arg("--authorization").arg(authorization);
     }
     command
         .arg("--receipt")
@@ -438,7 +429,11 @@ fn invoke_workcell_world(
     Ok(OwnerOperationReceipt {
         owner_ref: "workcell".into(),
         contract: WORKCELL_CONTROL_CONTRACT.into(),
-        operation_ref: format!("workcell-world:{}:{}", operation.command(), receipt.display()),
+        operation_ref: format!(
+            "workcell-world:{}:{}",
+            operation.command(),
+            receipt.display()
+        ),
         receipt_ref: stable_receipt_ref("workcell-world", &payload),
         source_revision: contract_revision.into(),
         phase,
@@ -464,11 +459,7 @@ fn locate_delivery(payload: &Value) -> Option<&Value> {
     payload
         .get("result")
         .and_then(|result| result.get("delivery"))
-        .or_else(|| {
-            payload
-                .get("value")
-                .and_then(|value| value.get("delivery"))
-        })
+        .or_else(|| payload.get("value").and_then(|value| value.get("delivery")))
 }
 
 fn parse_delivery_phase(phase: &str) -> Result<OwnerOperationPhase, NativeOwnerError> {
@@ -559,7 +550,11 @@ fn bounded_text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(slice).into_owned()
 }
 
-fn command_failure(owner: &'static str, output: Output, payload: Option<Value>) -> NativeOwnerError {
+fn command_failure(
+    owner: &'static str,
+    output: Output,
+    payload: Option<Value>,
+) -> NativeOwnerError {
     NativeOwnerError::CommandFailed {
         owner,
         code: output.status.code(),
@@ -578,7 +573,9 @@ pub fn execute_native_owner_cli(
         Some(path) => {
             let body = read_input(path, stdin_override)?;
             let invocation: NativeOwnerInvocation = serde_json::from_str(&body)?;
-            Ok(serde_json::to_string_pretty(&invoke_native_owner(&invocation)?)?)
+            Ok(serde_json::to_string_pretty(&invoke_native_owner(
+                &invocation,
+            )?)?)
         }
     }
 }

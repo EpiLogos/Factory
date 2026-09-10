@@ -35,7 +35,13 @@ fn public_cli_restart_readback_rejects_stale_revision_and_retains_tracking_retur
     assert_eq!(first.revision, 1);
 
     let tracking = vec![
-        fact("fact:now", "now", "central", "now:factory-221", "central-r150"),
+        fact(
+            "fact:now",
+            "now",
+            "central",
+            "now:factory-221",
+            "central-r150",
+        ),
         fact(
             "fact:source",
             "source-revision",
@@ -82,13 +88,7 @@ fn public_cli_restart_readback_rejects_stale_revision_and_retains_tracking_retur
         1,
         FactoryAttemptOperation::RecordTracking {
             attempt_ref: "attempt:inspect-1".into(),
-            fact: fact(
-                "fact:stale",
-                "now",
-                "central",
-                "now:stale",
-                "central-r150",
-            ),
+            fact: fact("fact:stale", "now", "central", "now:stale", "central-r150"),
         },
     );
     let stale_output = fixture.raw_action(&stale);
@@ -120,8 +120,14 @@ fn public_cli_restart_readback_rejects_stale_revision_and_retains_tracking_retur
     let reading = fixture.reading();
     let attempt = &reading.attempts[0];
     let readable = attempt.readable_return.as_ref().unwrap();
-    assert_eq!(readable.receiving_ref.as_deref(), Some("central-receiving:inspect-1"));
-    assert_eq!(readable.receiving_source_revision.as_deref(), Some("central-152-pr"));
+    assert_eq!(
+        readable.receiving_ref.as_deref(),
+        Some("central-receiving:inspect-1")
+    );
+    assert_eq!(
+        readable.receiving_source_revision.as_deref(),
+        Some("central-152-pr")
+    );
     assert!(readable.archive_refs.contains("archive:day-2026-09-10"));
     assert!(readable
         .regression_observation_refs
@@ -169,7 +175,11 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
     assert!(fail_while_uncertain.is_err());
     let still_uncertain = fixture.reading();
     assert_eq!(still_uncertain.legs[&unit].status, LegStatus::Active);
-    assert!(still_uncertain.attempts[0].dispatch.as_ref().unwrap().partial_effect_refs
+    assert!(still_uncertain.attempts[0]
+        .dispatch
+        .as_ref()
+        .unwrap()
+        .partial_effect_refs
         .contains("effect:possible-provider-turn"));
 
     fixture
@@ -270,7 +280,12 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
         "execution:inspect",
     );
 
-    let implement = start(&fixture, &workflow, "implement-compiler", "attempt:implement");
+    let implement = start(
+        &fixture,
+        &workflow,
+        "implement-compiler",
+        "attempt:implement",
+    );
     let review = start(
         &fixture,
         &workflow,
@@ -476,7 +491,10 @@ fn provider_return_requires_factory_verification_and_historical_late_return_stay
         .unwrap();
     let reading = fixture.reading();
     assert_eq!(reading.legs[&unit].status, LegStatus::Active);
-    assert_eq!(reading.legs[&unit].execution_ref, "factory-attempt:attempt:new");
+    assert_eq!(
+        reading.legs[&unit].execution_ref,
+        "factory-attempt:attempt:new"
+    );
     let old = reading
         .attempts
         .iter()
@@ -554,10 +572,7 @@ impl Fixture {
         serde_json::from_slice(&output.stdout).unwrap()
     }
 
-    fn action(
-        &self,
-        operation: FactoryAttemptOperation,
-    ) -> Result<Value, String> {
+    fn action(&self, operation: FactoryAttemptOperation) -> Result<Value, String> {
         let reading = self.reading();
         let request = request(self.run.reference().clone(), reading.revision, operation);
         let output = self.raw_action(&request);
@@ -699,8 +714,7 @@ fn disposition(
         ranking_explanation: json!({"testOnly": true}),
         provenance: vec!["selection:controlled-test".into()],
     };
-    let selection = accept_aikit_selection(demand, selection, "2026-09-10T20:00:00+01:00")
-        .unwrap();
+    let selection = accept_aikit_selection(demand, selection, "2026-09-10T20:00:00+01:00").unwrap();
     let placement = PlacementProtection {
         now_ref: "now:factory-221".into(),
         now_path: "/controlled/project/NOW".into(),
