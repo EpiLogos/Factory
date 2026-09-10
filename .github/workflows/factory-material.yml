@@ -1,0 +1,70 @@
+name: Factory native material integration
+
+on:
+  pull_request:
+    paths:
+      - 'factory/**'
+      - '.github/workflows/factory-material.yml'
+      - 'docs/CAW-NATIVE-ATTEMPT-OPERATIONS.md'
+  push:
+    branches: ['agent/caw-221-native-attempts', main]
+    paths:
+      - 'factory/**'
+      - '.github/workflows/factory-material.yml'
+      - 'docs/CAW-NATIVE-ATTEMPT-OPERATIONS.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-material:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: EpiLogos/Workcell
+          ref: f3a5be9fc751ee94b78aff11411e0cde65a46e4c
+          path: .native-workcell
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            factory
+            .native-workcell
+      - name: Preserve exact source and environment
+        run: |
+          mkdir -p material-evidence
+          git rev-parse HEAD > material-evidence/factory-source-sha.txt
+          git -C .native-workcell rev-parse HEAD > material-evidence/workcell-source-sha.txt
+          test "$(cat material-evidence/workcell-source-sha.txt)" = f3a5be9fc751ee94b78aff11411e0cde65a46e4c
+          git archive HEAD | gzip > material-evidence/factory-source.tar.gz
+          rustc --version > material-evidence/rust-version.txt
+          uname -a > material-evidence/system.txt
+      - name: Build actual native Workcell owners
+        run: cargo build --manifest-path .native-workcell/Cargo.toml --locked -p epilogos-workcell-cli --bins
+      - name: Exercise real Factory to Workcell lifecycle
+        run: |
+          set -o pipefail
+          export FACTORY_TEST_WORKCELL_BIN_DIR="$GITHUB_WORKSPACE/.native-workcell/target/debug"
+          test -x "$FACTORY_TEST_WORKCELL_BIN_DIR/workcell"
+          test -x "$FACTORY_TEST_WORKCELL_BIN_DIR/workcell-control-service"
+          cargo test --manifest-path factory/Cargo.toml --test attempt_material native_workcell_ -- --list > material-evidence/native-cases.txt
+          test "$(grep -c '^native_material::native_workcell_.*: test$' material-evidence/native-cases.txt)" = 1
+          cargo test --manifest-path factory/Cargo.toml --test attempt_material native_workcell_ -- --include-ignored --nocapture 2>&1 | tee material-evidence/native-material.log
+      - name: Preserve successful source-built callers
+        run: |
+          target=$(cargo metadata --manifest-path factory/Cargo.toml --format-version 1 --no-deps | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')
+          cp "$target/debug/factory" material-evidence/factory
+          cp .native-workcell/target/debug/workcell material-evidence/workcell
+          cp .native-workcell/target/debug/workcell-control-service material-evidence/workcell-control-service
+          sha256sum material-evidence/factory material-evidence/workcell material-evidence/workcell-control-service > material-evidence/binaries.sha256
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factory-material-${{ github.run_id }}
+          path: material-evidence/
+          if-no-files-found: error
+          retention-days: 14

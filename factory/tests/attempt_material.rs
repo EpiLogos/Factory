@@ -182,7 +182,7 @@ elif op == 'recover':
     if mode == 'foreign': successor['subjects'] = {{'attempt':'attempt:foreign'}}
     value = {{'world':successor,'previous_world_ref':world['world_ref'],'receipt':'test-only-owner-receipt'}}
 else:
-    value = {{'world_ref':ref,'disposition':'retained' if mode=='retained' else 'released','changed':mode!='retained'}}
+    value = {{'world_ref':ref,'disposition':'preserved' if mode=='retained' else 'released','changed':mode!='retained'}}
     pathlib.Path(args[args.index('--receipt')+1]).write_text('owner updated transport copy')
 value['ok'] = True
 print(json.dumps(value))
@@ -526,7 +526,7 @@ fn retained_material_is_not_reported_as_released() {
         success(world.invoke(&world.request("release:retained", WorkcellWorldOperation::Release)));
     assert_eq!(
         response["ownerReceipt"]["payload"]["disposition"],
-        "retained"
+        "preserved"
     );
     assert_eq!(response["transportObservation"]["phase"], "observed");
 }
@@ -668,3 +668,8 @@ fn material_alias_and_capability_discovery_use_the_same_native_contract() {
         .unwrap()
         .contains(&json!(MATERIAL_ACTION)));
 }
+
+#[path = "support/attempt_material_followup.rs"]
+mod followup;
+#[path = "support/attempt_material_native.rs"]
+mod native_material;
