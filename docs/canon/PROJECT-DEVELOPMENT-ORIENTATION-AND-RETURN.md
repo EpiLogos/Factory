@@ -1,7 +1,7 @@
 # Project Development Orientation and Recursive Return
 
 Status: **Factory canonical development relation**  
-Owner: **Software Factory (`agent-system-design`)**  
+Owner: **Software Factory (`Factory`)**  
 Primary programme: Factory #155
 
 ## Why this exists
