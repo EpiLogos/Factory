@@ -45,7 +45,10 @@ fn record<'a>(
 }
 
 fn pending(phase: OwnerOperationPhase) -> bool {
-    matches!(phase, OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain)
+    matches!(
+        phase,
+        OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain
+    )
 }
 
 fn calls(record: &FactoryAttemptRecord) -> BTreeMap<&str, &OwnerOperationReceipt> {
@@ -58,8 +61,19 @@ fn calls(record: &FactoryAttemptRecord) -> BTreeMap<&str, &OwnerOperationReceipt
     latest
 }
 
+fn unresolved_owner_effects(record: &FactoryAttemptRecord) -> bool {
+    let mut latest = BTreeMap::new();
+    for receipt in record.dispatch.iter().chain(&record.observations) {
+        latest.insert((&receipt.owner_ref, &receipt.operation_ref), receipt.phase);
+    }
+    latest.values().any(|phase| pending(*phase))
+}
+
 fn execution(record: &FactoryAttemptRecord) -> &str {
-    record.execution_ref.as_deref().unwrap_or(&record.reserved_execution_ref)
+    record
+        .execution_ref
+        .as_deref()
+        .unwrap_or(&record.reserved_execution_ref)
 }
 
 /// Follow only validated native recovery relations. Historical disposition is
@@ -73,7 +87,9 @@ fn current_world(record: &FactoryAttemptRecord) -> Option<&str> {
             && receipt.payload["worldRef"].as_str() == Some(current)
             && receipt.payload["detail"]["validated"] == true
         {
-            if let Some(next) = receipt.payload.pointer("/detail/ownerReceipt/payload/world/world_ref")
+            if let Some(next) = receipt
+                .payload
+                .pointer("/detail/ownerReceipt/payload/world/world_ref")
                 .and_then(Value::as_str)
             {
                 current = next;
@@ -90,8 +106,11 @@ fn known_world(record: &FactoryAttemptRecord, world: &str) -> bool {
                 && receipt.contract == CALL
                 && receipt.phase == OwnerOperationPhase::Recovered
                 && receipt.payload["detail"]["validated"] == true
-                && receipt.payload.pointer("/detail/ownerReceipt/payload/world/world_ref")
-                    .and_then(Value::as_str) == Some(world)
+                && receipt
+                    .payload
+                    .pointer("/detail/ownerReceipt/payload/world/world_ref")
+                    .and_then(Value::as_str)
+                    == Some(world)
         })
 }
 
@@ -135,7 +154,9 @@ fn retain(
     for _ in 0..8 {
         let reading = store.reading().map_err(|error| error.to_string())?;
         let attempt = record(&reading, &request.attempt_ref)?;
-        if let Some(existing) = attempt.observations.iter()
+        if let Some(existing) = attempt
+            .observations
+            .iter()
             .find(|existing| existing.receipt_ref == receipt.receipt_ref)
         {
             return if existing == receipt {
@@ -163,7 +184,9 @@ fn result(
     replayed: bool,
     mut retention_error: Option<String>,
 ) -> FactoryAttemptOwnerReceipt {
-    let owner_receipt = receipt.payload.pointer("/detail/ownerReceipt")
+    let owner_receipt = receipt
+        .payload
+        .pointer("/detail/ownerReceipt")
         .filter(|value| !value.is_null())
         .and_then(|value| serde_json::from_value(value.clone()).ok());
     let reading = match store.reading() {
@@ -173,7 +196,8 @@ fn result(
             None
         }
     };
-    let unresolved = reading.as_ref()
+    let unresolved = reading
+        .as_ref()
         .and_then(|reading| record(reading, &request.attempt_ref).ok())
         .is_none_or(|record| calls(record).values().any(|receipt| pending(receipt.phase)));
     FactoryAttemptOwnerReceipt {
@@ -209,14 +233,20 @@ fn validate_response(
     world: &str,
 ) -> Result<(), String> {
     let payload = &receipt.payload;
-    if payload["ok"] != true || pending(receipt.phase) || receipt.phase == OwnerOperationPhase::Failed {
+    if payload["ok"] != true
+        || pending(receipt.phase)
+        || receipt.phase == OwnerOperationPhase::Failed
+    {
         return Err("native material operation did not confirm an attributable result".into());
     }
     match operation {
         WorkcellWorldOperation::Inspect => {
             let value = payload.get("receipt_world").unwrap_or(payload);
-            if validate_world(value, workcell)? != world {
-                return Err("material inspection belongs to another World".into());
+            if validate_world(value, workcell)? != world
+                || value["subjects"] != input["subjects"]
+                || value["demand_ref"] != input["demand_ref"]
+            {
+                return Err("material inspection changed World, caller subjects or demand".into());
             }
         }
         WorkcellWorldOperation::Recover => {
@@ -240,8 +270,7 @@ fn validate_response(
                 _ => unreachable!(),
             };
             if operation == WorkcellWorldOperation::Release {
-                // Workcell may retain material under its native policy. An OK
-                // response alone is not evidence that everything was released.
+                // A successful call may retain material under Workcell policy.
                 receipt.phase = if text(payload, field)? == "released" {
                     OwnerOperationPhase::Released
                 } else {
@@ -255,39 +284,91 @@ fn validate_response(
     Ok(())
 }
 
-/// Release cannot be used as a shortcut around cancellation/quiescence or stop
-/// another still-active attempt sharing this material in the same provider.
-fn validate_release(
+/// The opening provider revision and subsequent intent CAS bracket this read.
+/// Later native starts/mutations see the intent inside their own transaction.
+fn validate_shared_effect(
     state_path: &Path,
     request: &FactoryAttemptOwnerRequest,
+    operation: WorkcellWorldOperation,
+    workcell: &str,
     world: &str,
 ) -> Result<(), String> {
     let native = read_developmental_state(state_path).map_err(|error| error.to_string())?;
     if native.build.revision().get() != request.expected_revision {
-        return Err("Factory state changed before material release admission".into());
+        return Err("Factory state changed before material lifecycle admission".into());
     }
     for run in native.attempt_states.keys() {
         let reading = FileAttemptStore::open_run(state_path, run.clone())
-            .and_then(|store| store.reading()).map_err(|error| error.to_string())?;
+            .and_then(|store| store.reading())
+            .map_err(|error| error.to_string())?;
         if reading.revision != request.expected_revision {
             return Err("Factory state changed while checking shared material users".into());
         }
         for candidate in &reading.attempts {
-            if current_world(candidate) != Some(world) {
+            if candidate.disposition.body.workcell_ref.as_deref() != Some(workcell)
+                || current_world(candidate) != Some(world)
+            {
                 continue;
             }
             let leg = &reading.legs[&candidate.workflow_unit_ref];
-            let status = leg.attempts.iter()
+            let status = leg
+                .attempts
+                .iter()
                 .find(|attempt| attempt.execution_ref == execution(candidate))
-                .ok_or("material user has no canonical execution history")?.status;
+                .ok_or("material user has no canonical execution history")?
+                .status;
+            if unresolved_owner_effects(candidate) {
+                return Err("unknown owner effects require reconciliation before a material effect".into());
+            }
             if run == &request.run_ref && candidate.attempt_ref == request.attempt_ref {
-                if status != LegStatus::Quiescent {
+                if operation == WorkcellWorldOperation::Release && status != LegStatus::Quiescent {
                     return Err("material release requires this attempt's explicit quiescence".into());
+                }
+                if operation == WorkcellWorldOperation::Recover
+                    && (leg.execution_ref != execution(candidate)
+                        || !matches!(status, LegStatus::Active | LegStatus::Detached | LegStatus::ProcessTerminated | LegStatus::Quiescent))
+                {
+                    return Err("historical or cancelled attempts cannot recover a new material body".into());
                 }
             } else if !matches!(status, LegStatus::Quiescent | LegStatus::Failed | LegStatus::Returned) {
                 return Err("material is still used by another active Factory attempt".into());
             }
         }
+    }
+    Ok(())
+}
+
+/// A successful fresh read may settle previous read transports of that same
+/// operation. It cannot prove that an interrupted recover/release never acted.
+fn settle_read_calls(
+    store: &mut FileAttemptStore,
+    request: &FactoryAttemptOwnerRequest,
+    outcome: &OwnerOperationReceipt,
+) -> Result<(), String> {
+    if outcome.phase != OwnerOperationPhase::Observed
+        || outcome.payload["detail"]["validated"] != true
+        || !matches!(outcome.payload["operation"].as_str(), Some("inspect" | "observe" | "expose" | "collect"))
+    {
+        return Ok(());
+    }
+    let reading = store.reading().map_err(|error| error.to_string())?;
+    let attempt = record(&reading, &request.attempt_ref)?;
+    let prior = calls(attempt)
+        .values()
+        .filter(|receipt| {
+            pending(receipt.phase)
+                && ["worldRef", "workcellRef", "endpoint", "operation"]
+                    .iter()
+                    .all(|key| receipt.payload[key] == outcome.payload[key])
+        })
+        .map(|receipt| (*receipt).clone())
+        .collect::<Vec<_>>();
+    for receipt in prior {
+        let resolution = stamped(receipt, OwnerOperationPhase::Observed, json!({
+            "validated":true,"ownerReceipt":outcome.payload["detail"]["ownerReceipt"],
+            "reconciledBy":request.request_ref,"meaning":"fresh read, not replay of an effect"
+        }));
+        retain(store, request, &resolution)?;
     }
     Ok(())
 }
@@ -314,7 +395,9 @@ impl TransportReceipt {
             options.mode(0o600);
         }
         let mut file = options.open(staging.path()).map_err(|error| error.to_string())?;
-        file.write_all(bytes).and_then(|()| file.sync_all()).map_err(|error| error.to_string())?;
+        file.write_all(bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| error.to_string())?;
         Ok(staging)
     }
     fn path(&self) -> PathBuf {
@@ -356,21 +439,28 @@ pub fn execute(
     let reading = store.reading().map_err(|error| error.to_string())?;
     let attempt = record(&reading, &request.attempt_ref)?;
     let probe = OwnerOperationReceipt {
-        owner_ref: "factory".into(), contract: CALL.into(), operation_ref: operation_ref.clone(),
-        receipt_ref: "material:admission-only".into(), source_revision: format!("factory-state:{}", reading.revision),
-        phase: OwnerOperationPhase::Dispatching, evidence_refs: BTreeSet::new(),
-        partial_effect_refs: BTreeSet::new(), payload: Value::Null,
+        owner_ref: "factory".into(),
+        contract: CALL.into(),
+        operation_ref: operation_ref.clone(),
+        receipt_ref: "material:admission-only".into(),
+        source_revision: format!("factory-state:{}", reading.revision),
+        phase: OwnerOperationPhase::Dispatching,
+        evidence_refs: BTreeSet::new(),
+        partial_effect_refs: BTreeSet::new(),
+        payload: Value::Null,
     };
     crate::attempt_runtime::validate_action_request(&action(&request, reading.revision, probe.clone()))
         .map_err(|error| error.to_string())?;
-    if request.execution_ref != execution(attempt) {
-        return Err("material Action execution does not belong to the addressed attempt".into());
-    }
+    // The original call may have preceded execution binding. Exact replay keeps
+    // its original basis and never acts; a new call must name current identity.
     if let Some(previous) = calls(attempt).get(operation_ref.as_str()) {
         if previous.payload["requestDigest"].as_str() != Some(&digest) {
             return Err("material Action identity was reused with different content".into());
         }
         return Ok(result(&store, &request, (*previous).clone(), true, None));
+    }
+    if request.execution_ref != execution(attempt) {
+        return Err("material Action execution does not belong to the addressed attempt".into());
     }
     if reading.revision != request.expected_revision {
         return Err("stale Factory revision before material owner invocation".into());
@@ -399,9 +489,7 @@ pub fn execute(
         if *world_operation == WorkcellWorldOperation::Recover && !reading.source_current {
             return Err("material recovery requires current source re-resolution".into());
         }
-    }
-    if *world_operation == WorkcellWorldOperation::Release {
-        validate_release(state_path, &request, world)?;
+        validate_shared_effect(state_path, &request, *world_operation, workcell, world)?;
     }
     let operation = serde_json::to_value(world_operation).map_err(|error| error.to_string())?;
     let mut intent = probe;
@@ -422,16 +510,20 @@ pub fn execute(
         }
     };
     let invocation = NativeOwnerInvocation::WorkcellWorld {
-        binary: binary.clone(), receipt: staging.path(), world_operation: *world_operation,
-        endpoint: endpoint.clone(), authorization: None, contract_revision: contract_revision.clone(),
+        binary: binary.clone(),
+        receipt: staging.path(),
+        world_operation: *world_operation,
+        endpoint: endpoint.clone(),
+        authorization: None,
+        contract_revision: contract_revision.clone(),
     };
     let timeout = attempt.disposition.budget.wall_clock_timeout_ms
         .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS).min(DEFAULT_OWNER_TIMEOUT_MS);
     let outcome = match invoke_native_owner_bounded(&invocation, timeout) {
         Ok(mut owner) => {
-            // These adapter identities use semantic refs, never the temporary
-            // filename. The owner response payload remains byte-equivalent JSON.
-            owner.operation_ref = format!("workcell-material:{workcell}:{world}:{operation}");
+            // Adapter identities use semantic refs, not the temporary filename.
+            // The actual owner response payload remains byte-equivalent JSON.
+            owner.operation_ref = format!("workcell-material:{workcell}:{world}:{}", operation.as_str().expect("enum is text"));
             owner.receipt_ref = format!("workcell-material:{}", blake3::hash(
                 &serde_json::to_vec(&(&owner.operation_ref, &owner.payload)).expect("JSON serializes")));
             match validate_response(&mut owner, *world_operation, &input, workcell, world) {
@@ -448,14 +540,15 @@ pub fn execute(
         Err(error) => stamped(intent, OwnerOperationPhase::Uncertain,
             json!({"validated":false,"failure":error.to_string(),"instruction":"inspect native material; do not repeat a consequential call"})),
     };
-    let retention_error = retain(&mut store, &request, &outcome).err();
+    let retention_error = retain(&mut store, &request, &outcome)
+        .and_then(|()| settle_read_calls(&mut store, &request, &outcome)).err();
     Ok(result(&store, &request, outcome, false, retention_error))
 }
 
 pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
     let positional = args.iter().filter(|arg| arg.as_str() != "--json").collect::<Vec<_>>();
     if matches!(positional.first().map(|arg| arg.as_str()), None | Some("help" | "--help" | "-h")) {
-        return Ok(format!("Factory attempt material lifecycle\n\nUsage:\n  factory attempt material <state> <request-json|-> [--json]\n\nContract: {MATERIAL_ACTION}\nUses the existing Workcell World invocation and Factory owner-request fields. An explicit endpoint and bound material receipt are required. WORKCELL_CONTROL_TOKEN stays in the host environment. Exact replay never repeats an owner call; material recovery does not resume the Agent, and release requires explicit quiescence."));
+        return Ok(format!("Factory attempt material lifecycle\n\nUsage:\n  factory attempt material <state> <request-json|-> [--json]\n\nContract: {MATERIAL_ACTION}\nUses the existing Workcell World invocation and Factory owner-request fields. An explicit endpoint and bound material receipt are required. WORKCELL_CONTROL_TOKEN stays in the host environment. Exact replay never repeats an owner call; material recovery does not resume the Agent, and release requires explicit quiescence. Fresh reads reconcile only matching failed read transports, not unknown consequential effects."));
     }
     if positional.len() > 2 {
         return Err("material expects a state and one request file".into());
