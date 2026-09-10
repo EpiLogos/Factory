@@ -1,21 +1,18 @@
 """Bounded native Action repair; removed after this PR's product edits land."""
 from pathlib import Path
+import re
 root = Path(__file__).resolve().parents[1]
 paths = ['factory/src/attempt_native_store.rs', 'factory/src/attempt_runtime.rs']
 texts = {path: (root / path).read_text() for path in paths}
 s = texts[paths[0]]
 if 'view.action_receipts.get(&request.projection_ref)' in s:
     s = s.replace('view.action_receipts.get(&request.projection_ref)', 'view.action_receipts.get(&request_digest)')
-    old = 'view.action_receipts.insert(\n                    request.projection_ref.clone(),'
-    if old not in s:
-        old = 'view.action_receipts.insert(\n                        request.projection_ref.clone(),'
-    assert old in s, 'Action journal insertion changed'
-    s = s.replace(old, old.replace('request.projection_ref.clone()', 'request_digest.clone()'), 1)
+    s, count = re.subn(r'view\.action_receipts\.insert\(\s*request\.projection_ref\.clone\(\),', 'view.action_receipts.insert(request_digest.clone(),', s)
+    assert count == 1, 'Action journal insertion changed'
     texts[paths[0]] = s
     s = texts[paths[1]]
-    old = 'reference != &applied.request.projection_ref\n            || reference != &applied.receipt.projection_ref'
-    assert old in s, 'Action journal validation changed'
-    s = s.replace(old, 'reference != &applied.request_digest\n            || applied.request.projection_ref != applied.receipt.projection_ref', 1)
+    s, count = re.subn(r'reference != &applied\.request\.projection_ref\s*\|\| reference != &applied\.receipt\.projection_ref', 'reference != &applied.request_digest\n            || applied.request.projection_ref != applied.receipt.projection_ref', s)
+    assert count == 1, 'Action journal validation changed'
     texts[paths[1]] = s
 for path, content in texts.items():
     (root / path).write_text(content)
