@@ -1,5 +1,8 @@
 fn main() -> std::process::ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("owner") {
+        return epilogos_factory::native_owner::native_owner_cli_main(&args[1..]);
+    }
     let attempt_args = if args.first().map(String::as_str) == Some("attempt") {
         Some(&args[1..])
     } else if args.first().map(String::as_str) == Some("development")
