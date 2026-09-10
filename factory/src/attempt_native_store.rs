@@ -221,6 +221,10 @@ impl FileAttemptStore {
                     return Err(invalid("current authored source differs from retained attempt basis; explicit re-resolution is required"));
                 }
                 crate::attempt_application::validate_native_action(&reading_for(&view)?, &view.run, &request)?;
+                crate::attempt_material_admission::validate_new_work(
+                    &request.operation, &view.attempts,
+                    native.attempt_states.values().flat_map(|field| field.attempts.values()),
+                ).map_err(|error| invalid(&error))?;
                 let previous_revision = view.revision;
                 let previous_run_revision = view.run.revision();
                 let (operation, attempt_refs) = apply_operation(&mut view, request.operation.clone())?;
