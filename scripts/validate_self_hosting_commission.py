@@ -105,6 +105,12 @@ with tempfile.TemporaryDirectory() as directory:
     assert set(work_states) <= {"ready", "planned"} and len(work_states) == 3
     assert stored["state"]["build"]["agencies"] == {}
     assert stored["state"]["build"]["executions"] == {}
-    assert stored == json.loads((FIXTURES / "oi-self-hosting-state.json").read_text())
+    # The retained pre-attempt fixture intentionally exercises legacy readback.
+    # Normalise only the new serde-defaulted empty field on the EXPECTED value.
+    # Never discard actual attempts or weaken equality for any other state.
+    expected = json.loads((FIXTURES / "oi-self-hosting-state.json").read_text())
+    assert stored["state"]["attemptStates"] == {}, "Commission must not execute an attempt"
+    expected["state"].setdefault("attemptStates", {})
+    assert stored == expected
 
 print("Factory self-hosting Commission schemas/native state: PASS")
