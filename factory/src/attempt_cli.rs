@@ -4,41 +4,65 @@
 use serde_json::Value;
 
 const COMMANDS: &[&str] = &[
-    "attempt.init", "attempt.attach", "attempt.read", "attempt.action",
-    "attempt.owner-action", "attempt.task", "attempt.return",
-    "development.attempt.init", "development.attempt.attach", "development.attempt.read",
-    "development.attempt.action", "development.attempt.owner-action", "development.attempt.task",
-    "development.attempt.return", "owner",
+    "attempt.init",
+    "attempt.attach",
+    "attempt.read",
+    "attempt.action",
+    "attempt.owner-action",
+    "attempt.task",
+    "attempt.return",
+    "development.attempt.init",
+    "development.attempt.attach",
+    "development.attempt.read",
+    "development.attempt.action",
+    "development.attempt.owner-action",
+    "development.attempt.task",
+    "development.attempt.return",
+    "owner",
 ];
 const CONTRACTS: &[&str] = &[
-    "factory.attempt-state/v1", "factory.attempt-action/v1", "factory.attempt-reading/v1",
+    "factory.attempt-state/v1",
+    "factory.attempt-action/v1",
+    "factory.attempt-reading/v1",
     crate::attempt_owner_dispatch::FACTORY_ATTEMPT_OWNER_ACTION,
     crate::attempt_owner_dispatch::FACTORY_ATTEMPT_OWNER_RECEIPT,
-    crate::attempt_task::TASK_READING, crate::attempt_task::RETURN_READING,
+    crate::attempt_task::TASK_READING,
+    crate::attempt_task::RETURN_READING,
 ];
 
 pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
     if args.first().map(String::as_str) == Some("owner") {
-        return crate::native_owner::execute_native_owner_cli(&args[1..], stdin).map_err(|error| error.to_string());
+        return crate::native_owner::execute_native_owner_cli(&args[1..], stdin)
+            .map_err(|error| error.to_string());
     }
     let attempt_args = match args.first().map(String::as_str) {
         Some("attempt") => Some(&args[1..]),
-        Some("development") if args.get(1).map(String::as_str) == Some("attempt") => Some(&args[2..]),
+        Some("development") if args.get(1).map(String::as_str) == Some("attempt") => {
+            Some(&args[2..])
+        }
         _ => None,
     };
     if let Some(args) = attempt_args {
         return match args.first().map(String::as_str) {
-            Some("owner-action") => crate::attempt_owner_cli::execute_attempt_owner_cli(&args[1..], stdin).map_err(|error| error.to_string()),
+            Some("owner-action") => {
+                crate::attempt_owner_cli::execute_attempt_owner_cli(&args[1..], stdin)
+                    .map_err(|error| error.to_string())
+            }
             Some("task" | "return") => crate::attempt_task::execute_cli(args),
             None | Some("help" | "--help" | "-h") => {
-                let base = crate::attempt_application::execute_attempt_cli(args, stdin).map_err(|error| error.to_string())?;
-                let owner = crate::attempt_owner_cli::execute_attempt_owner_cli(&[], None).map_err(|error| error.to_string())?;
+                let base = crate::attempt_application::execute_attempt_cli(args, stdin)
+                    .map_err(|error| error.to_string())?;
+                let owner = crate::attempt_owner_cli::execute_attempt_owner_cli(&[], None)
+                    .map_err(|error| error.to_string())?;
                 Ok(format!("{base}\n\n{owner}\n\n{}", task_help()))
             }
-            _ => crate::attempt_application::execute_attempt_cli(args, stdin).map_err(|error| error.to_string()),
+            _ => crate::attempt_application::execute_attempt_cli(args, stdin)
+                .map_err(|error| error.to_string()),
         };
     }
-    let base = match crate::development_field_cli::execute_extension(args, stdin).map_err(|error| error.to_string())? {
+    let base = match crate::development_field_cli::execute_extension(args, stdin)
+        .map_err(|error| error.to_string())?
+    {
         Some(output) => output,
         None => crate::cli::execute_cli(args, stdin).map_err(|error| error.to_string())?,
     };
