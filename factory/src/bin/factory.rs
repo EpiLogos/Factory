@@ -13,7 +13,14 @@ fn main() -> std::process::ExitCode {
         None
     };
     if let Some(args) = attempt_args {
-        return match epilogos_factory::attempt_application::execute_attempt_cli(args, None) {
+        let result = if args.first().map(String::as_str) == Some("owner-action") {
+            epilogos_factory::attempt_owner_cli::execute_attempt_owner_cli(&args[1..], None)
+                .map_err(|error| error.to_string())
+        } else {
+            epilogos_factory::attempt_application::execute_attempt_cli(args, None)
+                .map_err(|error| error.to_string())
+        };
+        return match result {
             Ok(output) => {
                 println!("{output}");
                 std::process::ExitCode::SUCCESS
