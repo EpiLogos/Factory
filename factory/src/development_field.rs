@@ -440,11 +440,17 @@ impl DevelopmentField {
             field: self.clone(),
             satisfied_proof: self.satisfied_proof_grades(),
             remaining_proof: self.remaining_proof_grades(),
-            latest_return_ref: self.returns.last().map(|returned| returned.return_ref.clone()),
+            latest_return_ref: self
+                .returns
+                .last()
+                .map(|returned| returned.return_ref.clone()),
         }
     }
 
-    fn validate_return(&self, returned: &DevelopmentFieldReturn) -> Result<(), DevelopmentFieldError> {
+    fn validate_return(
+        &self,
+        returned: &DevelopmentFieldReturn,
+    ) -> Result<(), DevelopmentFieldError> {
         stable_ref(&returned.return_ref, "returnRef")?;
         stable_ref(&returned.git_development_ref, "gitDevelopmentRef")?;
         stable_ref(&returned.base_revision, "baseRevision")?;
@@ -556,10 +562,7 @@ impl AikitOperativeReferences {
                 stable_ref(value, name)?;
             }
         }
-        unique_refs(
-            &self.execution_disposition_refs,
-            "executionDispositionRefs",
-        )?;
+        unique_refs(&self.execution_disposition_refs, "executionDispositionRefs")?;
         unique_refs(&self.agent_refs, "agentRefs")?;
         unique_refs(&self.agent_set_refs, "agentSetRefs")?;
         unique_refs(&self.agent_session_refs, "agentSessionRefs")?;
@@ -636,15 +639,27 @@ pub enum DevelopmentFieldError {
     WrongSchema(String),
     InvalidField(&'static str),
     DuplicateRef(String),
-    WrongProject { expected: ProjectRef, actual: ProjectRef },
-    WrongRun { expected: RunRef, actual: RunRef },
+    WrongProject {
+        expected: ProjectRef,
+        actual: ProjectRef,
+    },
+    WrongRun {
+        expected: RunRef,
+        actual: RunRef,
+    },
     EmptyRequiredProof,
     DirtyBasisWithoutSnapshot,
     IdentityCollapse(String),
     MissingOperativeResolution,
     MissingGitReturn,
-    GitDevelopmentMismatch { expected: String, actual: String },
-    ReturnBaseMismatch { expected: String, actual: String },
+    GitDevelopmentMismatch {
+        expected: String,
+        actual: String,
+    },
+    ReturnBaseMismatch {
+        expected: String,
+        actual: String,
+    },
     UnknownMaterialBinding(String),
     EmptyEvidence(DevelopmentEvidenceGrade),
     HumanProofWithoutEx,
@@ -653,21 +668,61 @@ pub enum DevelopmentFieldError {
 impl Display for DevelopmentFieldError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::WrongSchema(schema) => write!(formatter, "unsupported Development Field schema: {schema}"),
-            Self::InvalidField(field) => write!(formatter, "invalid Development Field field: {field}"),
-            Self::DuplicateRef(reference) => write!(formatter, "duplicate Development Field ref: {reference}"),
-            Self::WrongProject { expected, actual } => write!(formatter, "Development Field project {actual} does not match {expected}"),
-            Self::WrongRun { expected, actual } => write!(formatter, "Development Field Run {actual} does not match {expected}"),
-            Self::EmptyRequiredProof => write!(formatter, "Development Field requires at least one explicit proof grade"),
-            Self::DirtyBasisWithoutSnapshot => write!(formatter, "dirty Git basis requires an explicit snapshot ref"),
-            Self::IdentityCollapse(detail) => write!(formatter, "Development Field identity collapse: {detail}"),
-            Self::MissingOperativeResolution => write!(formatter, "returned development requires an AIKit operative-resolution reference"),
-            Self::MissingGitReturn => write!(formatter, "Git developmental World has no returned difference"),
-            Self::GitDevelopmentMismatch { expected, actual } => write!(formatter, "returned Git development {actual} does not match {expected}"),
-            Self::ReturnBaseMismatch { expected, actual } => write!(formatter, "returned Git base {actual} does not match exact basis {expected}"),
-            Self::UnknownMaterialBinding(reference) => write!(formatter, "return refers to unknown material binding {reference}"),
-            Self::EmptyEvidence(grade) => write!(formatter, "{grade:?} evidence standing has no evidence refs"),
-            Self::HumanProofWithoutEx => write!(formatter, "H-grade proof requires an actual human EX ref"),
+            Self::WrongSchema(schema) => {
+                write!(formatter, "unsupported Development Field schema: {schema}")
+            }
+            Self::InvalidField(field) => {
+                write!(formatter, "invalid Development Field field: {field}")
+            }
+            Self::DuplicateRef(reference) => {
+                write!(formatter, "duplicate Development Field ref: {reference}")
+            }
+            Self::WrongProject { expected, actual } => write!(
+                formatter,
+                "Development Field project {actual} does not match {expected}"
+            ),
+            Self::WrongRun { expected, actual } => write!(
+                formatter,
+                "Development Field Run {actual} does not match {expected}"
+            ),
+            Self::EmptyRequiredProof => write!(
+                formatter,
+                "Development Field requires at least one explicit proof grade"
+            ),
+            Self::DirtyBasisWithoutSnapshot => write!(
+                formatter,
+                "dirty Git basis requires an explicit snapshot ref"
+            ),
+            Self::IdentityCollapse(detail) => {
+                write!(formatter, "Development Field identity collapse: {detail}")
+            }
+            Self::MissingOperativeResolution => write!(
+                formatter,
+                "returned development requires an AIKit operative-resolution reference"
+            ),
+            Self::MissingGitReturn => write!(
+                formatter,
+                "Git developmental World has no returned difference"
+            ),
+            Self::GitDevelopmentMismatch { expected, actual } => write!(
+                formatter,
+                "returned Git development {actual} does not match {expected}"
+            ),
+            Self::ReturnBaseMismatch { expected, actual } => write!(
+                formatter,
+                "returned Git base {actual} does not match exact basis {expected}"
+            ),
+            Self::UnknownMaterialBinding(reference) => write!(
+                formatter,
+                "return refers to unknown material binding {reference}"
+            ),
+            Self::EmptyEvidence(grade) => write!(
+                formatter,
+                "{grade:?} evidence standing has no evidence refs"
+            ),
+            Self::HumanProofWithoutEx => {
+                write!(formatter, "H-grade proof requires an actual human EX ref")
+            }
         }
     }
 }
@@ -856,7 +911,8 @@ mod tests {
             })
             .unwrap();
 
-        let mut returned = DevelopmentFieldReturn::from_git_world("return:215", &git_world()).unwrap();
+        let mut returned =
+            DevelopmentFieldReturn::from_git_world("return:215", &git_world()).unwrap();
         returned.material_binding_refs = vec!["workcell:binding:b".into()];
         returned.evidence = vec![
             evidence(DevelopmentEvidenceGrade::D, "evidence:D"),
@@ -922,7 +978,8 @@ mod tests {
                 provenance_refs: vec!["provider-run:215".into()],
             })
             .unwrap();
-        let mut returned = DevelopmentFieldReturn::from_git_world("return:direct", &git_world()).unwrap();
+        let mut returned =
+            DevelopmentFieldReturn::from_git_world("return:direct", &git_world()).unwrap();
         returned.material_binding_refs = vec!["material:chatgpt-github".into()];
         returned.actualities = vec![DevelopmentActualityReferences {
             execution_correlation_ref: "execution-correlation:direct".into(),
