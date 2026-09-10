@@ -6,7 +6,7 @@ The standalone QL/MEF product now has a dedicated implementation repository:
 
 `EpiLogos/QL-MEF`
 
-This `docs/canon/ql-mef-module/` package in `EpiLogos/agent-system-design` remains the governing cross-product target design while draft PR #111 is under review and after ratification according to the Factory Constitutional Index.
+This `docs/canon/ql-mef-module/` package in `EpiLogos/agent-system-design` is the governing cross-product target design according to the Factory Constitutional Index — settled, not pending. (#111, which proposed the package, closed 2026-08-22 without a tracked GitHub merge; the package's content is current canon regardless, and is already built on by `AGENT-CAPABILITY-INTAKE.md` and `contracts/factory/source-ground.json`.)
 
 The ownership boundary is now explicit:
 
