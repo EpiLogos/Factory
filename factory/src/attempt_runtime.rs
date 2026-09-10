@@ -17,8 +17,8 @@ use crate::action_projection::{FactoryActionCaller, ProjectedFactoryActionAuthor
 use crate::core::run::{Run, RunRef, WorkflowUnitRef};
 use crate::execution_intelligence::ExecutionDisposition;
 use crate::orchestration::{
-    ExecutableOrchestration, ExecutionLaunch, LegRecord, LegStatus, OrchestrationError,
-    OrchestrationSnapshot, RetryGrant, ReturnedArtifact,
+    ExecutableOrchestration, ExecutionLaunch, LegRecord, OrchestrationError, OrchestrationSnapshot,
+    RetryGrant, ReturnedArtifact,
 };
 use crate::workflow::{compile_workflow, CompiledWorkflowUnit, WorkflowSource};
 use fs2::FileExt;
@@ -1403,6 +1403,7 @@ fn lock_path(path: &Path) -> Result<fs::File, FactoryAttemptError> {
     }
     let lock = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(lock_path)?;
