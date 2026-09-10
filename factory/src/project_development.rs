@@ -256,7 +256,10 @@ impl Display for ProjectDevelopmentError {
                 "bounded Intent must be retained before its return"
             ),
             Self::MissingDevelopmentField => {
-                write!(formatter, "Development Field must be retained before it can be advanced")
+                write!(
+                    formatter,
+                    "Development Field must be retained before it can be advanced"
+                )
             }
             Self::DevelopmentField(error) => Display::fmt(error, formatter),
             Self::EmptyIntentSource => write!(formatter, "bounded Intent requires a source ref"),
@@ -446,7 +449,8 @@ impl ProjectDevelopmentLedger {
         &mut self,
         operative: AikitOperativeReferences,
     ) -> Result<(), ProjectDevelopmentError> {
-        self.development_field_mut()?.set_aikit_operative(operative)?;
+        self.development_field_mut()?
+            .set_aikit_operative(operative)?;
         Ok(())
     }
 
@@ -454,7 +458,8 @@ impl ProjectDevelopmentLedger {
         &mut self,
         binding: DevelopmentMaterialBinding,
     ) -> Result<(), ProjectDevelopmentError> {
-        self.development_field_mut()?.record_material_binding(binding)?;
+        self.development_field_mut()?
+            .record_material_binding(binding)?;
         Ok(())
     }
 
@@ -545,7 +550,10 @@ impl ProjectDevelopmentLedger {
             );
         }
         if let Some(field) = &self.development_field {
-            push_unique(&mut intention_and_ground_refs, field.targets.plan_ref.clone());
+            push_unique(
+                &mut intention_and_ground_refs,
+                field.targets.plan_ref.clone(),
+            );
             for reference in field
                 .targets
                 .ux_refs
