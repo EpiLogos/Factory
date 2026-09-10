@@ -15,17 +15,11 @@ on:
 env:
   CARGO_INCREMENTAL: "0"
 
-permissions:
-  contents: write
-
 jobs:
   factory-rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/caw-221-native-attempts' && 'agent/caw-221-native-attempts' || '' }}
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -34,38 +28,6 @@ jobs:
           workspaces: |
             factory
           cache-on-failure: true
-      - name: Normalize CAW branch source
-        if: github.event_name == 'push' && github.ref == 'refs/heads/agent/caw-221-native-attempts' && github.actor != 'github-actions[bot]'
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          owner = Path('factory/src/native_owner.rs')
-          text = owner.read_text()
-          text = text.replace(
-              'command.env("WORKCELL_CONTROL_TOKEN", authorization);',
-              'command.arg("--authorization").arg(authorization);',
-          )
-          owner.write_text(text)
-
-          regressions = Path('factory/tests/attempt_public_regressions.rs')
-          text = regressions.read_text()
-          if 'receiving_source_revision:' not in text:
-              text = text.replace(
-                  'receiving_ref: None, archive_refs:',
-                  'receiving_ref: None, receiving_source_revision: None, archive_refs:',
-              )
-          regressions.write_text(text)
-          PY
-          cargo fmt --manifest-path factory/Cargo.toml
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add factory
-          if ! git diff --cached --quiet; then
-            git commit -m "fix(factory): normalize native attempt implementation"
-            git push origin HEAD:agent/caw-221-native-attempts
-          fi
       - name: Format
         run: cargo fmt --manifest-path factory/Cargo.toml -- --check
       - name: Clippy
