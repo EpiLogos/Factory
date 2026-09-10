@@ -66,11 +66,13 @@ pub(crate) fn validate_new_work<'a>(
             .and_then(|record| target(&record.disposition))
             .into_iter()
             .collect(),
-        FactoryAttemptOperation::RecordObservation { attempt_ref, receipt }
-            if receipt.owner_ref == "factory"
-                && receipt.contract == "factory.attempt-owner-transport/v1"
-                && receipt.phase == OwnerOperationPhase::Dispatching
-                && receipt.payload["action"] == "send" =>
+        FactoryAttemptOperation::RecordObservation {
+            attempt_ref,
+            receipt,
+        } if receipt.owner_ref == "factory"
+            && receipt.contract == "factory.attempt-owner-transport/v1"
+            && receipt.phase == OwnerOperationPhase::Dispatching
+            && receipt.payload["action"] == "send" =>
         {
             addressed
                 .get(attempt_ref)

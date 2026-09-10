@@ -121,7 +121,10 @@ fn action(
 ) -> FactoryAttemptActionRequest {
     FactoryAttemptActionRequest {
         contract: FACTORY_ATTEMPT_ACTION.into(),
-        projection_ref: format!("{}:material:{}", request.projection_ref, request.request_ref),
+        projection_ref: format!(
+            "{}:material:{}",
+            request.projection_ref, request.request_ref
+        ),
         caller: request.caller.clone(),
         run_ref: request.run_ref.clone(),
         expected_revision: revision,
@@ -168,7 +171,8 @@ fn retain(
         match store.apply(action(request, reading.revision, receipt.clone())) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision {
+                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
+                {
                     return Err(error.to_string());
                 }
             }
@@ -255,7 +259,9 @@ fn validate_response(
                 || payload["world"]["subjects"] != input["subjects"]
                 || payload["world"]["demand_ref"] != input["demand_ref"]
             {
-                return Err("native recovery changed caller subjects, demand or predecessor".into());
+                return Err(
+                    "native recovery changed caller subjects, demand or predecessor".into(),
+                );
             }
         }
         _ => {
@@ -318,19 +324,35 @@ fn validate_shared_effect(
                 .ok_or("material user has no canonical execution history")?
                 .status;
             if unresolved_owner_effects(candidate) {
-                return Err("unknown owner effects require reconciliation before a material effect".into());
+                return Err(
+                    "unknown owner effects require reconciliation before a material effect".into(),
+                );
             }
             if run == &request.run_ref && candidate.attempt_ref == request.attempt_ref {
                 if operation == WorkcellWorldOperation::Release && status != LegStatus::Quiescent {
-                    return Err("material release requires this attempt's explicit quiescence".into());
+                    return Err(
+                        "material release requires this attempt's explicit quiescence".into(),
+                    );
                 }
                 if operation == WorkcellWorldOperation::Recover
                     && (leg.execution_ref != execution(candidate)
-                        || !matches!(status, LegStatus::Active | LegStatus::Detached | LegStatus::ProcessTerminated | LegStatus::Quiescent))
+                        || !matches!(
+                            status,
+                            LegStatus::Active
+                                | LegStatus::Detached
+                                | LegStatus::ProcessTerminated
+                                | LegStatus::Quiescent
+                        ))
                 {
-                    return Err("historical or cancelled attempts cannot recover a new material body".into());
+                    return Err(
+                        "historical or cancelled attempts cannot recover a new material body"
+                            .into(),
+                    );
                 }
-            } else if !matches!(status, LegStatus::Quiescent | LegStatus::Failed | LegStatus::Returned) {
+            } else if !matches!(
+                status,
+                LegStatus::Quiescent | LegStatus::Failed | LegStatus::Returned
+            ) {
                 return Err("material is still used by another active Factory attempt".into());
             }
         }
@@ -347,7 +369,10 @@ fn settle_read_calls(
 ) -> Result<(), String> {
     if outcome.phase != OwnerOperationPhase::Observed
         || outcome.payload["detail"]["validated"] != true
-        || !matches!(outcome.payload["operation"].as_str(), Some("inspect" | "observe" | "expose" | "collect"))
+        || !matches!(
+            outcome.payload["operation"].as_str(),
+            Some("inspect" | "observe" | "expose" | "collect")
+        )
     {
         return Ok(());
     }
@@ -364,10 +389,14 @@ fn settle_read_calls(
         .map(|receipt| (*receipt).clone())
         .collect::<Vec<_>>();
     for receipt in prior {
-        let resolution = stamped(receipt, OwnerOperationPhase::Observed, json!({
-            "validated":true,"ownerReceipt":outcome.payload["detail"]["ownerReceipt"],
-            "reconciledBy":request.request_ref,"meaning":"fresh read, not replay of an effect"
-        }));
+        let resolution = stamped(
+            receipt,
+            OwnerOperationPhase::Observed,
+            json!({
+                "validated":true,"ownerReceipt":outcome.payload["detail"]["ownerReceipt"],
+                "reconciledBy":request.request_ref,"meaning":"fresh read, not replay of an effect"
+            }),
+        );
         retain(store, request, &resolution)?;
     }
     Ok(())
@@ -378,14 +407,17 @@ fn settle_read_calls(
 struct TransportReceipt(PathBuf);
 impl TransportReceipt {
     fn new(bytes: &[u8]) -> Result<Self, String> {
-        let directory = std::env::temp_dir().join(format!("factory-material-{}", ulid::Ulid::new()));
+        let directory =
+            std::env::temp_dir().join(format!("factory-material-{}", ulid::Ulid::new()));
         let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder.create(&directory).map_err(|error| error.to_string())?;
+        builder
+            .create(&directory)
+            .map_err(|error| error.to_string())?;
         let staging = Self(directory);
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -394,7 +426,9 @@ impl TransportReceipt {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut file = options.open(staging.path()).map_err(|error| error.to_string())?;
+        let mut file = options
+            .open(staging.path())
+            .map_err(|error| error.to_string())?;
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
             .map_err(|error| error.to_string())?;
@@ -419,20 +453,31 @@ pub fn execute(
         return Err("invalid material Action contract or request identity".into());
     }
     let NativeOwnerInvocation::WorkcellWorld {
-        binary, receipt, world_operation, endpoint, authorization, contract_revision,
-    } = &request.invocation else {
+        binary,
+        receipt,
+        world_operation,
+        endpoint,
+        authorization,
+        contract_revision,
+    } = &request.invocation
+    else {
         return Err("material Action requires the existing Workcell World adapter".into());
     };
     if authorization.is_some() {
-        return Err("use WORKCELL_CONTROL_TOKEN; credentials cannot enter attempt JSON/state".into());
+        return Err(
+            "use WORKCELL_CONTROL_TOKEN; credentials cannot enter attempt JSON/state".into(),
+        );
     }
     if contract_revision != WORKCELL_CAW_CONTRACT_REVISION
-        || endpoint.as_deref().is_none_or(|value| value.trim().is_empty())
+        || endpoint
+            .as_deref()
+            .is_none_or(|value| value.trim().is_empty())
         || !receipt.is_absolute()
     {
         return Err("material Action requires the pinned owner, explicit endpoint and absolute receipt path".into());
     }
-    let digest = blake3::hash(&serde_json::to_vec(&request).map_err(|error| error.to_string())?).to_string();
+    let digest =
+        blake3::hash(&serde_json::to_vec(&request).map_err(|error| error.to_string())?).to_string();
     let operation_ref = format!("factory-attempt-material:{}", request.request_ref);
     let mut store = FileAttemptStore::open_run(state_path, request.run_ref.clone())
         .map_err(|error| error.to_string())?;
@@ -449,8 +494,12 @@ pub fn execute(
         partial_effect_refs: BTreeSet::new(),
         payload: Value::Null,
     };
-    crate::attempt_runtime::validate_action_request(&action(&request, reading.revision, probe.clone()))
-        .map_err(|error| error.to_string())?;
+    crate::attempt_runtime::validate_action_request(&action(
+        &request,
+        reading.revision,
+        probe.clone(),
+    ))
+    .map_err(|error| error.to_string())?;
     // The original call may have preceded execution binding. Exact replay keeps
     // its original basis and never acts; a new call must name current identity.
     if let Some(previous) = calls(attempt).get(operation_ref.as_str()) {
@@ -465,11 +514,18 @@ pub fn execute(
     if reading.revision != request.expected_revision {
         return Err("stale Factory revision before material owner invocation".into());
     }
-    let workcell = attempt.disposition.body.workcell_ref.as_deref()
+    let workcell = attempt
+        .disposition
+        .body
+        .workcell_ref
+        .as_deref()
         .ok_or("attempt has no Workcell binding")?;
     let mut bytes = Vec::new();
-    fs::File::open(receipt).map_err(|error| error.to_string())?
-        .take(MAX_RECEIPT + 1).read_to_end(&mut bytes).map_err(|error| error.to_string())?;
+    fs::File::open(receipt)
+        .map_err(|error| error.to_string())?
+        .take(MAX_RECEIPT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| error.to_string())?;
     if bytes.len() as u64 > MAX_RECEIPT {
         return Err("material receipt exceeds four MiB".into());
     }
@@ -478,10 +534,15 @@ pub fn execute(
     if !known_world(attempt, world) {
         return Err("material receipt is not bound to this attempt".into());
     }
-    let effectful = matches!(world_operation, WorkcellWorldOperation::Recover | WorkcellWorldOperation::Release);
+    let effectful = matches!(
+        world_operation,
+        WorkcellWorldOperation::Recover | WorkcellWorldOperation::Release
+    );
     if effectful {
         if current_world(attempt) != Some(world) {
-            return Err("superseded material cannot be recovered or released by its old receipt".into());
+            return Err(
+                "superseded material cannot be recovered or released by its old receipt".into(),
+            );
         }
         if calls(attempt).values().any(|call| pending(call.phase)) {
             return Err("unresolved material call must be reconciled before another effect".into());
@@ -496,15 +557,22 @@ pub fn execute(
     intent.payload = json!({"requestDigest":digest,"worldRef":world,"workcellRef":workcell,
         "receiptDigest":format!("blake3:{}",blake3::hash(&bytes)),"operation":operation,
         "endpoint":endpoint,"executionRef":request.execution_ref});
-    let intent = stamped(intent, OwnerOperationPhase::Dispatching,
-        json!({"meaning":"Factory call intent, not a Workcell result"}));
-    store.apply(action(&request, request.expected_revision, intent.clone()))
+    let intent = stamped(
+        intent,
+        OwnerOperationPhase::Dispatching,
+        json!({"meaning":"Factory call intent, not a Workcell result"}),
+    );
+    store
+        .apply(action(&request, request.expected_revision, intent.clone()))
         .map_err(|error| error.to_string())?;
     let staging = match TransportReceipt::new(&bytes) {
         Ok(staging) => staging,
         Err(error) => {
-            let failed = stamped(intent, OwnerOperationPhase::Failed,
-                json!({"failure":error,"ownerInvoked":false}));
+            let failed = stamped(
+                intent,
+                OwnerOperationPhase::Failed,
+                json!({"failure":error,"ownerInvoked":false}),
+            );
             let retained = retain(&mut store, &request, &failed).err();
             return Ok(result(&store, &request, failed, false, retained));
         }
@@ -517,37 +585,66 @@ pub fn execute(
         authorization: None,
         contract_revision: contract_revision.clone(),
     };
-    let timeout = attempt.disposition.budget.wall_clock_timeout_ms
-        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS).min(DEFAULT_OWNER_TIMEOUT_MS);
+    let timeout = attempt
+        .disposition
+        .budget
+        .wall_clock_timeout_ms
+        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS)
+        .min(DEFAULT_OWNER_TIMEOUT_MS);
     let outcome = match invoke_native_owner_bounded(&invocation, timeout) {
         Ok(mut owner) => {
             // Adapter identities use semantic refs, not the temporary filename.
             // The actual owner response payload remains byte-equivalent JSON.
-            owner.operation_ref = format!("workcell-material:{workcell}:{world}:{}", operation.as_str().expect("enum is text"));
-            owner.receipt_ref = format!("workcell-material:{}", blake3::hash(
-                &serde_json::to_vec(&(&owner.operation_ref, &owner.payload)).expect("JSON serializes")));
+            owner.operation_ref = format!(
+                "workcell-material:{workcell}:{world}:{}",
+                operation.as_str().expect("enum is text")
+            );
+            owner.receipt_ref = format!(
+                "workcell-material:{}",
+                blake3::hash(
+                    &serde_json::to_vec(&(&owner.operation_ref, &owner.payload))
+                        .expect("JSON serializes")
+                )
+            );
             match validate_response(&mut owner, *world_operation, &input, workcell, world) {
                 Ok(()) => {
                     let phase = owner.phase;
-                    stamped(intent, phase, json!({"validated":true,"ownerReceipt":owner,
+                    stamped(
+                        intent,
+                        phase,
+                        json!({"validated":true,"ownerReceipt":owner,
                         "workerContinuationEstablished":false,"workerQuiescenceEstablished":false,
-                        "taskReturnEstablished":false,"materialUsageAttribution":"shared-material-not-task-metrics"}))
+                        "taskReturnEstablished":false,"materialUsageAttribution":"shared-material-not-task-metrics"}),
+                    )
                 }
-                Err(error) => stamped(intent, OwnerOperationPhase::Uncertain,
-                    json!({"validated":false,"failure":error,"ownerReceipt":owner})),
+                Err(error) => stamped(
+                    intent,
+                    OwnerOperationPhase::Uncertain,
+                    json!({"validated":false,"failure":error,"ownerReceipt":owner}),
+                ),
             }
         }
-        Err(error) => stamped(intent, OwnerOperationPhase::Uncertain,
-            json!({"validated":false,"failure":error.to_string(),"instruction":"inspect native material; do not repeat a consequential call"})),
+        Err(error) => stamped(
+            intent,
+            OwnerOperationPhase::Uncertain,
+            json!({"validated":false,"failure":error.to_string(),"instruction":"inspect native material; do not repeat a consequential call"}),
+        ),
     };
     let retention_error = retain(&mut store, &request, &outcome)
-        .and_then(|()| settle_read_calls(&mut store, &request, &outcome)).err();
+        .and_then(|()| settle_read_calls(&mut store, &request, &outcome))
+        .err();
     Ok(result(&store, &request, outcome, false, retention_error))
 }
 
 pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
-    let positional = args.iter().filter(|arg| arg.as_str() != "--json").collect::<Vec<_>>();
-    if matches!(positional.first().map(|arg| arg.as_str()), None | Some("help" | "--help" | "-h")) {
+    let positional = args
+        .iter()
+        .filter(|arg| arg.as_str() != "--json")
+        .collect::<Vec<_>>();
+    if matches!(
+        positional.first().map(|arg| arg.as_str()),
+        None | Some("help" | "--help" | "-h")
+    ) {
         return Ok(format!("Factory attempt material lifecycle\n\nUsage:\n  factory attempt material <state> <request-json|-> [--json]\n\nContract: {MATERIAL_ACTION}\nUses the existing Workcell World invocation and Factory owner-request fields. An explicit endpoint and bound material receipt are required. WORKCELL_CONTROL_TOKEN stays in the host environment. Exact replay never repeats an owner call; material recovery does not resume the Agent, and release requires explicit quiescence. Fresh reads reconcile only matching failed read transports, not unknown consequential effects."));
     }
     if positional.len() > 2 {
@@ -560,10 +657,15 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
         stdin.to_owned()
     } else {
         let mut input = String::new();
-        std::io::stdin().read_to_string(&mut input).map_err(|error| error.to_string())?;
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .map_err(|error| error.to_string())?;
         input
     };
-    let receipt = execute(Path::new(positional[0]), serde_json::from_str(&input).map_err(|error| error.to_string())?)?;
+    let receipt = execute(
+        Path::new(positional[0]),
+        serde_json::from_str(&input).map_err(|error| error.to_string())?,
+    )?;
     if args.iter().any(|arg| arg == "--json") {
         serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())
     } else {
