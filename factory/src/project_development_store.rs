@@ -48,6 +48,7 @@ pub enum ProjectDevelopmentStoreError {
     Json(serde_json::Error),
     VersionMismatch { expected: String, actual: String },
     RunMismatch { expected: RunRef, actual: RunRef },
+    Native(String),
 }
 
 impl Display for ProjectDevelopmentStoreError {
@@ -65,6 +66,7 @@ impl Display for ProjectDevelopmentStoreError {
                 formatter,
                 "project-development store returned {actual}, expected {expected}"
             ),
+            Self::Native(error) => write!(formatter, "native developmental transaction: {error}"),
         }
     }
 }
@@ -115,5 +117,144 @@ impl ProjectDevelopmentStore for FileProjectDevelopmentStore {
             });
         }
         Ok(Some(ledger))
+    }
+}
+
+/// Reopen the existing first-party developmental provider encoding. This is not
+/// a second Run store: attempt operations and ordinary developmental Actions
+/// read and replace the very same provider document.
+pub fn read_developmental_state(
+    path: &Path,
+) -> Result<crate::developmental_read::FactoryDevelopmentalState, ProjectDevelopmentStoreError> {
+    #[derive(serde::Deserialize)]
+    struct Stored {
+        schema: String,
+        state: crate::developmental_read::FactoryDevelopmentalState,
+    }
+    let stored: Stored = serde_json::from_slice(&fs::read(path)?)?;
+    if stored.schema != crate::developmental_read::FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER {
+        return Err(ProjectDevelopmentStoreError::Native(
+            "unsupported native developmental provider schema".into(),
+        ));
+    }
+    stored
+        .state
+        .validate()
+        .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))?;
+    Ok(stored.state)
+}
+
+/// A native transaction shares the developmental provider's advisory lock and
+/// atomic, synced publication path. The caller must validate its Action, exact
+/// revisions and current authority *inside* this closure, after reopening.
+/// Failure publishes nothing; process death releases the OS lock. There is no
+/// stale PID lock to delete, write-ahead copy of a Run, or transfer artifact.
+/// Owner transport must run outside this closure, after durable reservation.
+pub fn transact_developmental_state<T>(
+    path: &Path,
+    operation: impl FnOnce(
+        &mut crate::developmental_read::FactoryDevelopmentalState,
+    ) -> Result<T, ProjectDevelopmentStoreError>,
+) -> Result<T, ProjectDevelopmentStoreError> {
+    use fs2::FileExt;
+    let lock_path = path.with_file_name(format!(
+        ".{}.lock",
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("factory-developmental-state.json")
+    ));
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    lock.lock_exclusive()?;
+    let mut candidate = read_developmental_state(path)?;
+    let before = candidate.clone();
+    let result = operation(&mut candidate)?;
+    candidate
+        .validate()
+        .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))?;
+    if candidate != before {
+        crate::developmental_read::FactoryDevelopmentalFileProvider::create(path, candidate)
+            .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))?;
+    }
+    FileExt::unlock(&lock)?;
+    Ok(result)
+}
+
+#[cfg(test)]
+mod native_transaction_tests {
+    use super::*;
+    use crate::build::{ClaimRecord, FactoryBuildState};
+    use crate::core::run::{Project, ProjectRef, Run};
+    use crate::developmental_read::{FactoryDevelopmentalFileProvider, FactoryDevelopmentalState};
+
+    fn initial(path: &Path) -> RunRef {
+        let project_ref: ProjectRef = "project:01ARZ3NDEKTSV4RRFFQ69G5FAE".parse().unwrap();
+        let run_ref: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FAA".parse().unwrap();
+        let run = Run::new(run_ref.clone(), project_ref.clone(), "native attempts", "factory")
+            .unwrap();
+        let build = FactoryBuildState::new(Project::new(project_ref), run).unwrap();
+        FactoryDevelopmentalFileProvider::create(
+            path,
+            FactoryDevelopmentalState::new(build, vec![]).unwrap(),
+        )
+        .unwrap();
+        run_ref
+    }
+
+    fn claim(run_ref: &RunRef, reference: &str) -> ClaimRecord {
+        ClaimRecord {
+            run_ref: run_ref.clone(),
+            claim_ref: reference.into(),
+            statement: "controlled transaction test".into(),
+            status: "proposed".into(),
+            evidence_refs: vec![],
+        }
+    }
+
+    #[test]
+    fn failed_transaction_keeps_exact_provider_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let run_ref = initial(&path);
+        let before = fs::read(&path).unwrap();
+        let result: Result<(), _> = transact_developmental_state(&path, |state| {
+            state.build.insert_claim(claim(&run_ref, "claim:rollback")).unwrap();
+            Err(ProjectDevelopmentStoreError::Native("interrupted before commit".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(before, fs::read(&path).unwrap());
+        // The error path released the actual OS lock.
+        transact_developmental_state(&path, |_| Ok(())).unwrap();
+    }
+
+    #[test]
+    fn reopened_transaction_detects_stale_revision_and_public_provider_reads_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let run_ref = initial(&path);
+        let expected = read_developmental_state(&path).unwrap().build.revision();
+        transact_developmental_state(&path, |state| {
+            assert_eq!(state.build.revision(), expected);
+            state.build.insert_claim(claim(&run_ref, "claim:committed"))
+                .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
+        })
+        .unwrap();
+        let after = fs::read(&path).unwrap();
+        let stale = transact_developmental_state(&path, |state| {
+            if state.build.revision() != expected {
+                return Err(ProjectDevelopmentStoreError::Native("stale revision".into()));
+            }
+            Ok(())
+        });
+        assert!(stale.is_err());
+        assert_eq!(after, fs::read(&path).unwrap());
+        FactoryDevelopmentalFileProvider::open(&path)
+            .unwrap()
+            .run_reading(&run_ref)
+            .unwrap();
     }
 }
