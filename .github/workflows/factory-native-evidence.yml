@@ -4,15 +4,27 @@ on:
   pull_request:
     paths:
       - 'factory/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/factory-native-evidence.yml'
   push:
-    branches: ['agent/caw-221-native-attempts']
+    branches: [main]
     paths:
       - 'factory/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
       - '.github/workflows/factory-native-evidence.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   native-attempt-evidence:
@@ -21,60 +33,50 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: factory
-      - name: Preserve exact source
+      - name: Preserve exact source and prepare the inspected Central candidate
         run: |
-          mkdir -p native-evidence
+          set -euo pipefail
+          mkdir -p native-evidence "$RUNNER_TEMP/factory-central-owner"
           git rev-parse HEAD > native-evidence/source-sha.txt
           git archive HEAD | gzip > native-evidence/source.tar.gz
-      - name: Format check
-        id: format
-        run: cargo fmt --manifest-path factory/Cargo.toml -- --check
-      - name: Native all-target tests
-        id: tests
-        if: always()
-        run: |
-          set -o pipefail
-          cargo test --manifest-path factory/Cargo.toml --all-targets 2>&1 | tee native-evidence/tests.log
-      - name: Clippy
-        if: always()
-        run: cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
-      - name: Build the exact Central consumer contract
-        if: steps.tests.outcome == 'success'
-        run: |
-          git clone --no-checkout https://github.com/EpiLogos/Central.git "$RUNNER_TEMP/factory-central-owner"
-          git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+          git -C "$RUNNER_TEMP/factory-central-owner" init
+          git -C "$RUNNER_TEMP/factory-central-owner" remote add origin https://github.com/EpiLogos/Central.git
+          git -C "$RUNNER_TEMP/factory-central-owner" fetch --depth=1 origin e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+          git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/factory-central-owner" rev-parse HEAD > native-evidence/central-source-sha.txt
+          test "$(cat native-evidence/central-source-sha.txt)" = e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: factory-native-attempt-integration
+          cache-on-failure: true
+          workspaces: |
+            . -> target
+            ${{ runner.temp }}/factory-central-owner -> target
+      # Format, Clippy and all-target/doctests remain in required factory-rust.
+      # This lane supplies the seven normally-ignored native integration cases.
+      - name: Build exact native binaries
+        run: |
+          cargo build --locked --package epilogos-factory --bin factory
           cargo build --manifest-path "$RUNNER_TEMP/factory-central-owner/Cargo.toml" -p ctrl --locked
       - name: Real native Central to Factory preparation and dispatch gates
-        if: steps.tests.outcome == 'success'
+        id: integration
         env:
           FACTORY_REQUIRE_NATIVE_CTRL: '1'
         run: |
-          set -o pipefail
+          set -euo pipefail
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
-          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
+          cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
           test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 7
-          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
-      - name: Preserve successful native binary
-        if: steps.tests.outcome == 'success'
+          cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
+      - name: Preserve integration-tested native binary
+        if: ${{ !cancelled() && steps.integration.outcome == 'success' }}
         run: |
-          target=$(cargo metadata --manifest-path factory/Cargo.toml --format-version 1 --no-deps | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')
+          target=$(cargo metadata --locked --manifest-path factory/Cargo.toml --format-version 1 --no-deps | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')
           cp "$target/debug/factory" native-evidence/factory
           sha256sum native-evidence/factory > native-evidence/factory.sha256
-      - name: Formatting diagnostics only
-        if: always() && steps.format.outcome == 'failure'
-        run: |
-          cargo fmt --manifest-path factory/Cargo.toml
-          git diff -- factory > native-evidence/rustfmt.patch
-          tar -czf native-evidence/formatted-factory.tar.gz factory/src factory/tests
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           name: factory-native-${{ github.run_id }}
           path: native-evidence/

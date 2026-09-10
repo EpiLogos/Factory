@@ -1,43 +1,101 @@
 name: Factory Rust
 
 on:
+  # Keep this required check present on every PR, including documentation PRs.
   pull_request:
   push:
-    branches:
-      - main
-      - "agent/**"
+    branches: [main]
     paths:
-      - "factory/**"
-      - "contracts/factory/**"
-      - "scripts/validate_agent_capability_intake.py"
-      - ".github/workflows/factory-rust.yml"
+      - 'factory/**'
+      - 'contracts/factory/**'
+      - 'skills/**'
+      - 'scripts/**'
+      - '.oi/product.json'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.cargo/**'
+      - 'rust-toolchain*'
+      - '.github/workflows/factory-rust.yml'
+      - '.github/workflows/factory-native-skills.yml'
+      - '.github/workflows/prelocal-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 env:
-  CARGO_INCREMENTAL: "0"
+  CARGO_INCREMENTAL: '0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   factory-rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Native Skills and workflow coverage
+        run: |
+          python3 -m pip install --disable-pip-version-check 'jsonschema>=4.18,<5' 'PyYAML==6.0.2'
+          python3 -m unittest discover -s scripts/tests -p test_ci_workflows.py -v
+          python3 scripts/validate_factory_skills.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            factory
+          shared-key: factory-native
+          workspaces: '. -> target'
           cache-on-failure: true
       - name: Format
-        run: cargo fmt --manifest-path factory/Cargo.toml -- --check
+        run: cargo fmt --all -- --check
       - name: Clippy
-        run: cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
-      - name: Test
-        run: cargo test --manifest-path factory/Cargo.toml --all-targets
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Test all native targets
+        run: cargo test --workspace --all-targets --locked
+      - name: Documentation tests retained from pre-local verification
+        run: cargo test --workspace --doc --locked
       - name: Agent capability intake conformance lane
         run: python3 scripts/validate_agent_capability_intake.py
-      - name: Routine continuation contract lane
+      - name: Routine continuation and self-hosting Commission contracts
         run: |
-          python3 -m pip install --disable-pip-version-check 'jsonschema>=4.18,<5'
           python3 scripts/validate_routine_continuation.py
           python3 scripts/validate_self_hosting_commission.py
+
+  # The former prelocal-build artifact job now depends on the SAME exact-source
+  # native gate. Packaging/attestation is unchanged; no second test build.
+  artifact:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: factory-rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package exact-main Factory component
+        shell: bash
+        run: |
+          set -euo pipefail
+          short_sha="${GITHUB_SHA::12}"
+          name="software-factory-0.1.0-${short_sha}-component"
+          mkdir -p "dist/$name"
+          cp -R factory .oi "dist/$name/"
+          cp Cargo.toml Cargo.lock README.md "dist/$name/"
+          printf '%s\n' "$GITHUB_SHA" > "dist/$name/source-commit.txt"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          shasum -a 256 "dist/$name.tar.gz" > "dist/$name.tar.gz.sha256"
+      - uses: actions/attest@v4
+        with:
+          subject-path: dist/*.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: software-factory-component-${{ github.sha }}
+          path: |
+            dist/*.tar.gz
+            dist/*.sha256
