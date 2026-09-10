@@ -1,3 +1,3 @@
 fn main() -> std::process::ExitCode {
-    epilogos_factory::cli::cli_main()
+    epilogos_factory::development_field_cli::cli_main()
 }

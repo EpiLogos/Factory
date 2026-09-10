@@ -1,4 +1,8 @@
 use crate::core::run::RunRef;
+use crate::development_field::{
+    AikitOperativeReferences, DevelopmentField, DevelopmentFieldError, DevelopmentFieldReading,
+    DevelopmentFieldReturn, DevelopmentMaterialBinding,
+};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -209,6 +213,10 @@ pub struct ProjectDevelopmentLedger {
     /// Additive P5 return against the active bounded Intent.
     #[serde(default)]
     pub intent_return: Option<BoundedIntentReturn>,
+    /// Native Factory software-development technique for this Run.  This record
+    /// composes existing owner refs; it is not another source/Git/runtime store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub development_field: Option<DevelopmentField>,
     pub reflection_anchors: Vec<ReflectionAnchor>,
     pub praxis: Option<PraxisCondition>,
     pub capability_rows: Vec<CapabilityPraxisRow>,
@@ -220,6 +228,8 @@ pub enum ProjectDevelopmentError {
     WrongRun { expected: RunRef, actual: RunRef },
     DuplicateRef(String),
     MissingIntent,
+    MissingDevelopmentField,
+    DevelopmentField(DevelopmentFieldError),
     EmptyIntentSource,
     EmptyContextResolution,
     IntentSourceMismatch { expected: String, actual: String },
@@ -245,6 +255,13 @@ impl Display for ProjectDevelopmentError {
                 formatter,
                 "bounded Intent must be retained before its return"
             ),
+            Self::MissingDevelopmentField => {
+                write!(
+                    formatter,
+                    "Development Field must be retained before it can be advanced"
+                )
+            }
+            Self::DevelopmentField(error) => Display::fmt(error, formatter),
             Self::EmptyIntentSource => write!(formatter, "bounded Intent requires a source ref"),
             Self::EmptyContextResolution => {
                 write!(
@@ -278,6 +295,12 @@ impl Display for ProjectDevelopmentError {
 
 impl Error for ProjectDevelopmentError {}
 
+impl From<DevelopmentFieldError> for ProjectDevelopmentError {
+    fn from(error: DevelopmentFieldError) -> Self {
+        Self::DevelopmentField(error)
+    }
+}
+
 impl ProjectDevelopmentLedger {
     pub fn new(run_ref: RunRef) -> Self {
         Self {
@@ -286,6 +309,7 @@ impl ProjectDevelopmentLedger {
             orientation: None,
             intent: None,
             intent_return: None,
+            development_field: None,
             reflection_anchors: Vec::new(),
             praxis: None,
             capability_rows: Vec::new(),
@@ -408,6 +432,54 @@ impl ProjectDevelopmentLedger {
         Some(BoundedIntentReturnState::Satisfied)
     }
 
+    /// Establish the Run's native Factory Development Field.  Subsequent
+    /// operative/material/return changes advance this same semantic carrier.
+    pub fn set_development_field(
+        &mut self,
+        field: DevelopmentField,
+    ) -> Result<(), ProjectDevelopmentError> {
+        self.ensure_run(&field.run_ref)?;
+        self.ensure_unique(&field.field_ref)?;
+        field.validate()?;
+        self.development_field = Some(field);
+        Ok(())
+    }
+
+    pub fn set_development_field_operative(
+        &mut self,
+        operative: AikitOperativeReferences,
+    ) -> Result<(), ProjectDevelopmentError> {
+        self.development_field_mut()?
+            .set_aikit_operative(operative)?;
+        Ok(())
+    }
+
+    pub fn add_development_field_material(
+        &mut self,
+        binding: DevelopmentMaterialBinding,
+    ) -> Result<(), ProjectDevelopmentError> {
+        self.development_field_mut()?
+            .record_material_binding(binding)?;
+        Ok(())
+    }
+
+    pub fn add_development_field_return(
+        &mut self,
+        returned: DevelopmentFieldReturn,
+    ) -> Result<(), ProjectDevelopmentError> {
+        self.development_field_mut()?.record_return(returned)?;
+        Ok(())
+    }
+
+    pub fn development_field_reading(
+        &self,
+    ) -> Result<DevelopmentFieldReading, ProjectDevelopmentError> {
+        self.development_field
+            .as_ref()
+            .map(DevelopmentField::reading)
+            .ok_or(ProjectDevelopmentError::MissingDevelopmentField)
+    }
+
     pub fn add_reflection_anchor(
         &mut self,
         anchor: ReflectionAnchor,
@@ -477,11 +549,50 @@ impl ProjectDevelopmentLedger {
                 intent.intent_source_ref.clone(),
             );
         }
+        if let Some(field) = &self.development_field {
+            push_unique(
+                &mut intention_and_ground_refs,
+                field.targets.plan_ref.clone(),
+            );
+            for reference in field
+                .targets
+                .ux_refs
+                .iter()
+                .chain(field.targets.source_refs.iter())
+                .chain(field.targets.self_description_refs.iter())
+            {
+                push_unique(&mut intention_and_ground_refs, reference.clone());
+            }
+        }
 
         let mut semantic_refs = Vec::new();
         let mut local_source_refs = Vec::new();
         let mut code_refs = Vec::new();
         let mut evidence_refs = Vec::new();
+
+        if let Some(field) = &self.development_field {
+            for reference in &field.targets.capability_refs {
+                push_unique(&mut semantic_refs, reference.clone());
+            }
+            for reference in &field.workflow_unit_refs {
+                push_unique(&mut semantic_refs, reference.to_string());
+            }
+            for returned in &field.returns {
+                for evidence_ref in &returned.verification_evidence_refs {
+                    push_unique(&mut evidence_refs, evidence_ref.clone());
+                }
+                for standing in &returned.evidence {
+                    for evidence_ref in &standing.evidence_refs {
+                        push_unique(&mut evidence_refs, evidence_ref.clone());
+                    }
+                }
+                for candidate in &returned.candidates {
+                    for evidence_ref in &candidate.evidence_refs {
+                        push_unique(&mut evidence_refs, evidence_ref.clone());
+                    }
+                }
+            }
+        }
 
         for anchor in &self.reflection_anchors {
             push_unique(&mut semantic_refs, anchor.semantic_ref.clone());
@@ -538,6 +649,12 @@ impl ProjectDevelopmentLedger {
         }
     }
 
+    fn development_field_mut(&mut self) -> Result<&mut DevelopmentField, ProjectDevelopmentError> {
+        self.development_field
+            .as_mut()
+            .ok_or(ProjectDevelopmentError::MissingDevelopmentField)
+    }
+
     fn ensure_run(&self, actual: &RunRef) -> Result<(), ProjectDevelopmentError> {
         if actual == &self.run_ref {
             Ok(())
@@ -564,6 +681,11 @@ impl ProjectDevelopmentLedger {
                 .intent_return
                 .as_ref()
                 .map(|record| record.return_ref.as_str() == candidate)
+                .unwrap_or(false)
+            || self
+                .development_field
+                .as_ref()
+                .map(|record| record.field_ref.as_str() == candidate)
                 .unwrap_or(false)
             || self
                 .praxis
