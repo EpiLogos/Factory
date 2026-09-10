@@ -115,13 +115,10 @@ pub struct Run {
     lifecycle: RunLifecycle,
     write_authority: WriteAuthority,
     map: RunMap,
-    /// Run-owned cognition. Historical v1 records remain readable.
+    /// Run-owned cognition. `serde(default)` keeps historical v1 Run records readable;
+    /// canonical new writes always materialise the field.
     #[serde(default)]
     thought_field: RunThoughtField,
-    /// Durable coordinator state and per-attempt facts belong to this same
-    /// canonical Run. The snapshot contains no second Run or write authority.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    attempt_field: Option<crate::attempt_types::NativeAttemptField>,
     applied_command_ids: BTreeSet<String>,
 }
 
@@ -150,7 +147,6 @@ impl Run {
             },
             map,
             thought_field: RunThoughtField::default(),
-            attempt_field: None,
             applied_command_ids: BTreeSet::new(),
         })
     }
@@ -187,40 +183,6 @@ impl Run {
         &self.thought_field
     }
 
-    pub fn attempt_field(&self) -> Option<&crate::attempt_types::NativeAttemptField> {
-        self.attempt_field.as_ref()
-    }
-
-    /// Called only by the native attempt application after a current Action and
-    /// source check. Advancing this field advances Run revision even when no
-    /// topology change occurred (detach, owner observation, retry revocation).
-    pub(crate) fn retain_attempt_field(
-        &mut self,
-        authority: &RunMutationAuthority,
-        expected_revision: Revision,
-        field: crate::attempt_types::NativeAttemptField,
-    ) -> Result<(), RunContractError> {
-        self.validate_authority(authority)?;
-        if expected_revision != self.revision {
-            return Err(RunContractError::RevisionConflict {
-                expected: expected_revision,
-                actual: self.revision,
-            });
-        }
-        if field.contract != crate::attempt_types::ATTEMPT_FIELD
-            || field.workflow_key.trim().is_empty()
-        {
-            return Err(RunContractError::CorruptRun);
-        }
-        let next = self
-            .revision
-            .next()
-            .ok_or(RunContractError::RevisionOverflow)?;
-        self.attempt_field = Some(field);
-        self.revision = next;
-        Ok(())
-    }
-
     pub fn mutation_authority(&self) -> RunMutationAuthority {
         RunMutationAuthority {
             run_ref: self.reference.clone(),
@@ -250,6 +212,7 @@ impl Run {
                 actual: self.revision,
             });
         }
+
         let next_map = self.map.apply(command.mutation)?;
         let next_revision = self
             .revision
@@ -265,7 +228,10 @@ impl Run {
     }
 
     /// Retain one source-backed cognitive determination inside this Run.
-    /// This advances Run revision but leaves RunMap topology untouched.
+    ///
+    /// This advances Run revision but leaves RunMap topology untouched. The same
+    /// Run mutation authority governs retention, so cognition cannot silently
+    /// acquire a second write-authority path.
     pub fn apply_thought_command(
         &mut self,
         authority: &RunMutationAuthority,
@@ -286,6 +252,7 @@ impl Run {
                 actual: self.revision,
             });
         }
+
         let next_revision = self
             .revision
             .next()
@@ -338,17 +305,6 @@ impl Run {
         }
         self.map.validate()?;
         self.thought_field.validate(&self.reference)?;
-        if let Some(field) = &self.attempt_field {
-            if field.contract != crate::attempt_types::ATTEMPT_FIELD
-                || field.workflow_key.trim().is_empty()
-                || field
-                    .applied_actions
-                    .values()
-                    .any(|action| action.receipt.run_ref != self.reference)
-            {
-                return Err(RunContractError::CorruptRun);
-            }
-        }
         Ok(())
     }
 
