@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "attempt.return",
     "attempt.receiving",
     "attempt.learn",
+    "attempt.material",
     "development.attempt.prepare",
     "development.attempt.init",
     "development.attempt.attach",
@@ -24,6 +25,7 @@ const COMMANDS: &[&str] = &[
     "development.attempt.return",
     "development.attempt.receiving",
     "development.attempt.learn",
+    "development.attempt.material",
     "owner",
 ];
 const CONTRACTS: &[&str] = &[
@@ -40,6 +42,8 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_receiving::RECEIVING_RECEIPT,
     crate::attempt_learning::LEARNING_ACTION,
     crate::attempt_learning::LEARNING_RECEIPT,
+    crate::attempt_material::MATERIAL_ACTION,
+    crate::attempt_material::MATERIAL_RECEIPT,
 ];
 
 pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
@@ -64,6 +68,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
             Some("task" | "return") => crate::attempt_task::execute_cli(args),
             Some("receiving") => crate::attempt_receiving::execute_cli(&args[1..], stdin),
             Some("learn") => crate::attempt_learning::execute_cli(&args[1..], stdin),
+            Some("material") => crate::attempt_material::execute_cli(&args[1..], stdin),
             None | Some("help" | "--help" | "-h") => {
                 let base = crate::attempt_application::execute_attempt_cli(args, stdin)
                     .map_err(|error| error.to_string())?;
@@ -72,8 +77,9 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
                 let receiving = crate::attempt_receiving::execute_cli(&[], None)?;
                 let learning = crate::attempt_learning::execute_cli(&[], None)?;
                 let preparation = crate::attempt_central::execute_cli(&[], None)?;
+                let material = crate::attempt_material::execute_cli(&[], None)?;
                 Ok(format!(
-                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{learning}\n\n{preparation}",
+                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{learning}\n\n{preparation}\n\n{material}",
                     task_help()
                 ))
             }
@@ -105,5 +111,5 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
 }
 
 fn task_help() -> &'static str {
-    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
 }
