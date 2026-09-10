@@ -161,8 +161,23 @@ fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Res
     if let Some(revision) = &request.target.expected_authority_revision {
         input["expected_authority_revision"] = json!(revision);
     }
-    if let Some(placement) = &attempt.disposition.placement {
-        input["now_ref"] = json!(placement.now_ref);
+    // Read-only attempts can acquire their native NOW after initial admission.
+    // Preserve that actual owner correlation without inventing a placement grant.
+    let now_ref = attempt
+        .disposition
+        .placement
+        .as_ref()
+        .map(|placement| placement.now_ref.as_str())
+        .or_else(|| {
+            attempt
+                .tracking
+                .iter()
+                .rev()
+                .find(|fact| fact.owner_ref == "central" && fact.kind == "now")
+                .map(|fact| fact.subject_ref.as_str())
+        });
+    if let Some(now_ref) = now_ref {
+        input["now_ref"] = json!(now_ref);
     }
     if let Some(day) = attempt
         .tracking

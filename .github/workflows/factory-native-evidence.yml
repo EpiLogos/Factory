@@ -59,8 +59,8 @@ jobs:
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
           cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
-          test "$(grep -c '^central_cases::native_central_.*: test$' native-evidence/native-central-cases.txt)" = 6
-          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --nocapture 2>&1 | tee native-evidence/native-central.log
+          test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 7
+          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
       - name: Preserve successful native binary
         if: steps.tests.outcome == 'success'
         run: |
