@@ -263,12 +263,11 @@ fn invoke_aikit(
     {
         evidence_refs.insert(format!("aikit-encounter-cursor:{session}:{cursor}"));
     }
-    let operation_ref = delivery_ref
-        .map(|delivery| format!("aikit-encounter:{action}:{session}:{delivery}"))
-        .unwrap_or_else(|| format!("aikit-encounter:{action}:{session}"));
-    let receipt_ref = delivery_ref
-        .map(|delivery| format!("aikit-delivery:{delivery}"))
-        .unwrap_or_else(|| stable_receipt_ref("aikit", &payload));
+    // Sending and later observing one delivery are the same owner operation.
+    // Each changed observation needs its own receipt identity, not a reused
+    // delivery ID that would discard the transition from submitted to returned.
+    let operation_ref = aikit_operation_identity(action, session, delivery_ref);
+    let receipt_ref = stable_receipt_ref("aikit-delivery-observation", &payload);
     Ok(OwnerOperationReceipt {
         owner_ref: "aikit/session-space".into(),
         contract: AIKIT_DELIVERY_CONTRACT.into(),
@@ -404,9 +403,7 @@ fn invoke_workcell_world(
         }
         command.arg("--endpoint").arg(endpoint);
     }
-    if let Some(authorization) = authorization {
-        command.arg("--authorization").arg(authorization);
-    }
+    configure_workcell_authorization(&mut command, authorization);
     command
         .arg("--receipt")
         .arg(receipt)
@@ -685,5 +682,84 @@ impl From<io::Error> for NativeOwnerError {
 impl From<serde_json::Error> for NativeOwnerError {
     fn from(error: serde_json::Error) -> Self {
         Self::Json(error)
+    }
+}
+
+fn aikit_operation_identity(action: &str, session: &str, delivery: Option<&str>) -> String {
+    match delivery {
+        Some(delivery) => format!("aikit-encounter-delivery:{session}:{delivery}"),
+        None => format!("aikit-encounter:{action}:{session}"),
+    }
+}
+
+fn configure_workcell_authorization(command: &mut Command, authorization: Option<&str>) {
+    // WORKCELL_CONTROL_TOKEN is the published native authentication interface.
+    // Absence preserves the operator's inherited environment. Neither the token
+    // nor its value is copied into an operation receipt or process arguments.
+    if let Some(authorization) = authorization {
+        command.env("WORKCELL_CONTROL_TOKEN", authorization);
+    }
+}
+
+#[cfg(test)]
+mod native_adapter_regressions {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn delivery_observations_keep_operation_identity_without_collapsing_receipts() {
+        let sent =
+            aikit_operation_identity("send", "session:controlled", Some("delivery:controlled"));
+        let observed = aikit_operation_identity(
+            "delivery",
+            "session:controlled",
+            Some("delivery:controlled"),
+        );
+        assert_eq!(sent, observed);
+        assert_ne!(
+            sent,
+            aikit_operation_identity("delivery", "session:other", Some("delivery:controlled"))
+        );
+        let submitted =
+            json!({"delivery":{"delivery_ref":"delivery:controlled","phase":"submitted"}});
+        let returned =
+            json!({"delivery":{"delivery_ref":"delivery:controlled","phase":"returned"}});
+        assert_ne!(
+            stable_receipt_ref("aikit-delivery-observation", &submitted),
+            stable_receipt_ref("aikit-delivery-observation", &returned)
+        );
+        assert_eq!(
+            parse_delivery_phase("submitted").unwrap(),
+            OwnerOperationPhase::Submitted
+        );
+        assert!(parse_delivery_phase("made-up-success").is_err());
+    }
+
+    #[test]
+    fn workcell_authorization_uses_environment_not_arguments() {
+        let mut command = Command::new("not-executed-test-binary");
+        configure_workcell_authorization(&mut command, Some("test-only-not-a-credential"));
+        assert_eq!(command.get_args().count(), 0);
+        let environment = command.get_envs().collect::<Vec<_>>();
+        assert_eq!(environment.len(), 1);
+        assert_eq!(environment[0].0, "WORKCELL_CONTROL_TOKEN");
+        assert_eq!(environment[0].1.unwrap(), "test-only-not-a-credential");
+        let mut inherited = Command::new("not-executed-test-binary");
+        configure_workcell_authorization(&mut inherited, None);
+        assert_eq!(inherited.get_envs().count(), 0);
+    }
+
+    #[test]
+    fn unaccepted_owner_revision_is_not_silently_upgraded() {
+        let invocation = NativeOwnerInvocation::AikitEncounter {
+            binary: PathBuf::from("must-not-run"),
+            cwd: PathBuf::from("/controlled-test"),
+            contract_revision: "unverified-new-head".into(),
+            request: json!({"action":"delivery","agent_session":"session:controlled","delivery_ref":"delivery:controlled"}),
+        };
+        assert!(matches!(
+            invoke_native_owner(&invocation),
+            Err(NativeOwnerError::ContractRevisionMismatch { .. })
+        ));
     }
 }

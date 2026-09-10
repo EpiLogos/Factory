@@ -116,7 +116,10 @@ fn validate_operation(
         | RecordProcessTermination { attempt_ref }
         | MarkQuiescent { attempt_ref }
         | IncorporateLateResult { attempt_ref } => {
-            current_attempt(reading, attempt_ref)?;
+            let record = current_attempt(reading, attempt_ref)?;
+            if matches!(operation, MarkQuiescent { .. }) && has_uncertain_operation(record) {
+                return Err(invalid("unknown owner effects must be reconciled before quiescence releases the writer"));
+            }
         }
         Fail {
             attempt_ref,

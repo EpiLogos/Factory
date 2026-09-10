@@ -837,3 +837,24 @@ fn attaching_an_existing_native_run_does_not_create_a_parallel_run_store() {
     assert_eq!(run.destination(), "existing canonical Run");
     assert_eq!(native.attempt_states.len(), 1);
 }
+
+#[test]
+fn uncertain_cancellation_cannot_release_writer_by_quiescing() {
+    let world = World::new();
+    world.start("cancel-unknown");
+    world.bind("cancel-unknown", OwnerOperationPhase::Uncertain);
+    world.apply(FactoryAttemptOperation::RequestCancellation {
+        attempt_ref: "cancel-unknown".into(),
+    });
+    world.apply(FactoryAttemptOperation::AcceptCancellation {
+        attempt_ref: "cancel-unknown".into(),
+    });
+    world.apply(FactoryAttemptOperation::RecordProcessTermination {
+        attempt_ref: "cancel-unknown".into(),
+    });
+    assert!(world
+        .refuses(FactoryAttemptOperation::MarkQuiescent {
+            attempt_ref: "cancel-unknown".into()
+        })
+        .contains("unknown owner effects"));
+}
