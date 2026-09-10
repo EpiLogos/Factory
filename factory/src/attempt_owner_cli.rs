@@ -20,7 +20,7 @@ pub fn execute_attempt_owner_cli(
         None | Some("help") | Some("--help") | Some("-h")
     ) {
         return Ok(format!(
-            "Factory persisted attempt owner Action\n\nUsage:\n  factory attempt owner-action <state-path> <request-json|-> [--json]\n  factory development attempt owner-action <state-path> <request-json|-> [--json]\n\nContract: {FACTORY_ATTEMPT_OWNER_ACTION}\n\nFactory durably records dispatch intent before native owner transport. Replaying the same request never implicitly resends an uncertain effect; reconcile the exact owner delivery instead."
+            "Factory persisted attempt owner Action\n\nUsage:\n  factory attempt owner-action <state-path> <request-json|-> [--json]\n  factory development attempt owner-action <state-path> <request-json|-> [--json]\n\nContract: {FACTORY_ATTEMPT_OWNER_ACTION}\n\nFactory durably records dispatch intent before native owner transport. Replaying the same request never implicitly resends an uncertain effect; reconcile the exact owner delivery instead. Plain addressed-session delivery refuses attempts whose required placement/protection or writing effects are not backed by an owner enforcement admission."
         ));
     }
     let positional = args
