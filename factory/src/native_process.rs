@@ -58,8 +58,8 @@ pub fn output(command: &mut Command, timeout: Duration) -> io::Result<Output> {
     thread::spawn(move || {
         let _ = other.send((false, read_pipe(stderr)));
     });
-    let mut stdout = None;
-    let mut stderr = None;
+    let mut stdout: Option<Vec<u8>> = None;
+    let mut stderr: Option<Vec<u8>> = None;
     let mut status = None;
     loop {
         if status.is_none() {
