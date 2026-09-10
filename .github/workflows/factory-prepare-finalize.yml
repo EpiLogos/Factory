@@ -58,14 +58,39 @@ jobs:
           python3 scripts/validate_agent_capability_intake.py
           python3 scripts/validate_routine_continuation.py
           python3 scripts/validate_self_hosting_commission.py
-      - name: Commit verified files and remove this one-shot helper
+      - name: Commit and publish without overwriting concurrent work
+        shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add factory docs/CAW-NATIVE-ATTEMPT-OPERATIONS.md .github/workflows/factory-native-evidence.yml
           git rm scripts/_factory_prepare_finish.py .github/workflows/factory-prepare-finalize.yml
           git commit -m 'fix(factory): preserve preparation ordering and allocated NOW through native Return receiving'
-          git push origin HEAD:agent/caw-221-native-attempts
+          published=false
+          for attempt in 1 2 3; do
+            git fetch origin agent/caw-221-native-attempts
+            # Ordinary rebase preserves the other writer's commits. Any conflict
+            # fails for explicit review; no force push or automatic resolution.
+            git rebase FETCH_HEAD
+            if git push origin HEAD:agent/caw-221-native-attempts; then
+              published=true
+              break
+            fi
+          done
+          test "$published" = true
+          git rev-parse HEAD
+      - name: Verify the exact published integration
+        env:
+          FACTORY_REQUIRE_NATIVE_CTRL: '1'
+        run: |
+          cargo fmt --manifest-path factory/Cargo.toml -- --check
+          cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path factory/Cargo.toml --all-targets
+          export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
+          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture
+          python3 scripts/validate_agent_capability_intake.py
+          python3 scripts/validate_routine_continuation.py
+          python3 scripts/validate_self_hosting_commission.py
       - name: Retain candidate source on failure
         if: failure()
         run: |
