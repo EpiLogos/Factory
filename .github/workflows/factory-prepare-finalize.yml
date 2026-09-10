@@ -1,0 +1,79 @@
+name: Factory preparation final verification
+
+on:
+  push:
+    branches: ['agent/caw-221-native-attempts']
+    paths:
+      - 'scripts/_factory_prepare_finish.py'
+      - '.github/workflows/factory-prepare-finalize.yml'
+      - 'factory/tests/support/attempt_central_followup.rs'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: factory-prepare-finalize
+  cancel-in-progress: false
+
+jobs:
+  integrate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: factory
+      - name: Apply exact inspected final changes
+        run: python3 scripts/_factory_prepare_finish.py
+      - name: Format and lint native source
+        run: |
+          cargo fmt --manifest-path factory/Cargo.toml
+          cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
+      - name: Public native regressions
+        run: cargo test --manifest-path factory/Cargo.toml --all-targets
+      - name: Build the published native Central owner
+        run: |
+          git clone --no-checkout https://github.com/EpiLogos/Central.git "$RUNNER_TEMP/factory-central-owner"
+          git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+          cargo build --manifest-path "$RUNNER_TEMP/factory-central-owner/Cargo.toml" -p ctrl --locked
+      - name: Actual native preparation and receiving
+        env:
+          FACTORY_REQUIRE_NATIVE_CTRL: '1'
+        run: |
+          export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
+          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > /tmp/native-cases.txt
+          test "$(grep -c '^central_cases::.*native_central_.*: test$' /tmp/native-cases.txt)" = 7
+          cargo test --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture
+      - name: Existing contract validators
+        run: |
+          python3 -m pip install --disable-pip-version-check 'jsonschema>=4.18,<5'
+          python3 scripts/validate_agent_capability_intake.py
+          python3 scripts/validate_routine_continuation.py
+          python3 scripts/validate_self_hosting_commission.py
+      - name: Commit verified files and remove this one-shot helper
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add factory docs/CAW-NATIVE-ATTEMPT-OPERATIONS.md .github/workflows/factory-native-evidence.yml
+          git rm scripts/_factory_prepare_finish.py .github/workflows/factory-prepare-finalize.yml
+          git commit -m 'fix(factory): preserve preparation ordering and allocated NOW through native Return receiving'
+          git push origin HEAD:agent/caw-221-native-attempts
+      - name: Retain candidate source on failure
+        if: failure()
+        run: |
+          mkdir -p /tmp/factory-prepare-diagnostics
+          git diff -- factory docs .github/workflows/factory-native-evidence.yml > /tmp/factory-prepare-diagnostics/candidate.patch
+          tar -czf /tmp/factory-prepare-diagnostics/source.tar.gz factory/src factory/tests
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: factory-prepare-final-${{ github.run_id }}
+          path: /tmp/factory-prepare-diagnostics/
+          retention-days: 3
