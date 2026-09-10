@@ -222,7 +222,8 @@ pub fn execute_attempt_owner_action(
     {
         return Err(error("invalid attempt owner Action identity or contract"));
     }
-    let mut store = FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(error)?;
+    let mut store =
+        FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(error)?;
     let reading = store.reading().map_err(error)?;
     let attempt = record(&reading, &request.attempt_ref)?;
     let encoded = serde_json::to_vec(&request).map_err(error)?;
