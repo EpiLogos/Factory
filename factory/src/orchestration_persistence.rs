@@ -90,6 +90,14 @@ impl ExecutableOrchestration {
 }
 
 impl OrchestrationSnapshot {
+    pub(crate) fn run_ref(&self) -> &RunRef {
+        &self.run_ref
+    }
+
+    pub(crate) fn writer_reservations(&self) -> &BTreeMap<String, WorkflowUnitRef> {
+        &self.active_writers
+    }
+
     /// Reopen only against the canonical Run and freshly compiled authored
     /// source. Authority is reconstituted by Run, never deserialized from input.
     pub fn restore(

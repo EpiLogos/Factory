@@ -400,7 +400,7 @@ fn native_restart_readback_and_stale_revision_are_process_safe() {
     assert_eq!(reading.run_ref.to_string(), RUN);
     let stored: Value = serde_json::from_slice(&before).unwrap();
     assert_eq!(
-        stored["run"]["writeAuthority"],
+        stored["state"]["build"]["runs"]["runs"][RUN]["writeAuthority"],
         json!({"owner":"factory-test","epoch":1})
     );
     let alias: FactoryAttemptReading = serde_json::from_slice(
@@ -579,7 +579,8 @@ fn persisted_retry_spend_and_source_tampering_are_refused_on_public_read() {
     world.start("corrupt");
     let bytes = fs::read(&world.state).unwrap();
     let mut state: Value = serde_json::from_slice(&bytes).unwrap();
-    state["snapshot"]["retryGrants"]["grant:inspect-source"]["attemptsSpent"] = json!(0);
+    state["state"]["attemptStates"][RUN]["snapshot"]["retryGrants"]["grant:inspect-source"]
+        ["attemptsSpent"] = json!(0);
     fs::write(&world.state, serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(!command(
         &["attempt", "read", world.state.to_str().unwrap(), "--json"],
@@ -588,7 +589,8 @@ fn persisted_retry_spend_and_source_tampering_are_refused_on_public_read() {
     .status
     .success());
     let mut state: Value = serde_json::from_slice(&bytes).unwrap();
-    state["workflowSource"]["source"]["revision"] = json!("different-source");
+    state["state"]["attemptStates"][RUN]["workflowSource"]["source"]["revision"] =
+        json!("different-source");
     fs::write(&world.state, serde_json::to_vec(&state).unwrap()).unwrap();
     assert!(!command(
         &["attempt", "read", world.state.to_str().unwrap(), "--json"],

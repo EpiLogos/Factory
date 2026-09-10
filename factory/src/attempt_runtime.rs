@@ -21,15 +21,14 @@ use crate::orchestration::{
     RetryGrant, ReturnedArtifact,
 };
 use crate::workflow::{compile_workflow, CompiledWorkflowUnit, WorkflowSource};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::{self, OpenOptions};
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::io::{self, Read};
+use std::path::PathBuf;
 
 pub const FACTORY_ATTEMPT_STATE: &str = "factory.attempt-state/v1";
 pub const FACTORY_ATTEMPT_ACTION: &str = "factory.attempt-action/v1";
@@ -271,13 +270,23 @@ pub struct FactoryAttemptRecord {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct StoredAttemptState {
-    schema: String,
-    revision: u64,
-    run: Run,
-    workflow_source: WorkflowSource,
-    snapshot: OrchestrationSnapshot,
-    attempts: BTreeMap<String, FactoryAttemptRecord>,
+pub(crate) struct StoredAttemptState {
+    pub(crate) schema: String,
+    pub(crate) revision: u64,
+    pub(crate) run: Run,
+    pub(crate) workflow_source: WorkflowSource,
+    pub(crate) snapshot: OrchestrationSnapshot,
+    pub(crate) attempts: BTreeMap<String, FactoryAttemptRecord>,
+    #[serde(default)]
+    pub(crate) action_receipts: BTreeMap<String, PersistedAttemptAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PersistedAttemptAction {
+    pub(crate) request_digest: String,
+    pub(crate) request: FactoryAttemptActionRequest,
+    pub(crate) receipt: FactoryAttemptActionReceipt,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -292,6 +301,7 @@ pub struct FactoryAttemptReading {
     pub workflow_source_ref: String,
     pub workflow_source_revision: String,
     pub workflow_source_digest: String,
+    pub source_current: bool,
     pub legs: BTreeMap<WorkflowUnitRef, LegRecord>,
     pub attempts: Vec<FactoryAttemptRecord>,
 }
@@ -430,116 +440,9 @@ pub struct FactoryAttemptActionReceipt {
     pub standing: String,
 }
 
-#[derive(Debug)]
-pub struct FileAttemptStore {
-    path: PathBuf,
-    state: StoredAttemptState,
-}
+pub use crate::attempt_native_store::FileAttemptStore;
 
-impl FileAttemptStore {
-    pub fn initialize(
-        path: impl Into<PathBuf>,
-        seed: FactoryAttemptSeed,
-    ) -> Result<Self, FactoryAttemptError> {
-        let path = path.into();
-        if path.exists() {
-            return Err(FactoryAttemptError::AlreadyExists(path));
-        }
-        let workflow = compile_workflow(seed.workflow_source.clone())?;
-        let engine = ExecutableOrchestration::new(workflow, seed.run)?;
-        let state = StoredAttemptState {
-            schema: FACTORY_ATTEMPT_STATE.into(),
-            revision: 1,
-            run: engine.run().clone(),
-            workflow_source: seed.workflow_source,
-            snapshot: engine.snapshot(),
-            attempts: BTreeMap::new(),
-        };
-        validate_state(&state)?;
-        let store = Self { path, state };
-        store.persist_new()?;
-        Ok(store)
-    }
-
-    pub fn open(path: impl Into<PathBuf>) -> Result<Self, FactoryAttemptError> {
-        let path = path.into();
-        let state = read_state(&path)?;
-        validate_state(&state)?;
-        Ok(Self { path, state })
-    }
-
-    pub fn reading(&self) -> Result<FactoryAttemptReading, FactoryAttemptError> {
-        reading_for(&self.state)
-    }
-
-    pub fn apply(
-        &mut self,
-        request: FactoryAttemptActionRequest,
-    ) -> Result<FactoryAttemptActionReceipt, FactoryAttemptError> {
-        validate_action_request(&request)?;
-        let lock = lock_path(&self.path)?;
-        let result = (|| {
-            let mut state = read_state(&self.path)?;
-            validate_state(&state)?;
-            if state.run.reference() != &request.run_ref {
-                return Err(FactoryAttemptError::RunMismatch {
-                    addressed: request.run_ref.to_string(),
-                    stored: state.run.reference().to_string(),
-                });
-            }
-            if state.revision != request.expected_revision {
-                return Err(FactoryAttemptError::RevisionConflict {
-                    expected: request.expected_revision,
-                    actual: state.revision,
-                });
-            }
-            let previous_revision = state.revision;
-            let (operation, attempt_refs) = apply_operation(&mut state, request.operation)?;
-            state.revision = state
-                .revision
-                .checked_add(1)
-                .ok_or(FactoryAttemptError::RevisionOverflow)?;
-            validate_state(&state)?;
-            persist_replace(&self.path, &state)?;
-            self.state = state;
-            Ok(FactoryAttemptActionReceipt {
-                contract: FACTORY_ATTEMPT_ACTION.into(),
-                projection_ref: request.projection_ref,
-                run_ref: request.run_ref,
-                previous_revision,
-                next_revision: self.state.revision,
-                operation,
-                attempt_refs,
-                standing: "native-factory-attempt-state; owner receipts are evidence, not whole-feature acceptance".into(),
-            })
-        })();
-        FileExt::unlock(&lock)?;
-        result
-    }
-
-    fn persist_new(&self) -> Result<(), FactoryAttemptError> {
-        if let Some(parent) = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent)?;
-        }
-        let bytes = serde_json::to_vec_pretty(&self.state)?;
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&self.path)?;
-        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
-            let _ = fs::remove_file(&self.path);
-            return Err(error.into());
-        }
-        sync_parent(&self.path)?;
-        Ok(())
-    }
-}
-
-fn apply_operation(
+pub(crate) fn apply_operation(
     state: &mut StoredAttemptState,
     operation: FactoryAttemptOperation,
 ) -> Result<(String, Vec<String>), FactoryAttemptError> {
@@ -1296,7 +1199,7 @@ fn ensure_no_duplicate_receipt(
     Ok(())
 }
 
-fn validate_action_request(
+pub(crate) fn validate_action_request(
     request: &FactoryAttemptActionRequest,
 ) -> Result<(), FactoryAttemptError> {
     if request.contract != FACTORY_ATTEMPT_ACTION {
@@ -1312,7 +1215,7 @@ fn validate_action_request(
             "caller lineage must terminate at callerRef".into(),
         ));
     }
-    if request.authority.native_owner != "factory"
+    if request.authority.native_owner != crate::build::FACTORY_NATIVE_OWNER
         || request.authority.capability_ref.as_deref() != Some(FACTORY_ATTEMPT_CAPABILITY_REF)
         || !request.authority.capability_granted
         || !request.authority.action_authorised
@@ -1326,7 +1229,7 @@ fn validate_action_request(
     Ok(())
 }
 
-fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError> {
+pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError> {
     if state.schema != FACTORY_ATTEMPT_STATE {
         return Err(FactoryAttemptError::UnsupportedContract(
             state.schema.clone(),
@@ -1340,7 +1243,15 @@ fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError>
     let workflow = compile_workflow(state.workflow_source.clone())?;
     let engine = state.snapshot.restore(workflow, state.run.clone())?;
     let mut execution_refs = BTreeSet::new();
-    for record in state.attempts.values() {
+    for (reference, record) in &state.attempts {
+        if reference != &record.attempt_ref
+            || record.disposition.selection.demand.project_ref
+                != state.run.project_ref().to_string()
+        {
+            return Err(FactoryAttemptError::CorruptState(
+                "attempt key or Project identity drift".into(),
+            ));
+        }
         required_text(&record.attempt_ref, "attemptRef")?;
         required_text(&record.task_ref, "taskRef")?;
         if record.reserved_execution_ref != format!("factory-attempt:{}", record.attempt_ref) {
@@ -1397,10 +1308,31 @@ fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError>
             required_text(&readable.summary, "return.summary")?;
         }
     }
+    for (reference, applied) in &state.action_receipts {
+        if reference != &applied.request.projection_ref
+            || reference != &applied.receipt.projection_ref
+            || applied.receipt.run_ref != *state.run.reference()
+            || applied.request.run_ref != *state.run.reference()
+            || applied.receipt.previous_revision.checked_add(1)
+                != Some(applied.receipt.next_revision)
+            || applied.receipt.next_revision > state.revision
+            || applied.request_digest
+                != blake3::hash(&serde_json::to_vec(&applied.request)?)
+                    .to_hex()
+                    .to_string()
+        {
+            return Err(FactoryAttemptError::CorruptState(
+                "retained Action identity or revision drift".into(),
+            ));
+        }
+    }
+    crate::attempt_application::validate_reading(&reading_for(state)?)?;
     Ok(())
 }
 
-fn reading_for(state: &StoredAttemptState) -> Result<FactoryAttemptReading, FactoryAttemptError> {
+pub(crate) fn reading_for(
+    state: &StoredAttemptState,
+) -> Result<FactoryAttemptReading, FactoryAttemptError> {
     let workflow = compile_workflow(state.workflow_source.clone())?;
     let engine = state.snapshot.restore(workflow, state.run.clone())?;
     Ok(FactoryAttemptReading {
@@ -1413,63 +1345,10 @@ fn reading_for(state: &StoredAttemptState) -> Result<FactoryAttemptReading, Fact
         workflow_source_ref: engine.workflow().source.reference.to_string(),
         workflow_source_revision: engine.workflow().source.revision.clone(),
         workflow_source_digest: engine.workflow().source.digest.clone(),
+        source_current: true,
         legs: engine.legs().clone(),
         attempts: state.attempts.values().cloned().collect(),
     })
-}
-
-fn read_state(path: &Path) -> Result<StoredAttemptState, FactoryAttemptError> {
-    Ok(serde_json::from_slice(&fs::read(path)?)?)
-}
-
-fn persist_replace(path: &Path, state: &StoredAttemptState) -> Result<(), FactoryAttemptError> {
-    if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)?;
-    }
-    let temporary = path.with_file_name(format!(
-        ".{}.tmp-{}-{}",
-        path.file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("factory-attempt.json"),
-        std::process::id(),
-        ulid::Ulid::new()
-    ));
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&temporary)?;
-    file.write_all(&serde_json::to_vec_pretty(state)?)?;
-    file.sync_all()?;
-    fs::rename(&temporary, path).inspect_err(|_| {
-        let _ = fs::remove_file(&temporary);
-    })?;
-    sync_parent(path)?;
-    Ok(())
-}
-
-fn lock_path(path: &Path) -> Result<fs::File, FactoryAttemptError> {
-    let lock_path = path.with_extension("attempt.lock");
-    if let Some(parent) = lock_path
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        fs::create_dir_all(parent)?;
-    }
-    let lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_path)?;
-    lock.lock_exclusive()?;
-    Ok(lock)
-}
-
-fn sync_parent(path: &Path) -> Result<(), FactoryAttemptError> {
-    if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
-        fs::File::open(parent)?.sync_all()?;
-    }
-    Ok(())
 }
 
 fn required_text(value: &str, field: &'static str) -> Result<(), FactoryAttemptError> {
@@ -1490,6 +1369,23 @@ pub fn execute_attempt_cli(
     let json = remove_flag(&mut args, "--json");
     match args.first().map(String::as_str) {
         None | Some("help") | Some("--help") | Some("-h") => Ok(attempt_help()),
+        Some("attach") => {
+            let path = args
+                .get(1)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing native state path".into()))?;
+            let run_ref = args
+                .get(2)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing canonical Run ref".into()))?
+                .parse::<RunRef>()
+                .map_err(|error| FactoryAttemptError::Cli(error.to_string()))?;
+            let source_ref = args
+                .get(3)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing admitted source ref".into()))?;
+            render_reading(
+                FileAttemptStore::attach(path, run_ref, source_ref)?.reading()?,
+                json,
+            )
+        }
         Some("init") => {
             let state = args
                 .get(1)

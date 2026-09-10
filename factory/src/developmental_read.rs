@@ -79,6 +79,9 @@ pub struct FactoryDevelopmentalState {
     /// Closed, replay-safe owner correlation operations applied to this state.
     #[serde(default)]
     pub developmental_mutations: Vec<FactoryDevelopmentalMutationRecord>,
+    /// Native coordinator metadata only; the Run remains in Build's registry.
+    #[serde(default)]
+    pub attempt_states: BTreeMap<RunRef, crate::attempt_native_store::FactoryRunAttempts>,
 }
 
 impl FactoryDevelopmentalState {
@@ -96,6 +99,7 @@ impl FactoryDevelopmentalState {
             routine_continuations: Vec::new(),
             commissions: Vec::new(),
             developmental_mutations: Vec::new(),
+            attempt_states: BTreeMap::new(),
         };
         state.validate()?;
         Ok(state)

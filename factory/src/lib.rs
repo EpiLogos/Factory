@@ -4,6 +4,7 @@ pub mod action_projection;
 pub mod agent_capability_intake;
 pub mod artifact_evidence;
 pub mod attempt_application;
+pub mod attempt_native_store;
 pub mod attempt_runtime;
 pub mod authority;
 pub mod build;

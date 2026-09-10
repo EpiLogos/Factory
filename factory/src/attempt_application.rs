@@ -7,8 +7,7 @@
 use crate::attempt_runtime::*;
 use crate::core::run::{Run, WorkflowUnitRef};
 use crate::orchestration::LegStatus;
-use serde::Deserialize;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -25,36 +24,25 @@ pub fn apply_attempt_action(
     path: &Path,
     request: FactoryAttemptActionRequest,
 ) -> Result<FactoryAttemptActionReceipt, FactoryAttemptError> {
-    let mut store = FileAttemptStore::open(path)?;
-    let reading = store.reading()?;
-    validate_reading(&reading)?;
-    if request.expected_revision != reading.revision {
+    FileAttemptStore::open_run(path, request.run_ref.clone())?.apply(request)
+}
+
+pub(crate) fn validate_native_action(
+    reading: &FactoryAttemptReading,
+    run: &Run,
+    request: &FactoryAttemptActionRequest,
+) -> Result<(), FactoryAttemptError> {
+    validate_reading(reading)?;
+    if reading.revision != request.expected_revision {
         return Err(FactoryAttemptError::RevisionConflict {
             expected: request.expected_revision,
             actual: reading.revision,
         });
     }
-    // Read only this native envelope's canonical Run; it is never reconstructed
-    // from the request's assertions or a consumer-owned projected RunMap.
-    #[derive(Deserialize)]
-    struct RunBasis {
-        revision: u64,
-        run: Run,
-    }
-    let basis: RunBasis = serde_json::from_slice(&fs::read(path)?)?;
-    if basis.revision != reading.revision
-        || basis.run.reference() != &reading.run_ref
-        || basis.run.revision().get() != reading.run_revision
-    {
-        return Err(invalid(
-            "native Run changed during Action admission; reread",
-        ));
-    }
-    validate_operation(&reading, &basis.run, &request.operation)?;
-    store.apply(request)
+    validate_operation(reading, run, &request.operation)
 }
 
-fn validate_reading(reading: &FactoryAttemptReading) -> Result<(), FactoryAttemptError> {
+pub(crate) fn validate_reading(reading: &FactoryAttemptReading) -> Result<(), FactoryAttemptError> {
     let mut identities = BTreeSet::new();
     for record in &reading.attempts {
         let execution = execution_identity(record);
@@ -420,20 +408,16 @@ fn partial_effects(record: &FactoryAttemptRecord) -> BTreeSet<String> {
 }
 
 fn has_uncertain_operation(record: &FactoryAttemptRecord) -> bool {
-    let mut uncertain = BTreeSet::new();
+    let mut latest = BTreeMap::new();
     for receipt in record.dispatch.iter().chain(record.observations.iter()) {
-        let identity = (&receipt.owner_ref, &receipt.operation_ref);
-        match receipt.phase {
-            OwnerOperationPhase::Uncertain | OwnerOperationPhase::Dispatching => {
-                uncertain.insert(identity);
-            }
-            OwnerOperationPhase::ReconciledNoReplay => {
-                uncertain.remove(&identity);
-            }
-            _ => {}
-        }
+        latest.insert((&receipt.owner_ref, &receipt.operation_ref), receipt.phase);
     }
-    !uncertain.is_empty()
+    latest.values().any(|phase| {
+        matches!(
+            phase,
+            OwnerOperationPhase::Uncertain | OwnerOperationPhase::Dispatching
+        )
+    })
 }
 
 fn validate_fact(fact: &AttemptTrackingFact) -> Result<(), FactoryAttemptError> {
@@ -479,7 +463,17 @@ pub fn execute_attempt_cli(
             let path = positional
                 .get(1)
                 .ok_or_else(|| invalid("missing state path"))?;
-            let reading = read_attempts(Path::new(path))?;
+            let reading = if let Some(run_ref) = positional.get(2) {
+                FileAttemptStore::open_run(
+                    Path::new(path),
+                    run_ref
+                        .parse::<crate::core::run::RunRef>()
+                        .map_err(|error| invalid(&error.to_string()))?,
+                )?
+                .reading()?
+            } else {
+                read_attempts(Path::new(path))?
+            };
             if args.iter().any(|arg| arg == "--json") {
                 return Ok(serde_json::to_string_pretty(&reading)?);
             }
