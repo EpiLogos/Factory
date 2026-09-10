@@ -8,6 +8,7 @@ pub mod attempt_cli;
 pub mod attempt_native_store;
 pub mod attempt_owner_cli;
 pub mod attempt_owner_dispatch;
+pub mod attempt_receiving;
 pub mod attempt_runtime;
 pub mod attempt_task;
 pub mod authority;
