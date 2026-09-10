@@ -15,6 +15,11 @@ pub fn execute_attempt_owner_cli(
     args: &[String],
     stdin_override: Option<&str>,
 ) -> Result<String, String> {
+    if matches!(args.first().map(String::as_str), None | Some("help") | Some("--help") | Some("-h")) {
+        return Ok(format!(
+            "Factory persisted attempt owner Action\n\nUsage:\n  factory attempt owner-action <state-path> <request-json|-> [--json]\n  factory development attempt owner-action <state-path> <request-json|-> [--json]\n\nContract: {FACTORY_ATTEMPT_OWNER_ACTION}\n\nFactory durably records dispatch intent before native owner transport. Replaying the same request never implicitly resends an uncertain effect; reconcile the exact owner delivery instead."
+        ));
+    }
     let positional = args
         .iter()
         .filter(|arg| arg.as_str() != "--json")
