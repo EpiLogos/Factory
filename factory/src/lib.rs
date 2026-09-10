@@ -25,6 +25,7 @@ pub mod journey;
 pub mod journey_build;
 pub mod journey_commission;
 pub mod journey_praxis;
+pub mod native_owner;
 pub mod orchestration;
 pub mod project_development;
 pub mod project_development_store;
