@@ -11,7 +11,9 @@ use crate::attempt_runtime::{
     FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt, FACTORY_ATTEMPT_ACTION,
 };
 use crate::core::run::RunRef;
-use crate::native_owner::{invoke_native_owner, NativeOwnerInvocation, AIKIT_CAW_CONTRACT_REVISION};
+use crate::native_owner::{
+    invoke_native_owner, NativeOwnerInvocation, AIKIT_CAW_CONTRACT_REVISION,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -105,7 +107,10 @@ fn action_request(
 ) -> FactoryAttemptActionRequest {
     FactoryAttemptActionRequest {
         contract: FACTORY_ATTEMPT_ACTION.into(),
-        projection_ref: format!("{}:{}:{suffix}", request.projection_ref, request.request_ref),
+        projection_ref: format!(
+            "{}:{}:{suffix}",
+            request.projection_ref, request.request_ref
+        ),
         caller: request.caller.clone(),
         run_ref: request.run_ref.clone(),
         expected_revision: revision,
@@ -224,7 +229,9 @@ pub fn execute_attempt_owner_action(
     let digest = blake3::hash(&encoded).to_hex().to_string();
     if let Some(previous) = last_transport(attempt, &intent_ref(&request)) {
         if previous.payload["requestDigest"].as_str() != Some(&digest) {
-            return Err(error("owner Action identity was reused with different content"));
+            return Err(error(
+                "owner Action identity was reused with different content",
+            ));
         }
         // Recheck the public Action authority even on a read-only replay. The
         // original intent is already retained, so its Action is idempotent.
@@ -259,17 +266,25 @@ pub fn execute_attempt_owner_action(
         request: packet,
     } = &request.invocation
     else {
-        return Err(error("this attempt handoff supports AIKit send/delivery only"));
+        return Err(error(
+            "this attempt handoff supports AIKit send/delivery only",
+        ));
     };
     if contract_revision != AIKIT_CAW_CONTRACT_REVISION {
-        return Err(error("AIKit owner contract revision does not match the published adapter"));
+        return Err(error(
+            "AIKit owner contract revision does not match the published adapter",
+        ));
     }
     let action = packet["action"].as_str().unwrap_or_default();
     let session = packet["agent_session"].as_str().unwrap_or_default();
     let delivery = match action {
         "send" => packet.pointer("/turn/delivery_ref"),
         "delivery" => packet.get("delivery_ref"),
-        _ => return Err(error("attempt owner Action supports send or delivery, not a guessed operation")),
+        _ => {
+            return Err(error(
+                "attempt owner Action supports send or delivery, not a guessed operation",
+            ))
+        }
     }
     .and_then(Value::as_str)
     .filter(|value| !value.trim().is_empty())
@@ -282,25 +297,33 @@ pub fn execute_attempt_owner_action(
             .as_ref()
             .is_some_and(|current| current != &request.execution_ref)
     {
-        return Err(error("attempt, Execution and native AgentSession identities disagree"));
+        return Err(error(
+            "attempt, Execution and native AgentSession identities disagree",
+        ));
     }
     let same_delivery = |receipt: &&OwnerOperationReceipt| {
         is_transport(receipt)
             && receipt.payload["agentSession"].as_str() == Some(session)
             && receipt.payload["deliveryRef"].as_str() == Some(delivery)
     };
-    let prior_send = attempt.observations.iter().filter(same_delivery).any(|receipt| {
-        receipt.payload["action"].as_str() == Some("send")
-    });
+    let prior_send = attempt
+        .observations
+        .iter()
+        .filter(same_delivery)
+        .any(|receipt| receipt.payload["action"].as_str() == Some("send"));
     let mut effective_packet = packet.clone();
     if action == "send" {
         if !reading.source_current || attempt.execution_ref.is_some() {
-            return Err(error("dispatch requires the current source and an unbound attempt"));
+            return Err(error(
+                "dispatch requires the current source and an unbound attempt",
+            ));
         }
         if attempt.observations.iter().any(|receipt| {
             is_transport(receipt) && receipt.payload["action"].as_str() == Some("send")
         }) {
-            return Err(error("this attempt already has a dispatch intent; observe its delivery, never resend"));
+            return Err(error(
+                "this attempt already has a dispatch intent; observe its delivery, never resend",
+            ));
         }
         let leg = reading
             .legs
@@ -309,14 +332,18 @@ pub fn execute_attempt_owner_action(
         if leg.execution_ref != format!("factory-attempt:{}", request.attempt_ref)
             || leg.status != crate::orchestration::LegStatus::Active
         {
-            return Err(error("dispatch cannot revive a historical, cancelled or non-active attempt"));
+            return Err(error(
+                "dispatch cannot revive a historical, cancelled or non-active attempt",
+            ));
         }
         if packet.pointer("/turn/sender").and_then(Value::as_str)
             != Some(request.caller.caller_ref.as_str())
             || packet.pointer("/turn/packet/audience")
                 != Some(&json!([attempt.disposition.participant.agent_ref]))
         {
-            return Err(error("native sender/audience must match the caller and selected enduring Agent"));
+            return Err(error(
+                "native sender/audience must match the caller and selected enduring Agent",
+            ));
         }
         let original = packet
             .pointer("/turn/packet/text")
@@ -333,7 +360,9 @@ pub fn execute_attempt_owner_action(
             serde_json::to_string(&bounds).map_err(error)?
         ));
     } else if !prior_send {
-        return Err(error("delivery observation must name this attempt's retained native dispatch intent"));
+        return Err(error(
+            "delivery observation must name this attempt's retained native dispatch intent",
+        ));
     }
     let invocation = NativeOwnerInvocation::AikitEncounter {
         binary: binary.clone(),
@@ -342,7 +371,12 @@ pub fn execute_attempt_owner_action(
         request: effective_packet,
     };
     let intent = transport_receipt(
-        &request, &digest, session, delivery, action, OwnerOperationPhase::Dispatching,
+        &request,
+        &digest,
+        session,
+        delivery,
+        action,
+        OwnerOperationPhase::Dispatching,
         json!({"meaning": "Factory intent persisted before native transport; no worker result"}),
     );
     // One native CAS: concurrent callers cannot both pass the same opening basis.
@@ -362,65 +396,126 @@ pub fn execute_attempt_owner_action(
         Ok(receipt) => receipt,
         Err(failure) => {
             let uncertain = transport_receipt(
-                &request, &digest, session, delivery, action, OwnerOperationPhase::Uncertain,
+                &request,
+                &digest,
+                session,
+                delivery,
+                action,
+                OwnerOperationPhase::Uncertain,
                 json!({"failure": failure.to_string(), "instruction": "observe exact owner delivery; do not resend"}),
             );
-            retain(&store, &request, "uncertain", FactoryAttemptOperation::RecordObservation {
-                attempt_ref: request.attempt_ref.clone(), receipt: uncertain.clone(),
-            })?;
+            retain(
+                &store,
+                &request,
+                "uncertain",
+                FactoryAttemptOperation::RecordObservation {
+                    attempt_ref: request.attempt_ref.clone(),
+                    receipt: uncertain.clone(),
+                },
+            )?;
             return result(&store, &request, false, uncertain, None);
         }
     };
     // Retain the actual owner receipt before any consequential interpretation.
-    retain(&store, &request, "owner-evidence", FactoryAttemptOperation::RecordObservation {
-        attempt_ref: request.attempt_ref.clone(), receipt: owner.clone(),
-    })?;
+    retain(
+        &store,
+        &request,
+        "owner-evidence",
+        FactoryAttemptOperation::RecordObservation {
+            attempt_ref: request.attempt_ref.clone(),
+            receipt: owner.clone(),
+        },
+    )?;
     let current = store.reading().map_err(error)?;
     let current_attempt = record(&current, &request.attempt_ref)?;
     if current_attempt.execution_ref.is_none()
         && current.source_current
-        && matches!(owner.phase, OwnerOperationPhase::Submitted | OwnerOperationPhase::Returned)
-        && current.legs.get(&current_attempt.workflow_unit_ref).is_some_and(|leg| {
-            leg.execution_ref == format!("factory-attempt:{}", request.attempt_ref)
-                && leg.status == crate::orchestration::LegStatus::Active
-        })
+        && matches!(
+            owner.phase,
+            OwnerOperationPhase::Submitted | OwnerOperationPhase::Returned
+        )
+        && current
+            .legs
+            .get(&current_attempt.workflow_unit_ref)
+            .is_some_and(|leg| {
+                leg.execution_ref == format!("factory-attempt:{}", request.attempt_ref)
+                    && leg.status == crate::orchestration::LegStatus::Active
+            })
     {
-        retain(&store, &request, "bind", FactoryAttemptOperation::BindDispatch {
-            attempt_ref: request.attempt_ref.clone(),
-            execution_ref: request.execution_ref.clone(),
-            receipt: owner.clone(),
-        })?;
+        retain(
+            &store,
+            &request,
+            "bind",
+            FactoryAttemptOperation::BindDispatch {
+                attempt_ref: request.attempt_ref.clone(),
+                execution_ref: request.execution_ref.clone(),
+                receipt: owner.clone(),
+            },
+        )?;
     }
-    let phase = if matches!(owner.phase, OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain) {
+    let phase = if matches!(
+        owner.phase,
+        OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain
+    ) {
         OwnerOperationPhase::Uncertain
     } else {
         OwnerOperationPhase::Observed
     };
     let settled = transport_receipt(
-        &request, &digest, session, delivery, action, phase,
+        &request,
+        &digest,
+        session,
+        delivery,
+        action,
+        phase,
         json!({"ownerReceiptRef": owner.receipt_ref, "meaning": "transport observation only; task Return is separate"}),
     );
-    retain(&store, &request, "transport-result", FactoryAttemptOperation::RecordObservation {
-        attempt_ref: request.attempt_ref.clone(), receipt: settled.clone(),
-    })?;
+    retain(
+        &store,
+        &request,
+        "transport-result",
+        FactoryAttemptOperation::RecordObservation {
+            attempt_ref: request.attempt_ref.clone(),
+            receipt: settled.clone(),
+        },
+    )?;
     if action == "delivery" && phase == OwnerOperationPhase::Observed {
         let current = store.reading().map_err(error)?;
         let attempt = record(&current, &request.attempt_ref)?;
-        let prior_refs = attempt.observations.iter().filter(same_delivery)
+        let prior_refs = attempt
+            .observations
+            .iter()
+            .filter(same_delivery)
             .filter(|receipt| receipt.operation_ref != intent_ref(&request))
-            .map(|receipt| receipt.operation_ref.clone()).collect::<BTreeSet<_>>();
+            .map(|receipt| receipt.operation_ref.clone())
+            .collect::<BTreeSet<_>>();
         for operation_ref in prior_refs {
-            let Some(previous) = last_transport(attempt, &operation_ref) else { continue; };
-            if !matches!(previous.phase, OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain) {
+            let Some(previous) = last_transport(attempt, &operation_ref) else {
+                continue;
+            };
+            if !matches!(
+                previous.phase,
+                OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain
+            ) {
                 continue;
             }
             let mut resolution = previous.clone();
             resolution.phase = OwnerOperationPhase::Observed;
-            resolution.receipt_ref = format!("{}:reconciled:{}", previous.receipt_ref, request.request_ref);
-            resolution.payload["detail"] = json!({"ownerReceiptRef": owner.receipt_ref, "reconciledBy": request.request_ref});
-            retain(&store, &request, "reconcile", FactoryAttemptOperation::RecordObservation {
-                attempt_ref: request.attempt_ref.clone(), receipt: resolution,
-            })?;
+            resolution.receipt_ref = format!(
+                "{}:reconciled:{}",
+                previous.receipt_ref, request.request_ref
+            );
+            resolution.payload["detail"] =
+                json!({"ownerReceiptRef": owner.receipt_ref, "reconciledBy": request.request_ref});
+            retain(
+                &store,
+                &request,
+                "reconcile",
+                FactoryAttemptOperation::RecordObservation {
+                    attempt_ref: request.attempt_ref.clone(),
+                    receipt: resolution,
+                },
+            )?;
         }
     }
     result(&store, &request, false, settled, Some(owner))
