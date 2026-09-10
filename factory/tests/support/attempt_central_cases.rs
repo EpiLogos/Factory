@@ -84,11 +84,17 @@ fn setup(world: &World, native: bool) -> std::path::PathBuf {
     if native {
         if let Some(binary) = std::env::var_os("FACTORY_TEST_CTRL") {
             let binary = std::path::PathBuf::from(binary);
-            assert!(binary.is_absolute() && binary.is_file(), "native test requires an actual ctrl binary");
+            assert!(
+                binary.is_absolute() && binary.is_file(),
+                "native test requires an actual ctrl binary"
+            );
             return binary;
         }
     }
-    assert!(!native || std::env::var_os("FACTORY_REQUIRE_NATIVE_CTRL").is_none(), "native evidence lane must supply FACTORY_TEST_CTRL; no double fallback");
+    assert!(
+        !native || std::env::var_os("FACTORY_REQUIRE_NATIVE_CTRL").is_none(),
+        "native evidence lane must supply FACTORY_TEST_CTRL; no double fallback"
+    );
     double
 }
 fn prepare_request(world: &World, ctrl: &Path, id: &str) -> Value {
@@ -112,7 +118,10 @@ fn policy_change(world: &World, key: &str, value: Value) {
     fs::write(path, policy.to_string()).unwrap();
 }
 fn central_calls(world: &World) -> usize {
-    fs::read_to_string(world.dir.path().join("central-calls.jsonl")).unwrap_or_default().lines().count()
+    fs::read_to_string(world.dir.path().join("central-calls.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .count()
 }
 fn native_world() -> (World, std::path::PathBuf, Value) {
     let world = World::new();
@@ -129,7 +138,9 @@ fn native_central_preparation_reaches_owner_and_the_actual_dispatch_path() {
     assert_eq!(prepared["needsReconciliation"], false, "{prepared}");
     assert!(world.calls().is_empty());
     let checkpoint = &prepared["observation"]["payload"]["detail"]["checkpoint"];
-    let now_path = checkpoint["allocation"]["writable_destination"].as_str().unwrap();
+    let now_path = checkpoint["allocation"]["writable_destination"]
+        .as_str()
+        .unwrap();
     assert!(Path::new(now_path).is_dir());
     assert_eq!(world.reading().attempts[0].tracking.len(), 3);
     let result = success(world.owner(&owner_request(&world)));
@@ -137,21 +148,29 @@ fn native_central_preparation_reaches_owner_and_the_actual_dispatch_path() {
     assert_eq!(world.calls().len(), 1);
     let observation = &result["transportObservation"]["payload"]["placementPreflight"];
     assert_eq!(observation["workerEnforcementEstablished"], false);
-    assert_eq!(observation["now"]["data"]["record"]["now_ref"], checkpoint["allocation"]["now_ref"]);
+    assert_eq!(
+        observation["now"]["data"]["record"]["now_ref"],
+        checkpoint["allocation"]["now_ref"]
+    );
     assert!(world.reading().attempts[0].readable_return.is_none());
-    assert!(world.calls()[0]["turn"]["packet"]["text"].as_str().unwrap().contains(now_path));
+    assert!(world.calls()[0]["turn"]["packet"]["text"]
+        .as_str()
+        .unwrap()
+        .contains(now_path));
 }
 
 #[test]
 fn native_central_exact_replay_retains_bytes_and_does_not_reallocate() {
     let (world, _, request) = native_world();
     assert_eq!(preparation(&world, &request)["needsReconciliation"], false);
-    let before = fs::read(world.state()).unwrap(); let calls = central_calls(&world);
+    let before = fs::read(world.state()).unwrap();
+    let calls = central_calls(&world);
     let replay = preparation(&world, &request);
     assert_eq!(replay["replayed"], true);
     assert_eq!(fs::read(world.state()).unwrap(), before);
     assert_eq!(central_calls(&world), calls);
-    let mut changed = request; changed["workingDirectory"] = json!(world.dir.path());
+    let mut changed = request;
+    changed["workingDirectory"] = json!(world.dir.path());
     assert!(!world.call("prepare", Some(&changed)).status.success());
     assert_eq!(fs::read(world.state()).unwrap(), before);
 }
@@ -162,10 +181,16 @@ fn native_central_stale_policy_and_wrong_cwd_stop_before_worker_transport() {
         let (world, _, request) = native_world();
         assert_eq!(preparation(&world, &request)["needsReconciliation"], false);
         let mut owner = owner_request(&world);
-        if change_policy { policy_change(&world, "lease_seconds", json!(299)); }
-        else { owner["invocation"]["cwd"] = json!(world.dir.path()); }
+        if change_policy {
+            policy_change(&world, "lease_seconds", json!(299));
+        } else {
+            owner["invocation"]["cwd"] = json!(world.dir.path());
+        }
         let result = world.owner(&owner);
-        assert!(!result.status.success(), "changed native basis dispatched a worker");
+        assert!(
+            !result.status.success(),
+            "changed native basis dispatched a worker"
+        );
         assert!(world.calls().is_empty());
         assert!(world.reading().attempts[0].execution_ref.is_none());
     }
@@ -178,12 +203,21 @@ fn native_central_changed_now_or_destination_anchor_stops_dispatch() {
         let prepared = preparation(&world, &request);
         assert_eq!(prepared["needsReconciliation"], false);
         if change_now {
-            let relative = prepared["observation"]["payload"]["detail"]["checkpoint"]["allocation"]["source"]["path"].as_str().unwrap();
+            let relative = prepared["observation"]["payload"]["detail"]["checkpoint"]["allocation"]
+                ["source"]["path"]
+                .as_str()
+                .unwrap();
             let path = world.dir.path().join(relative);
             let mut record: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
             record["lifecycle"] = json!("closed");
             fs::write(path, record.to_string()).unwrap();
-        } else { fs::write(world.dir.path().join("Work/demo/src/result.rs"), "external new human bytes").unwrap(); }
+        } else {
+            fs::write(
+                world.dir.path().join("Work/demo/src/result.rs"),
+                "external new human bytes",
+            )
+            .unwrap();
+        }
         assert!(!world.owner(&owner_request(&world)).status.success());
         assert!(world.calls().is_empty());
     }
@@ -195,14 +229,25 @@ fn native_central_rejected_root_scratch_keeps_actual_allocation_for_corrected_re
     request["destinations"] = json!([world.dir.path().join("Work/scratch.diff")]);
     let refused = preparation(&world, &request);
     assert_eq!(refused["needsReconciliation"], true);
-    let responses = refused["observation"]["payload"]["detail"]["nativeResponses"].as_array().unwrap();
-    let allocation = &responses.iter().find(|value| value["action"] == "central.now.allocate").unwrap()["response"]["data"];
+    let responses = refused["observation"]["payload"]["detail"]["nativeResponses"]
+        .as_array()
+        .unwrap();
+    let allocation = &responses
+        .iter()
+        .find(|value| value["action"] == "central.now.allocate")
+        .unwrap()["response"]["data"];
     assert!(Path::new(allocation["writable_destination"].as_str().unwrap()).is_dir());
     assert!(!world.dir.path().join("Work/scratch.diff").exists());
     let corrected = preparation(&world, &prepare_request(&world, &ctrl, "prepare:corrected"));
     assert_eq!(corrected["needsReconciliation"], false, "{corrected}");
-    assert_eq!(corrected["observation"]["payload"]["detail"]["checkpoint"]["allocation"]["now_ref"], allocation["now_ref"]);
-    assert_eq!(success(world.owner(&owner_request(&world)))["needsReconciliation"], false);
+    assert_eq!(
+        corrected["observation"]["payload"]["detail"]["checkpoint"]["allocation"]["now_ref"],
+        allocation["now_ref"]
+    );
+    assert_eq!(
+        success(world.owner(&owner_request(&world)))["needsReconciliation"],
+        false
+    );
 }
 
 #[test]
@@ -220,10 +265,15 @@ fn native_central_required_worker_enforcement_cannot_be_bypassed_by_preparation(
 #[test]
 fn preparation_stale_or_unauthorised_requests_never_call_central() {
     for stale in [true, false] {
-        let world = World::new(); world.start(false); let ctrl = setup(&world, false);
+        let world = World::new();
+        world.start(false);
+        let ctrl = setup(&world, false);
         let mut request = prepare_request(&world, &ctrl, "prepare:invalid");
-        if stale { request["expectedRevision"] = json!(1); }
-        else { request["authority"]["actionAuthorised"] = json!(false); }
+        if stale {
+            request["expectedRevision"] = json!(1);
+        } else {
+            request["authority"]["actionAuthorised"] = json!(false);
+        }
         let before = fs::read(world.state()).unwrap();
         assert!(!world.call("prepare", Some(&request)).status.success());
         assert_eq!(fs::read(world.state()).unwrap(), before);
@@ -233,27 +283,47 @@ fn preparation_stale_or_unauthorised_requests_never_call_central() {
 
 #[test]
 fn preparation_lost_allocation_response_recovers_same_native_now_without_dispatch() {
-    let world = World::new(); world.start(false); let ctrl = setup(&world, false);
+    let world = World::new();
+    world.start(false);
+    let ctrl = setup(&world, false);
     fs::write(world.dir.path().join("central-mode"), "lost").unwrap();
     let mut request = prepare_request(&world, &ctrl, "prepare:lost");
     let uncertain = preparation(&world, &request);
     assert_eq!(uncertain["needsReconciliation"], true);
-    let bytes = fs::read(world.dir.path().join("Control/agents/now/test-only/now.json")).unwrap();
+    let bytes = fs::read(
+        world
+            .dir
+            .path()
+            .join("Control/agents/now/test-only/now.json"),
+    )
+    .unwrap();
     let calls = central_calls(&world);
     assert_eq!(preparation(&world, &request)["replayed"], true);
     assert_eq!(central_calls(&world), calls);
     assert!(!world.owner(&owner_request(&world)).status.success());
     fs::write(world.dir.path().join("central-mode"), "normal").unwrap();
-    request["recover"] = json!(true); request["expectedRevision"] = json!(world.reading().revision);
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
     let recovered = preparation(&world, &request);
     assert_eq!(recovered["needsReconciliation"], false, "{recovered}");
-    assert_eq!(fs::read(world.dir.path().join("Control/agents/now/test-only/now.json")).unwrap(), bytes);
+    assert_eq!(
+        fs::read(
+            world
+                .dir
+                .path()
+                .join("Control/agents/now/test-only/now.json")
+        )
+        .unwrap(),
+        bytes
+    );
     assert!(world.calls().is_empty());
 }
 
 #[test]
 fn preparation_foreign_task_receipt_never_becomes_a_ready_checkpoint() {
-    let world = World::new(); world.start(false); let ctrl = setup(&world, false);
+    let world = World::new();
+    world.start(false);
+    let ctrl = setup(&world, false);
     fs::write(world.dir.path().join("central-mode"), "foreign").unwrap();
     let result = preparation(&world, &prepare_request(&world, &ctrl, "prepare:foreign"));
     assert_eq!(result["needsReconciliation"], true);
@@ -264,10 +334,14 @@ fn preparation_foreign_task_receipt_never_becomes_a_ready_checkpoint() {
 
 #[test]
 fn preparation_has_one_total_transport_deadline() {
-    let world = World::new(); world.start(false); let ctrl = setup(&world, false);
+    let world = World::new();
+    world.start(false);
+    let ctrl = setup(&world, false);
     fs::write(world.dir.path().join("central-mode"), "slow").unwrap();
-    let mut request = prepare_request(&world, &ctrl, "prepare:bounded"); request["timeoutMs"] = json!(100);
-    let start = Instant::now(); let result = preparation(&world, &request);
+    let mut request = prepare_request(&world, &ctrl, "prepare:bounded");
+    request["timeoutMs"] = json!(100);
+    let start = Instant::now();
+    let result = preparation(&world, &request);
     assert_eq!(result["needsReconciliation"], true);
     assert!(start.elapsed() < Duration::from_secs(3));
     assert!(world.calls().is_empty());
@@ -275,17 +349,36 @@ fn preparation_has_one_total_transport_deadline() {
 
 #[test]
 fn explicit_refresh_crash_invalidates_the_earlier_ready_checkpoint() {
-    let world = World::new(); world.start(false); let ctrl = setup(&world, false);
+    let world = World::new();
+    world.start(false);
+    let ctrl = setup(&world, false);
     let mut request = prepare_request(&world, &ctrl, "prepare:refresh");
     assert_eq!(preparation(&world, &request)["needsReconciliation"], false);
     fs::write(world.dir.path().join("central-mode"), "pause").unwrap();
-    request["recover"] = json!(true); request["expectedRevision"] = json!(world.reading().revision);
-    let mut child = spawn(&["attempt".into(), "prepare".into(), world.state(), "-".into(), "--json".into()], Some(&request));
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let mut child = spawn(
+        &[
+            "attempt".into(),
+            "prepare".into(),
+            world.state(),
+            "-".into(),
+            "--json".into(),
+        ],
+        Some(&request),
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !world.dir.path().join("central-entered").exists() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(10)); }
+    while !world.dir.path().join("central-entered").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
     assert!(world.dir.path().join("central-entered").exists());
-    child.kill().unwrap(); child.wait().unwrap();
-    fs::write(world.dir.path().join("central-release"), "release test-only ctrl").unwrap();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    fs::write(
+        world.dir.path().join("central-release"),
+        "release test-only ctrl",
+    )
+    .unwrap();
     assert!(!world.owner(&owner_request(&world)).status.success());
     fs::write(world.dir.path().join("central-mode"), "normal").unwrap();
     request["expectedRevision"] = json!(world.reading().revision);
@@ -295,8 +388,21 @@ fn explicit_refresh_crash_invalidates_the_earlier_ready_checkpoint() {
 
 #[test]
 fn preparation_is_discoverable_through_the_existing_native_cli() {
-    let result = success(spawn(&["capabilities".into(), "--json".into()], None).wait_with_output().unwrap());
-    assert!(result["commands"].as_array().unwrap().contains(&json!("attempt.prepare")));
-    assert!(result["commands"].as_array().unwrap().contains(&json!("development.attempt.prepare")));
-    assert!(result["nativeContracts"].as_array().unwrap().contains(&json!(CENTRAL_ACTION)));
+    let result = success(
+        spawn(&["capabilities".into(), "--json".into()], None)
+            .wait_with_output()
+            .unwrap(),
+    );
+    assert!(result["commands"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("attempt.prepare")));
+    assert!(result["commands"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("development.attempt.prepare")));
+    assert!(result["nativeContracts"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(CENTRAL_ACTION)));
 }

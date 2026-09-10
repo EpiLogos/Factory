@@ -4,6 +4,7 @@
 use serde_json::Value;
 
 const COMMANDS: &[&str] = &[
+    "attempt.prepare",
     "attempt.init",
     "attempt.attach",
     "attempt.read",
@@ -13,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "attempt.return",
     "attempt.receiving",
     "attempt.learn",
+    "development.attempt.prepare",
     "development.attempt.init",
     "development.attempt.attach",
     "development.attempt.read",
@@ -25,6 +27,8 @@ const COMMANDS: &[&str] = &[
     "owner",
 ];
 const CONTRACTS: &[&str] = &[
+    crate::attempt_central::CENTRAL_ACTION,
+    crate::attempt_central::CENTRAL_RECEIPT,
     "factory.attempt-state/v1",
     "factory.attempt-action/v1",
     "factory.attempt-reading/v1",
@@ -52,6 +56,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
     };
     if let Some(args) = attempt_args {
         return match args.first().map(String::as_str) {
+            Some("prepare") => crate::attempt_central::execute_cli(&args[1..], stdin),
             Some("owner-action") => {
                 crate::attempt_owner_cli::execute_attempt_owner_cli(&args[1..], stdin)
                     .map_err(|error| error.to_string())
@@ -66,8 +71,9 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
                     .map_err(|error| error.to_string())?;
                 let receiving = crate::attempt_receiving::execute_cli(&[], None)?;
                 let learning = crate::attempt_learning::execute_cli(&[], None)?;
+                let preparation = crate::attempt_central::execute_cli(&[], None)?;
                 Ok(format!(
-                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{learning}",
+                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{learning}\n\n{preparation}",
                     task_help()
                 ))
             }
@@ -99,5 +105,5 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
 }
 
 fn task_help() -> &'static str {
-    "Native task and Return readings:\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
 }

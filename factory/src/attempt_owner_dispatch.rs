@@ -381,6 +381,7 @@ pub fn execute_attempt_owner_action(
         same_delivery(receipt, session, delivery)
             && receipt.payload["action"].as_str() == Some("send")
     });
+    let dispatch_started = std::time::Instant::now();
     let mut effective_packet = packet.clone();
     if action == "send" {
         let leg = reading
@@ -460,7 +461,7 @@ pub fn execute_attempt_owner_action(
     if timeout_ms == 0 {
         return Err(error("native owner transport budget is exhausted"));
     }
-    let intent = stamp(
+    let mut intent = stamp(
         OwnerOperationReceipt {
             owner_ref: "factory".into(),
             contract: TRANSPORT_OBSERVATION.into(),
@@ -476,6 +477,40 @@ pub fn execute_attempt_owner_action(
         OwnerOperationPhase::Dispatching,
         json!({"meaning":"Factory intent before transport, not worker execution"}),
     );
+    if action == "send" {
+        crate::attempt_runtime::validate_action_request(&action_request(
+            &request,
+            request.expected_revision,
+            "admission",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: intent.clone(),
+            },
+        ))
+        .map_err(error)?;
+        if let Some(preflight) = crate::attempt_central::preflight(attempt, cwd).map_err(error)? {
+            if preflight["policy"]["data"]["enforcement"] != "native-actions" {
+                return Err(error("the native policy requires worker interception/material enforcement not established by plain session delivery"));
+            }
+            intent.payload["placementPreflight"] = preflight.clone();
+            intent = stamp(
+                intent,
+                OwnerOperationPhase::Dispatching,
+                json!({"meaning":"Factory intent after fresh native Central readback, not worker enforcement"}),
+            );
+            let body = effective_packet["turn"]["packet"]["text"]
+                .as_str()
+                .ok_or_else(|| error("missing bounded task"))?;
+            effective_packet["turn"]["packet"]["text"] = json!(format!("{body}\n\nNative Central placement preflight (not new authority or worker confinement):\n{}",serde_json::to_string(&preflight).map_err(error)?));
+        }
+    }
+    let elapsed_ms = dispatch_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    let timeout_ms = timeout_ms.saturating_sub(elapsed_ms);
+    if timeout_ms == 0 {
+        return Err(error(
+            "native owner transport budget exhausted during preparation",
+        ));
+    }
     let invocation = NativeOwnerInvocation::AikitEncounter {
         binary: binary.clone(),
         cwd: cwd.clone(),

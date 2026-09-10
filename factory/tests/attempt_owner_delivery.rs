@@ -538,3 +538,6 @@ fn development_alias_uses_same_canonical_owner_action_and_readback() {
         Some(EXECUTION)
     );
 }
+
+#[path = "support/attempt_central_cases.rs"]
+mod central_cases;
