@@ -7,6 +7,8 @@ pub mod attempt_application;
 pub mod attempt_central;
 pub mod attempt_cli;
 pub mod attempt_learning;
+pub mod attempt_material;
+mod attempt_material_admission;
 pub mod attempt_native_store;
 pub mod attempt_owner_cli;
 pub mod attempt_owner_dispatch;
