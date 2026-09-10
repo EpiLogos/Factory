@@ -212,7 +212,10 @@ impl Run {
         {
             return Err(RunContractError::CorruptRun);
         }
-        let next = self.revision.next().ok_or(RunContractError::RevisionOverflow)?;
+        let next = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
         self.attempt_field = Some(field);
         self.revision = next;
         Ok(())
@@ -248,7 +251,10 @@ impl Run {
             });
         }
         let next_map = self.map.apply(command.mutation)?;
-        let next_revision = self.revision.next().ok_or(RunContractError::RevisionOverflow)?;
+        let next_revision = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
         self.map = next_map;
         self.revision = next_revision;
         self.applied_command_ids.insert(command.command_id);
@@ -270,7 +276,9 @@ impl Run {
             return Err(RunContractError::InvalidCommandId);
         }
         if self.applied_command_ids.contains(&command.command_id) {
-            return Ok(RunThoughtOutcome::AlreadyApplied { revision: self.revision });
+            return Ok(RunThoughtOutcome::AlreadyApplied {
+                revision: self.revision,
+            });
         }
         if command.expected_revision != self.revision {
             return Err(RunContractError::RevisionConflict {
@@ -278,11 +286,17 @@ impl Run {
                 actual: self.revision,
             });
         }
-        let next_revision = self.revision.next().ok_or(RunContractError::RevisionOverflow)?;
-        self.thought_field.retain(&self.reference, command.thought)?;
+        let next_revision = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
+        self.thought_field
+            .retain(&self.reference, command.thought)?;
         self.revision = next_revision;
         self.applied_command_ids.insert(command.command_id);
-        Ok(RunThoughtOutcome::Applied { revision: self.revision })
+        Ok(RunThoughtOutcome::Applied {
+            revision: self.revision,
+        })
     }
 
     pub fn transfer_write_authority(
@@ -303,9 +317,15 @@ impl Run {
             return Err(RunContractError::InvalidWriteOwner);
         }
         self.write_authority.owner = new_owner;
-        self.write_authority.epoch = self.write_authority.epoch.checked_add(1)
+        self.write_authority.epoch = self
+            .write_authority
+            .epoch
+            .checked_add(1)
             .ok_or(RunContractError::AuthorityEpochOverflow)?;
-        self.revision = self.revision.next().ok_or(RunContractError::RevisionOverflow)?;
+        self.revision = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
         Ok(self.mutation_authority())
     }
 
@@ -321,7 +341,10 @@ impl Run {
         if let Some(field) = &self.attempt_field {
             if field.contract != crate::attempt_types::ATTEMPT_FIELD
                 || field.workflow_key.trim().is_empty()
-                || field.applied_actions.values().any(|action| action.receipt.run_ref != self.reference)
+                || field
+                    .applied_actions
+                    .values()
+                    .any(|action| action.receipt.run_ref != self.reference)
             {
                 return Err(RunContractError::CorruptRun);
             }
@@ -350,7 +373,9 @@ impl RunRegistry {
     pub fn insert(&mut self, run: Run) -> Result<(), RunContractError> {
         run.validate()?;
         if self.runs.contains_key(run.reference()) {
-            return Err(RunContractError::DuplicateCanonicalRunMap(run.reference().clone()));
+            return Err(RunContractError::DuplicateCanonicalRunMap(
+                run.reference().clone(),
+            ));
         }
         self.runs.insert(run.reference().clone(), run);
         Ok(())
@@ -388,11 +413,17 @@ pub enum RunContractError {
     InvalidWriteOwner,
     InvalidCommandId,
     InvalidMutationAuthority,
-    RevisionConflict { expected: Revision, actual: Revision },
+    RevisionConflict {
+        expected: Revision,
+        actual: Revision,
+    },
     DuplicateCanonicalRunMap(RunRef),
     RevisionOverflow,
     AuthorityEpochOverflow,
-    MissingCanonicalRunRef { provider: String, external_id: String },
+    MissingCanonicalRunRef {
+        provider: String,
+        external_id: String,
+    },
     CorruptRun,
     CorruptRegistry(String),
     Topology(TopologyError),

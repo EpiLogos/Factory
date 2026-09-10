@@ -991,9 +991,11 @@ impl ExecutableOrchestration {
         if !matches!(
             leg.status,
             LegStatus::LateResult | LegStatus::Quiescent | LegStatus::ProcessTerminated
-        ) || !leg.status_history.iter().any(|status| {
-            matches!(status, LegStatus::Quiescent | LegStatus::ProcessTerminated)
-        }) {
+        ) || !leg
+            .status_history
+            .iter()
+            .any(|status| matches!(status, LegStatus::Quiescent | LegStatus::ProcessTerminated))
+        {
             return Err(OrchestrationError::InvalidTransition {
                 unit: unit.clone(),
                 status: leg.status,

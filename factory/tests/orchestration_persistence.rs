@@ -1,11 +1,10 @@
 use epilogos_factory::core::run::{Run, RunRef, WorkflowUnitRef};
 use epilogos_factory::execution_intelligence::{
-    accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand,
-    AIKIT_MODEL_ROSTER_VERSION,
+    accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, AIKIT_MODEL_ROSTER_VERSION,
 };
 use epilogos_factory::orchestration::{
-    ExecutableOrchestration, ExecutionLaunch, LegStatus, OrchestrationSnapshot,
-    RetryGrant, ReturnedArtifact,
+    ExecutableOrchestration, ExecutionLaunch, LegStatus, OrchestrationSnapshot, RetryGrant,
+    ReturnedArtifact,
 };
 use epilogos_factory::workflow::{compile_workflow, workflow_source_digest, WorkflowSource};
 use serde_json::json;
@@ -26,7 +25,12 @@ fn engine() -> ExecutableOrchestration {
 }
 
 fn unit(engine: &ExecutableOrchestration) -> WorkflowUnitRef {
-    engine.workflow().unit("inspect-source").unwrap().reference.clone()
+    engine
+        .workflow()
+        .unit("inspect-source")
+        .unwrap()
+        .reference
+        .clone()
 }
 
 fn launch(engine: &ExecutableOrchestration, reference: &str) -> ExecutionLaunch {
@@ -85,7 +89,9 @@ fn start(engine: &mut ExecutableOrchestration, execution: &str) -> WorkflowUnitR
 fn reopen(engine: &ExecutableOrchestration) -> ExecutableOrchestration {
     let encoded = serde_json::to_vec(&engine.snapshot()).unwrap();
     let snapshot: OrchestrationSnapshot = serde_json::from_slice(&encoded).unwrap();
-    snapshot.restore(engine.workflow().clone(), engine.run().clone()).unwrap()
+    snapshot
+        .restore(engine.workflow().clone(), engine.run().clone())
+        .unwrap()
 }
 
 #[test]
@@ -97,11 +103,15 @@ fn snapshot_roundtrip_uses_canonical_run_and_rejects_changed_source() {
     let mut changed: WorkflowSource = serde_json::from_str(SOURCE).unwrap();
     changed.source.revision = "different-authoring".into();
     changed.source.digest = workflow_source_digest(&changed).unwrap();
-    assert!(snapshot.restore(compile_workflow(changed).unwrap(), engine.run().clone()).is_err());
+    assert!(snapshot
+        .restore(compile_workflow(changed).unwrap(), engine.run().clone())
+        .is_err());
     let mut corrupt = serde_json::to_value(&snapshot).unwrap();
     corrupt["retryGrants"]["grant:bounded-test"]["attemptsSpent"] = json!(0);
     let corrupt: OrchestrationSnapshot = serde_json::from_value(corrupt).unwrap();
-    assert!(corrupt.restore(engine.workflow().clone(), engine.run().clone()).is_err());
+    assert!(corrupt
+        .restore(engine.workflow().clone(), engine.run().clone())
+        .is_err());
 }
 
 #[test]
@@ -110,12 +120,22 @@ fn retry_uses_fresh_basis_and_old_return_cannot_replace_the_new_attempt() {
     let unit = start(&mut engine, "execution:first");
     let late = result(&engine, "execution:first");
     engine.fail(&unit, "controlled failure").unwrap();
-    let subject = engine.workflow().unit("inspect-source").unwrap().subject_ref.to_string();
+    let subject = engine
+        .workflow()
+        .unit("inspect-source")
+        .unwrap()
+        .subject_ref
+        .to_string();
     engine.advance_subject(subject, "current-subject-revision");
     let mut next = launch(&engine, "execution:second");
     next.retry_grant = engine.retry_grant("grant:bounded-test").cloned();
-    engine.retry("journey:test", &unit, "grant:bounded-test", next).unwrap();
-    assert_eq!(engine.leg(&unit).unwrap().delegation.basis_revision, "current-subject-revision");
+    engine
+        .retry("journey:test", &unit, "grant:bounded-test", next)
+        .unwrap();
+    assert_eq!(
+        engine.leg(&unit).unwrap().delegation.basis_revision,
+        "current-subject-revision"
+    );
     engine.return_artifact(&unit, late.clone()).unwrap();
     engine.return_artifact(&unit, late).unwrap();
     let leg = engine.leg(&unit).unwrap();
@@ -123,7 +143,13 @@ fn retry_uses_fresh_basis_and_old_return_cannot_replace_the_new_attempt() {
     assert_eq!(leg.status, LegStatus::Active);
     assert!(leg.artifacts.is_empty());
     assert_eq!(leg.attempts[0].late_artifacts.len(), 1);
-    assert_eq!(engine.retry_grant("grant:bounded-test").unwrap().attempts_spent, 2);
+    assert_eq!(
+        engine
+            .retry_grant("grant:bounded-test")
+            .unwrap()
+            .attempts_spent,
+        2
+    );
     assert_eq!(reopen(&engine).snapshot(), engine.snapshot());
 }
 
@@ -149,7 +175,9 @@ fn accepted_cancellation_and_late_artifact_are_not_quiescence() {
     assert!(engine.incorporate_late_result(&unit).is_err());
     let mut next = launch(&engine, "execution:second");
     next.retry_grant = engine.retry_grant("grant:bounded-test").cloned();
-    assert!(engine.retry("journey:test", &unit, "grant:bounded-test", next).is_err());
+    assert!(engine
+        .retry("journey:test", &unit, "grant:bounded-test", next)
+        .is_err());
     engine.mark_quiescent(&unit).unwrap();
     engine.incorporate_late_result(&unit).unwrap();
     assert_eq!(engine.leg(&unit).unwrap().status, LegStatus::Returned);
@@ -160,8 +188,19 @@ fn accepted_cancellation_and_late_artifact_are_not_quiescence() {
 fn factory_reservation_binds_once_to_a_real_owner_execution_identity() {
     let mut engine = engine();
     let unit = start(&mut engine, "factory-attempt:reserved");
-    engine.bind_execution_identity(&unit, "factory-attempt:reserved", "execution:owner-returned").unwrap();
-    assert!(engine.bind_execution_identity(&unit, "factory-attempt:reserved", "execution:other").is_err());
-    assert_eq!(engine.leg(&unit).unwrap().attempts[0].execution_ref, "execution:owner-returned");
+    engine
+        .bind_execution_identity(
+            &unit,
+            "factory-attempt:reserved",
+            "execution:owner-returned",
+        )
+        .unwrap();
+    assert!(engine
+        .bind_execution_identity(&unit, "factory-attempt:reserved", "execution:other")
+        .is_err());
+    assert_eq!(
+        engine.leg(&unit).unwrap().attempts[0].execution_ref,
+        "execution:owner-returned"
+    );
     assert_eq!(reopen(&engine).snapshot(), engine.snapshot());
 }

@@ -176,7 +176,9 @@ impl OrchestrationSnapshot {
                         || artifact.subject_ref != attempt.delegation.subject_ref
                         || artifact.subject_revision != attempt.delegation.basis_revision
                     {
-                        return Err(invalid("artifact is attributed to another attempt or basis"));
+                        return Err(invalid(
+                            "artifact is attributed to another attempt or basis",
+                        ));
                     }
                 }
             }

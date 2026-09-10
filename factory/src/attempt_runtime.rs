@@ -343,10 +343,18 @@ pub enum FactoryAttemptOperation {
         attempt_ref: String,
         resolution: ReresolutionRecord,
     },
-    RequestCancellation { attempt_ref: String },
-    AcceptCancellation { attempt_ref: String },
-    RecordProcessTermination { attempt_ref: String },
-    MarkQuiescent { attempt_ref: String },
+    RequestCancellation {
+        attempt_ref: String,
+    },
+    AcceptCancellation {
+        attempt_ref: String,
+    },
+    RecordProcessTermination {
+        attempt_ref: String,
+    },
+    MarkQuiescent {
+        attempt_ref: String,
+    },
     Fail {
         attempt_ref: String,
         reason: String,
@@ -370,7 +378,9 @@ pub enum FactoryAttemptOperation {
         artifact: ReturnedArtifact,
         readable_return: ReadableReturn,
     },
-    IncorporateLateResult { attempt_ref: String },
+    IncorporateLateResult {
+        attempt_ref: String,
+    },
     AdvanceSubject {
         subject_ref: String,
         revision: String,
@@ -504,11 +514,18 @@ impl FileAttemptStore {
     }
 
     fn persist_new(&self) -> Result<(), FactoryAttemptError> {
-        if let Some(parent) = self.path.parent().filter(|path| !path.as_os_str().is_empty()) {
+        if let Some(parent) = self
+            .path
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         let bytes = serde_json::to_vec_pretty(&self.state)?;
-        let mut file = OpenOptions::new().create_new(true).write(true).open(&self.path)?;
+        let mut file = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&self.path)?;
         if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
             let _ = fs::remove_file(&self.path);
             return Err(error.into());
@@ -614,7 +631,10 @@ fn apply_operation(
             attempt_refs.push(attempt_ref);
             "bind-dispatch"
         }
-        FactoryAttemptOperation::RecordObservation { attempt_ref, receipt } => {
+        FactoryAttemptOperation::RecordObservation {
+            attempt_ref,
+            receipt,
+        } => {
             validate_owner_receipt(&receipt)?;
             let record = attempt_mut(state, &attempt_ref)?;
             ensure_no_duplicate_receipt(record, &receipt.receipt_ref)?;
@@ -653,7 +673,11 @@ fn apply_operation(
         FactoryAttemptOperation::RecordTracking { attempt_ref, fact } => {
             validate_tracking(&fact)?;
             let record = attempt_mut(state, &attempt_ref)?;
-            if record.tracking.iter().any(|existing| existing.fact_ref == fact.fact_ref) {
+            if record
+                .tracking
+                .iter()
+                .any(|existing| existing.fact_ref == fact.fact_ref)
+            {
                 return Err(FactoryAttemptError::DuplicateReference(fact.fact_ref));
             }
             record.tracking.push(fact);
@@ -729,10 +753,9 @@ fn apply_operation(
             reresolution,
         } => {
             let prior = latest_attempt_for_unit(state, &workflow_unit_ref)?;
-            let grant = engine
-                .retry_grant(&grant_ref)
-                .cloned()
-                .ok_or_else(|| FactoryAttemptError::InvalidOperation("unknown retry grant".into()))?;
+            let grant = engine.retry_grant(&grant_ref).cloned().ok_or_else(|| {
+                FactoryAttemptError::InvalidOperation("unknown retry grant".into())
+            })?;
             let start = AttemptStart {
                 attempt_ref: attempt_ref.clone(),
                 task_ref,
@@ -827,8 +850,14 @@ fn apply_operation(
             let readable = attempt_mut(state, &attempt_ref)?
                 .readable_return
                 .as_mut()
-                .ok_or_else(|| FactoryAttemptError::InvalidOperation("no readable Return".into()))?;
-            if readable.receiving_ref.as_deref().is_some_and(|current| current != receiving_ref) {
+                .ok_or_else(|| {
+                    FactoryAttemptError::InvalidOperation("no readable Return".into())
+                })?;
+            if readable
+                .receiving_ref
+                .as_deref()
+                .is_some_and(|current| current != receiving_ref)
+            {
                 return Err(FactoryAttemptError::InvalidOperation(
                     "a different receiving receipt is already attached".into(),
                 ));
@@ -851,7 +880,9 @@ fn apply_operation(
             let readable = attempt_mut(state, &attempt_ref)?
                 .readable_return
                 .as_mut()
-                .ok_or_else(|| FactoryAttemptError::InvalidOperation("no readable Return".into()))?;
+                .ok_or_else(|| {
+                    FactoryAttemptError::InvalidOperation("no readable Return".into())
+                })?;
             readable.archive_refs.insert(archive_ref);
             if let Some(reference) = regression_observation_ref {
                 if reference.trim().is_empty() {
@@ -879,7 +910,9 @@ fn prepare_start(
     required_text(&start.attempt_ref, "attemptRef")?;
     required_text(&start.task_ref, "taskRef")?;
     if state.attempts.contains_key(&start.attempt_ref) {
-        return Err(FactoryAttemptError::DuplicateReference(start.attempt_ref.clone()));
+        return Err(FactoryAttemptError::DuplicateReference(
+            start.attempt_ref.clone(),
+        ));
     }
     let unit = engine
         .workflow()
@@ -887,7 +920,12 @@ fn prepare_start(
         .values()
         .find(|unit| unit.reference == start.workflow_unit_ref)
         .ok_or_else(|| FactoryAttemptError::InvalidOperation("unknown workflow unit".into()))?;
-    validate_disposition(&start.disposition, engine.run().reference(), unit, start.retry_grant.as_ref())?;
+    validate_disposition(
+        &start.disposition,
+        engine.run().reference(),
+        unit,
+        start.retry_grant.as_ref(),
+    )?;
     for fact in &start.tracking {
         validate_tracking(fact)?;
     }
@@ -945,15 +983,33 @@ fn validate_disposition(
     for (field, value) in [
         ("agentRef", disposition.participant.agent_ref.as_str()),
         ("agencyRef", disposition.participant.agency_ref.as_str()),
-        ("worldBindingRef", disposition.participant.world_binding_ref.as_str()),
+        (
+            "worldBindingRef",
+            disposition.participant.world_binding_ref.as_str(),
+        ),
         ("sourceRef", disposition.participant.source_ref.as_str()),
-        ("sourceRevision", disposition.participant.source_revision.as_str()),
-        ("sourceDigest", disposition.participant.source_digest.as_str()),
+        (
+            "sourceRevision",
+            disposition.participant.source_revision.as_str(),
+        ),
+        (
+            "sourceDigest",
+            disposition.participant.source_digest.as_str(),
+        ),
         ("routeRef", disposition.body.route_ref.as_str()),
         ("harnessRef", disposition.body.harness_ref.as_str()),
-        ("harnessCompositionRef", disposition.body.harness_composition_ref.as_str()),
-        ("agentSessionRef", disposition.body.agent_session_ref.as_str()),
-        ("sessionSpaceRef", disposition.body.session_space_ref.as_str()),
+        (
+            "harnessCompositionRef",
+            disposition.body.harness_composition_ref.as_str(),
+        ),
+        (
+            "agentSessionRef",
+            disposition.body.agent_session_ref.as_str(),
+        ),
+        (
+            "sessionSpaceRef",
+            disposition.body.session_space_ref.as_str(),
+        ),
     ] {
         required_text(value, field)?;
     }
@@ -970,7 +1026,9 @@ fn validate_disposition(
         ));
     }
     if !disposition.praxis_refs.is_superset(&unit.praxis_refs)
-        || !disposition.capability_refs.is_superset(&unit.capability_refs)
+        || !disposition
+            .capability_refs
+            .is_superset(&unit.capability_refs)
         || disposition.permitted_effects != unit.permitted_effects
         || disposition.verification_obligations != unit.verification_obligations
         || disposition.return_address != unit.return_address
@@ -1016,7 +1074,10 @@ fn validate_disposition(
         ] {
             required_text(value, field)?;
         }
-        if !placement.effective_coverage.is_superset(&placement.required_coverage) {
+        if !placement
+            .effective_coverage
+            .is_superset(&placement.required_coverage)
+        {
             return Err(FactoryAttemptError::InvalidDisposition(
                 "effective protection does not satisfy required coverage".into(),
             ));
@@ -1106,7 +1167,9 @@ fn unique_tracking(facts: &[AttemptTrackingFact]) -> Result<(), FactoryAttemptEr
     let mut refs = BTreeSet::new();
     for fact in facts {
         if !refs.insert(&fact.fact_ref) {
-            return Err(FactoryAttemptError::DuplicateReference(fact.fact_ref.clone()));
+            return Err(FactoryAttemptError::DuplicateReference(
+                fact.fact_ref.clone(),
+            ));
         }
     }
     Ok(())
@@ -1177,7 +1240,10 @@ fn ensure_no_duplicate_receipt(
     record: &FactoryAttemptRecord,
     receipt_ref: &str,
 ) -> Result<(), FactoryAttemptError> {
-    if record.dispatch.as_ref().is_some_and(|receipt| receipt.receipt_ref == receipt_ref)
+    if record
+        .dispatch
+        .as_ref()
+        .is_some_and(|receipt| receipt.receipt_ref == receipt_ref)
         || record
             .observations
             .iter()
@@ -1188,13 +1254,18 @@ fn ensure_no_duplicate_receipt(
     Ok(())
 }
 
-fn validate_action_request(request: &FactoryAttemptActionRequest) -> Result<(), FactoryAttemptError> {
+fn validate_action_request(
+    request: &FactoryAttemptActionRequest,
+) -> Result<(), FactoryAttemptError> {
     if request.contract != FACTORY_ATTEMPT_ACTION {
-        return Err(FactoryAttemptError::UnsupportedContract(request.contract.clone()));
+        return Err(FactoryAttemptError::UnsupportedContract(
+            request.contract.clone(),
+        ));
     }
     required_text(&request.projection_ref, "projectionRef")?;
     required_text(&request.caller.caller_ref, "callerRef")?;
-    if request.caller.lineage.last().map(String::as_str) != Some(request.caller.caller_ref.as_str()) {
+    if request.caller.lineage.last().map(String::as_str) != Some(request.caller.caller_ref.as_str())
+    {
         return Err(FactoryAttemptError::InvalidAuthority(
             "caller lineage must terminate at callerRef".into(),
         ));
@@ -1206,7 +1277,8 @@ fn validate_action_request(request: &FactoryAttemptActionRequest) -> Result<(), 
         || request.authority.authority_ref.trim().is_empty()
     {
         return Err(FactoryAttemptError::InvalidAuthority(
-            "Factory attempt operation requires native Factory authority and capability grant".into(),
+            "Factory attempt operation requires native Factory authority and capability grant"
+                .into(),
         ));
     }
     Ok(())
@@ -1214,10 +1286,14 @@ fn validate_action_request(request: &FactoryAttemptActionRequest) -> Result<(), 
 
 fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError> {
     if state.schema != FACTORY_ATTEMPT_STATE {
-        return Err(FactoryAttemptError::UnsupportedContract(state.schema.clone()));
+        return Err(FactoryAttemptError::UnsupportedContract(
+            state.schema.clone(),
+        ));
     }
     if state.revision == 0 {
-        return Err(FactoryAttemptError::CorruptState("zero state revision".into()));
+        return Err(FactoryAttemptError::CorruptState(
+            "zero state revision".into(),
+        ));
     }
     let workflow = compile_workflow(state.workflow_source.clone())?;
     let engine = state.snapshot.restore(workflow, state.run.clone())?;
@@ -1235,7 +1311,9 @@ fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError>
             .units
             .values()
             .find(|unit| unit.reference == record.workflow_unit_ref)
-            .ok_or_else(|| FactoryAttemptError::CorruptState("attempt names unknown unit".into()))?;
+            .ok_or_else(|| {
+                FactoryAttemptError::CorruptState("attempt names unknown unit".into())
+            })?;
         validate_disposition(&record.disposition, state.run.reference(), unit, None)?;
         if let Some(execution_ref) = &record.execution_ref {
             if !execution_refs.insert(execution_ref) {
@@ -1296,11 +1374,16 @@ fn persist_replace(path: &Path, state: &StoredAttemptState) -> Result<(), Factor
     }
     let temporary = path.with_file_name(format!(
         ".{}.tmp-{}-{}",
-        path.file_name().and_then(|value| value.to_str()).unwrap_or("factory-attempt.json"),
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("factory-attempt.json"),
         std::process::id(),
         ulid::Ulid::new()
     ));
-    let mut file = OpenOptions::new().create_new(true).write(true).open(&temporary)?;
+    let mut file = OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&temporary)?;
     file.write_all(&serde_json::to_vec_pretty(state)?)?;
     file.sync_all()?;
     fs::rename(&temporary, path).inspect_err(|_| {
@@ -1312,10 +1395,17 @@ fn persist_replace(path: &Path, state: &StoredAttemptState) -> Result<(), Factor
 
 fn lock_path(path: &Path) -> Result<fs::File, FactoryAttemptError> {
     let lock_path = path.with_extension("attempt.lock");
-    if let Some(parent) = lock_path.parent().filter(|path| !path.as_os_str().is_empty()) {
+    if let Some(parent) = lock_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+    {
         fs::create_dir_all(parent)?;
     }
-    let lock = OpenOptions::new().create(true).read(true).write(true).open(lock_path)?;
+    let lock = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
     lock.lock_exclusive()?;
     Ok(lock)
 }
@@ -1346,20 +1436,28 @@ pub fn execute_attempt_cli(
     match args.first().map(String::as_str) {
         None | Some("help") | Some("--help") | Some("-h") => Ok(attempt_help()),
         Some("init") => {
-            let state = args.get(1).ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
+            let state = args
+                .get(1)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
             let input = args.get(2).map(String::as_str).unwrap_or("-");
-            let seed: FactoryAttemptSeed = serde_json::from_str(&read_input(input, stdin_override)?)?;
+            let seed: FactoryAttemptSeed =
+                serde_json::from_str(&read_input(input, stdin_override)?)?;
             let store = FileAttemptStore::initialize(state, seed)?;
             render_reading(store.reading()?, json)
         }
         Some("read") => {
-            let state = args.get(1).ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
+            let state = args
+                .get(1)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
             render_reading(FileAttemptStore::open(state)?.reading()?, json)
         }
         Some("action") => {
-            let state = args.get(1).ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
+            let state = args
+                .get(1)
+                .ok_or_else(|| FactoryAttemptError::Cli("missing attempt state path".into()))?;
             let input = args.get(2).map(String::as_str).unwrap_or("-");
-            let request: FactoryAttemptActionRequest = serde_json::from_str(&read_input(input, stdin_override)?)?;
+            let request: FactoryAttemptActionRequest =
+                serde_json::from_str(&read_input(input, stdin_override)?)?;
             let mut store = FileAttemptStore::open(state)?;
             let receipt = store.apply(request)?;
             if json {
@@ -1402,7 +1500,10 @@ fn attempt_help() -> String {
     "Factory native attempt operations\n\nUsage:\n  factory attempt init   <state> [seed-file|-] [--json]\n  factory attempt read   <state> [--json]\n  factory attempt action <state> [request-file|-] [--json]\n\nThe durable state revalidates the canonical Run/workflow/snapshot basis on every operation. Owner delivery receipts never imply verification or human acceptance.".into()
 }
 
-fn render_reading(reading: FactoryAttemptReading, json: bool) -> Result<String, FactoryAttemptError> {
+fn render_reading(
+    reading: FactoryAttemptReading,
+    json: bool,
+) -> Result<String, FactoryAttemptError> {
     if json {
         return Ok(serde_json::to_string_pretty(&reading)?);
     }

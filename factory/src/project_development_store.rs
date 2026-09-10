@@ -194,8 +194,13 @@ mod native_transaction_tests {
     fn initial(path: &Path) -> RunRef {
         let project_ref: ProjectRef = "project:01ARZ3NDEKTSV4RRFFQ69G5FAE".parse().unwrap();
         let run_ref: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FAA".parse().unwrap();
-        let run = Run::new(run_ref.clone(), project_ref.clone(), "native attempts", "factory")
-            .unwrap();
+        let run = Run::new(
+            run_ref.clone(),
+            project_ref.clone(),
+            "native attempts",
+            "factory",
+        )
+        .unwrap();
         let build = FactoryBuildState::new(Project::new(project_ref), run).unwrap();
         FactoryDevelopmentalFileProvider::create(
             path,
@@ -222,8 +227,13 @@ mod native_transaction_tests {
         let run_ref = initial(&path);
         let before = fs::read(&path).unwrap();
         let result: Result<(), _> = transact_developmental_state(&path, |state| {
-            state.build.insert_claim(claim(&run_ref, "claim:rollback")).unwrap();
-            Err(ProjectDevelopmentStoreError::Native("interrupted before commit".into()))
+            state
+                .build
+                .insert_claim(claim(&run_ref, "claim:rollback"))
+                .unwrap();
+            Err(ProjectDevelopmentStoreError::Native(
+                "interrupted before commit".into(),
+            ))
         });
         assert!(result.is_err());
         assert_eq!(before, fs::read(&path).unwrap());
@@ -239,14 +249,18 @@ mod native_transaction_tests {
         let expected = read_developmental_state(&path).unwrap().build.revision();
         transact_developmental_state(&path, |state| {
             assert_eq!(state.build.revision(), expected);
-            state.build.insert_claim(claim(&run_ref, "claim:committed"))
+            state
+                .build
+                .insert_claim(claim(&run_ref, "claim:committed"))
                 .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
         })
         .unwrap();
         let after = fs::read(&path).unwrap();
         let stale = transact_developmental_state(&path, |state| {
             if state.build.revision() != expected {
-                return Err(ProjectDevelopmentStoreError::Native("stale revision".into()));
+                return Err(ProjectDevelopmentStoreError::Native(
+                    "stale revision".into(),
+                ));
             }
             Ok(())
         });
