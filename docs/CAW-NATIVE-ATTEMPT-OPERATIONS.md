@@ -21,8 +21,8 @@ and `factory attempt help` disclose the commands and contract versions.
 
 ```text
 factory attempt init <native-state> <seed-json|-> --json
-factory attempt attach <native-state> <run-ref> --json
-factory attempt read <native-state> --json
+factory attempt attach <native-state> <run-ref> <admitted-source-ref> --json
+factory attempt read <native-state> [run-ref] --json
 factory attempt action <native-state> <request-json|-> --json
 factory attempt owner-action <native-state> <request-json|-> --json
 factory attempt task <native-state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]
