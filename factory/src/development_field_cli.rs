@@ -169,9 +169,9 @@ fn load_required(
     store: &FileProjectDevelopmentStore,
     run_ref: &RunRef,
 ) -> Result<ProjectDevelopmentLedger, DevelopmentFieldCliError> {
-    store
-        .load(run_ref)?
-        .ok_or_else(|| DevelopmentFieldCliError(format!("development ledger not found for {run_ref}")))
+    store.load(run_ref)?.ok_or_else(|| {
+        DevelopmentFieldCliError(format!("development ledger not found for {run_ref}"))
+    })
 }
 
 fn load_or_new(
@@ -316,18 +316,14 @@ mod tests {
     use tempfile::tempdir;
 
     fn field(run_ref: RunRef) -> DevelopmentField {
-        let project_ref =
-            ProjectRef::from_str("project:01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
+        let project_ref = ProjectRef::from_str("project:01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap();
         DevelopmentField::new(
             "development-field:cli",
             project_ref.clone(),
             run_ref.clone(),
             JourneyRef::from_str("journey:01ARZ3NDEKTSV4RRFFQ69G5FAX").unwrap(),
             "commission:cli",
-            vec![WorkflowUnitRef::from_str(
-                "workflow-unit:01ARZ3NDEKTSV4RRFFQ69G5FAY",
-            )
-            .unwrap()],
+            vec![WorkflowUnitRef::from_str("workflow-unit:01ARZ3NDEKTSV4RRFFQ69G5FAY").unwrap()],
             "Return the intended software difference with exact provenance",
             DevelopmentFieldTargets {
                 plan_ref: "plan:cli".into(),
