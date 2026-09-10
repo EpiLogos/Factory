@@ -150,9 +150,11 @@ impl World {
                     dir.path().join("NOW").to_string_lossy().into_owned(),
                     dir.path().join("work").to_string_lossy().into_owned(),
                 ]),
-                protected_paths: BTreeSet::from([
-                    dir.path().join("Control").to_string_lossy().into_owned(),
-                ]),
+                protected_paths: BTreeSet::from([dir
+                    .path()
+                    .join("Control")
+                    .to_string_lossy()
+                    .into_owned()]),
                 required_coverage: set(["file-content"]),
                 effective_coverage: set(["file-content"]),
                 write_boundary_ref: Some("boundary:test-only".into()),
@@ -201,7 +203,12 @@ impl World {
         }
     }
 
-    fn owner_request(&self, binary: &Path, request_ref: &str, delivery: &str) -> FactoryAttemptOwnerRequest {
+    fn owner_request(
+        &self,
+        binary: &Path,
+        request_ref: &str,
+        delivery: &str,
+    ) -> FactoryAttemptOwnerRequest {
         FactoryAttemptOwnerRequest {
             contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
             request_ref: request_ref.into(),
@@ -234,7 +241,13 @@ impl World {
 
     fn invoke_owner(&self, request: &FactoryAttemptOwnerRequest) -> Output {
         run(
-            &["attempt", "owner-action", self.state.to_str().unwrap(), "-", "--json"],
+            &[
+                "attempt",
+                "owner-action",
+                self.state.to_str().unwrap(),
+                "-",
+                "--json",
+            ],
             Some(&serde_json::to_string(request).unwrap()),
         )
     }
@@ -300,7 +313,12 @@ fn run(args: &[&str], input: Option<&str>) -> Output {
         .spawn()
         .unwrap();
     if let Some(input) = input {
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
     } else {
         drop(child.stdin.take());
     }
@@ -332,7 +350,10 @@ fn public_owner_action_binds_real_receipt_and_exact_replay_never_resends() {
         .into_iter()
         .find(|record| record.attempt_ref == ATTEMPT)
         .unwrap();
-    assert_eq!(attempt.execution_ref.as_deref(), Some("execution:owner-public"));
+    assert_eq!(
+        attempt.execution_ref.as_deref(),
+        Some("execution:owner-public")
+    );
 
     let replay: FactoryAttemptOwnerReceipt =
         serde_json::from_slice(&success(world.invoke_owner(&request)).stdout).unwrap();
