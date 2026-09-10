@@ -8,7 +8,7 @@ use epilogos_factory::attempt_runtime::{
     SituatedExecutionDisposition, SituatedParticipant, VerificationOutcome, VerificationReceipt,
     FACTORY_ATTEMPT_ACTION, FACTORY_ATTEMPT_CAPABILITY_REF,
 };
-use epilogos_factory::core::run::{Run, RunRef, WorkflowUnitRef};
+use epilogos_factory::core::run::{Run, RunRef};
 use epilogos_factory::execution_intelligence::{
     accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, AIKIT_MODEL_ROSTER_VERSION,
 };

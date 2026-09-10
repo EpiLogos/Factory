@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 
 const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
