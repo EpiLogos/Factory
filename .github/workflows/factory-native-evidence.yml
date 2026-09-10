@@ -1,0 +1,64 @@
+name: Factory native attempt evidence
+
+on:
+  pull_request:
+    paths:
+      - 'factory/**'
+      - 'scripts/prove_factory_central.py'
+      - '.github/workflows/factory-native-evidence.yml'
+  push:
+    branches: ['agent/caw-221-native-attempts']
+    paths:
+      - 'factory/**'
+      - 'scripts/prove_factory_central.py'
+      - '.github/workflows/factory-native-evidence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-attempt-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: factory
+      - name: Preserve exact source
+        run: |
+          mkdir -p native-evidence
+          git rev-parse HEAD > native-evidence/source-sha.txt
+          git archive HEAD | gzip > native-evidence/source.tar.gz
+      - name: Format check
+        id: format
+        run: cargo fmt --manifest-path factory/Cargo.toml -- --check
+      - name: Native all-target tests
+        id: tests
+        if: always()
+        run: |
+          set -o pipefail
+          cargo test --manifest-path factory/Cargo.toml --all-targets 2>&1 | tee native-evidence/tests.log
+      - name: Clippy
+        if: always()
+        run: cargo clippy --manifest-path factory/Cargo.toml --all-targets -- -D warnings
+      - name: Preserve successful native binary
+        if: steps.tests.outcome == 'success'
+        run: |
+          cp factory/target/debug/factory native-evidence/factory
+          sha256sum native-evidence/factory > native-evidence/factory.sha256
+      - name: Formatting diagnostics only
+        if: always() && steps.format.outcome == 'failure'
+        run: |
+          cargo fmt --manifest-path factory/Cargo.toml
+          git diff -- factory > native-evidence/rustfmt.patch
+          tar -czf native-evidence/formatted-factory.tar.gz factory/src factory/tests
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factory-native-${{ github.run_id }}
+          path: native-evidence/
+          if-no-files-found: error
+          retention-days: 14
