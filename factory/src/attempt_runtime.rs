@@ -235,6 +235,8 @@ pub struct ReadableReturn {
     /// Central #152 receipt when that owner operation has actually occurred.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receiving_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiving_source_revision: Option<String>,
     #[serde(default)]
     pub archive_refs: BTreeSet<String>,
     #[serde(default)]
@@ -261,6 +263,8 @@ pub struct FactoryAttemptRecord {
     pub tracking: Vec<AttemptTrackingFact>,
     #[serde(default)]
     pub reresolutions: Vec<ReresolutionRecord>,
+    #[serde(default)]
+    pub failure_evidence_refs: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readable_return: Option<ReadableReturn>,
 }
@@ -577,7 +581,19 @@ fn apply_operation(
             }
             let mut launches = BTreeMap::new();
             let mut records = Vec::new();
+            let mut attempt_ids = BTreeSet::new();
+            let mut unit_ids = BTreeSet::new();
             for start in &attempts {
+                if !attempt_ids.insert(start.attempt_ref.clone()) {
+                    return Err(FactoryAttemptError::DuplicateReference(
+                        start.attempt_ref.clone(),
+                    ));
+                }
+                if !unit_ids.insert(start.workflow_unit_ref.clone()) {
+                    return Err(FactoryAttemptError::InvalidOperation(
+                        "a fork cannot launch the same WorkflowUnit twice".into(),
+                    ));
+                }
                 let (launch, record) = prepare_start(state, &engine, start, None)?;
                 launches.insert(start.workflow_unit_ref.clone(), launch);
                 records.push(record);
@@ -739,6 +755,9 @@ fn apply_operation(
             }
             let unit = attempt_unit(state, &attempt_ref)?;
             engine.fail(&unit, reason)?;
+            attempt_mut(state, &attempt_ref)?
+                .failure_evidence_refs
+                .extend(evidence_refs);
             attempt_refs.push(attempt_ref);
             "fail"
         }
@@ -752,7 +771,7 @@ fn apply_operation(
             tracking,
             reresolution,
         } => {
-            let prior = latest_attempt_for_unit(state, &workflow_unit_ref)?;
+            let prior = current_attempt_for_unit(state, &engine, &workflow_unit_ref)?;
             let grant = engine.retry_grant(&grant_ref).cloned().ok_or_else(|| {
                 FactoryAttemptError::InvalidOperation("unknown retry grant".into())
             })?;
@@ -862,7 +881,17 @@ fn apply_operation(
                     "a different receiving receipt is already attached".into(),
                 ));
             }
+            if readable
+                .receiving_source_revision
+                .as_deref()
+                .is_some_and(|current| current != source_revision)
+            {
+                return Err(FactoryAttemptError::InvalidOperation(
+                    "a different receiving source revision is already attached".into(),
+                ));
+            }
             readable.receiving_ref = Some(receiving_ref);
+            readable.receiving_source_revision = Some(source_revision);
             readable.evidence_refs.extend(evidence_refs);
             attempt_refs.push(attempt_ref);
             "attach-receiving"
@@ -953,6 +982,7 @@ fn prepare_start(
             verifications: Vec::new(),
             tracking: start.tracking.clone(),
             reresolutions: Vec::new(),
+            failure_evidence_refs: BTreeSet::new(),
             readable_return: None,
         },
     ))
@@ -1224,16 +1254,28 @@ fn attempt_unit(
         .ok_or_else(|| FactoryAttemptError::UnknownAttempt(attempt_ref.into()))
 }
 
-fn latest_attempt_for_unit<'a>(
+fn current_attempt_for_unit<'a>(
     state: &'a StoredAttemptState,
+    engine: &ExecutableOrchestration,
     unit: &WorkflowUnitRef,
 ) -> Result<&'a FactoryAttemptRecord, FactoryAttemptError> {
+    let execution_ref = &engine
+        .leg(unit)
+        .ok_or_else(|| FactoryAttemptError::InvalidOperation("no current leg for retry".into()))?
+        .execution_ref;
     state
         .attempts
         .values()
-        .rev()
-        .find(|record| &record.workflow_unit_ref == unit)
-        .ok_or_else(|| FactoryAttemptError::InvalidOperation("no prior attempt for retry".into()))
+        .find(|record| {
+            &record.workflow_unit_ref == unit
+                && (record.execution_ref.as_deref() == Some(execution_ref.as_str())
+                    || record.reserved_execution_ref == *execution_ref)
+        })
+        .ok_or_else(|| {
+            FactoryAttemptError::CorruptState(
+                "current coordinator execution has no durable attempt record".into(),
+            )
+        })
 }
 
 fn ensure_no_duplicate_receipt(
@@ -1315,6 +1357,18 @@ fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAttemptError>
                 FactoryAttemptError::CorruptState("attempt names unknown unit".into())
             })?;
         validate_disposition(&record.disposition, state.run.reference(), unit, None)?;
+        if let Some(grant_ref) = &record.disposition.budget.retry_grant_ref {
+            let grant = engine.retry_grant(grant_ref).ok_or_else(|| {
+                FactoryAttemptError::CorruptState(
+                    "attempt refers to a retry grant absent from the coordinator".into(),
+                )
+            })?;
+            if record.disposition.budget.maximum_attempts != Some(grant.attempts_allowed) {
+                return Err(FactoryAttemptError::CorruptState(
+                    "attempt retry budget differs from the persisted grant".into(),
+                ));
+            }
+        }
         if let Some(execution_ref) = &record.execution_ref {
             if !execution_refs.insert(execution_ref) {
                 return Err(FactoryAttemptError::CorruptState(
