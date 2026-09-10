@@ -580,6 +580,22 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
     if reading.revision != request.expected_revision || !reading.source_current {
         return Err("stale Factory revision/source before Central preparation".into());
     }
+    if let Some(latest) = attempt
+        .observations
+        .iter()
+        .rev()
+        .find(|receipt| receipt.contract == CALL)
+    {
+        if latest.operation_ref != intent.operation_ref
+            && (previous.is_some()
+                || matches!(
+                    latest.phase,
+                    OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain
+                ))
+        {
+            return Err("another Central preparation is current or unresolved; recover that exact request before replacing it".into());
+        }
+    }
     let leg = reading
         .legs
         .get(&attempt.workflow_unit_ref)

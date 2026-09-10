@@ -406,3 +406,6 @@ fn preparation_is_discoverable_through_the_existing_native_cli() {
         .unwrap()
         .contains(&json!(CENTRAL_ACTION)));
 }
+
+#[path = "attempt_central_followup.rs"]
+mod followup;
