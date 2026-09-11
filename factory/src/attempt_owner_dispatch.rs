@@ -24,6 +24,10 @@ use std::path::Path;
 
 pub const FACTORY_ATTEMPT_OWNER_ACTION: &str = "factory.attempt-owner-action/v1";
 pub const FACTORY_ATTEMPT_OWNER_RECEIPT: &str = "factory.attempt-owner-receipt/v1";
+#[path = "attempt_task_dispatch.rs"]
+mod task_dispatch;
+pub use task_dispatch::AIKIT_TASK_CONTRACT_REVISION;
+
 const TRANSPORT_OBSERVATION: &str = "factory.attempt-owner-transport/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,39 +283,27 @@ pub fn execute_attempt_owner_action(
         .to_string();
     if let Some(previous) = latest_transports(attempt).get(&intent_ref(&request)) {
         if previous.payload["requestDigest"].as_str() != Some(&digest) {
-            return Err(error(
-                "owner Action identity was reused with different content",
-            ));
+            return Err(error("owner Action request identity has conflicting input"));
         }
-        crate::attempt_runtime::validate_action_request(&action_request(
-            &request,
-            reading.revision,
-            "replay",
-            FactoryAttemptOperation::RecordObservation {
-                attempt_ref: request.attempt_ref.clone(),
-                receipt: previous.clone(),
-            },
-        ))
-        .map_err(error)?;
-        let owner = if let Some(value) = previous
+        let current = store.reading().map_err(error)?;
+        if request.expected_revision > current.revision {
+            return Err(error("replayed Action claims a future Factory revision"));
+        }
+        store
+            .apply(action_request(
+                &request,
+                current.revision,
+                "replay-authority",
+                FactoryAttemptOperation::Read,
+            ))
+            .map_err(error)?;
+        let owner = previous
             .payload
             .pointer("/detail/ownerReceipt")
-            .filter(|value| !value.is_null())
-        {
-            Some(serde_json::from_value(value.clone()).map_err(error)?)
-        } else {
-            previous
-                .payload
-                .pointer("/detail/ownerReceiptRef")
-                .and_then(Value::as_str)
-                .and_then(|reference| {
-                    attempt
-                        .observations
-                        .iter()
-                        .find(|receipt| receipt.receipt_ref == reference)
-                })
-                .cloned()
-        };
+            .cloned()
+            .map(serde_json::from_value::<OwnerOperationReceipt>)
+            .transpose()
+            .map_err(error)?;
         return Ok(result(
             &store,
             &request,
@@ -335,7 +327,7 @@ pub fn execute_attempt_owner_action(
             "this attempt handoff supports AIKit send/delivery only",
         ));
     };
-    if contract_revision != AIKIT_CAW_CONTRACT_REVISION || !cwd.is_absolute() {
+    if !matches!(contract_revision.as_str(), AIKIT_CAW_CONTRACT_REVISION | AIKIT_TASK_CONTRACT_REVISION) || !cwd.is_absolute() {
         return Err(error(
             "AIKit requires the exact published owner revision and an absolute cwd",
         ));
@@ -352,171 +344,137 @@ pub fn execute_attempt_owner_action(
         }
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
-        .ok_or_else(|| error("an exact native delivery identity is required"))?;
-    if session != attempt.disposition.body.agent_session_ref
-        || request.execution_ref == session
-        || request.execution_ref == delivery
-        || request.execution_ref == attempt.reserved_execution_ref
-        || attempt
-            .execution_ref
-            .as_ref()
-            .is_some_and(|current| current != &request.execution_ref)
-        || reading.attempts.iter().any(|other| {
-            other.attempt_ref != request.attempt_ref
-                && (other.execution_ref.as_ref() == Some(&request.execution_ref)
-                    || other.observations.iter().any(|receipt| {
-                        is_transport(receipt)
-                            && receipt.payload["executionRef"].as_str()
-                                == Some(request.execution_ref.as_str())
-                    }))
-        })
-    {
-        return Err(error(
-            "attempt, Execution and AgentSession identities disagree or collide",
-        ));
+        .ok_or_else(|| error("native delivery identity is required"))?;
+    if session != attempt.disposition.body.agent_session_ref {
+        return Err(error("owner target differs from the arranged AgentSession"));
     }
-    let transport_identity =
-        json!({"binary":binary, "cwd":cwd, "contractRevision":contract_revision});
-    let prior_send = attempt.observations.iter().find(|receipt| {
-        same_delivery(receipt, session, delivery)
-            && receipt.payload["action"].as_str() == Some("send")
-    });
-    let dispatch_started = std::time::Instant::now();
-    let mut effective_packet = packet.clone();
-    if action == "send" {
-        let leg = reading
-            .legs
-            .get(&attempt.workflow_unit_ref)
-            .ok_or_else(|| error("attempt has no canonical workflow leg"))?;
-        if !reading.source_current
-            || attempt.execution_ref.is_some()
-            || leg.execution_ref != attempt.reserved_execution_ref
-            || leg.status != crate::orchestration::LegStatus::Active
-            || attempt.observations.iter().any(|receipt| {
-                is_transport(receipt) && receipt.payload["action"].as_str() == Some("send")
-            })
-        {
-            return Err(error("dispatch requires a current unbound active attempt with no prior send; inspect its original delivery"));
-        }
-        let protected = attempt
-            .disposition
-            .placement
-            .as_ref()
-            .is_some_and(|placement| {
-                !placement.required_coverage.is_empty() || !placement.protected_paths.is_empty()
-            });
-        let writing = attempt.disposition.permitted_effects.iter().any(|effect| {
-            let effect = effect.to_ascii_lowercase();
-            effect.starts_with("write:")
-                || effect.contains("write ")
-                || effect.starts_with("mutate:")
-        });
-        if protected || writing {
-            return Err(error("AIKit #277 has not published fresh enforcement admission on this plain session path; declared placement is not effective protection"));
-        }
-        if packet.pointer("/turn/sender").and_then(Value::as_str)
-            != Some(request.caller.caller_ref.as_str())
-            || packet.pointer("/turn/packet/audience")
-                != Some(&json!([attempt.disposition.participant.agent_ref]))
-            || packet
-                .pointer("/turn/expected_binding_revision")
-                .and_then(Value::as_str)
-                .is_none_or(|value| value.trim().is_empty())
-        {
+    if let Some(environment) = &attempt.disposition.working_environment {
+        if environment.cwd != *cwd {
             return Err(error(
-                "native sender, audience and binding revision must name the selected caller/Agent",
+                "dispatch cwd differs from the declared Candidate/worktree basis",
             ));
         }
-        let task = packet
+    }
+    let native_action = format!("action/aikit/encounter-{action}");
+    if !attempt
+        .disposition
+        .authority
+        .allowed_action_refs
+        .contains(&native_action)
+    {
+        return Err(error("current disposition does not permit this owner Action"));
+    }
+    let previous_calls = latest_transports(attempt);
+    let mut effective_packet = packet.clone();
+    let mut task_admission = None;
+    if action == "send" {
+        if attempt.status != crate::attempt_runtime::AttemptStatus::Ready {
+            return Err(error("attempt is not ready for a new native dispatch"));
+        }
+        if previous_calls
+            .values()
+            .any(|receipt| pending(receipt.phase))
+        {
+            return Err(error(
+                "an earlier owner effect is uncertain; reconcile its original delivery first",
+            ));
+        }
+        let protected_or_writing = !attempt.context.allowed_writes.is_empty()
+            || attempt.disposition.placement.as_ref().is_some_and(|placement| {
+                !placement.required_coverage.is_empty()
+                    || placement.write_boundary_ref.is_some()
+                    || placement.material_receipt_ref.is_some()
+            });
+        if protected_or_writing || packet.pointer("/turn/expected_task").is_some() {
+            if contract_revision != AIKIT_TASK_CONTRACT_REVISION {
+                return Err(error("Protected/writing attempts require AIKit's actual task-dispatch contract; plain encounter delivery is not enforcement"));
+            }
+            task_admission = Some(task_dispatch::prepare(attempt, binary, cwd, packet,
+                attempt.disposition.budget.wall_clock_timeout_ms.unwrap_or(DEFAULT_OWNER_TIMEOUT_MS).min(DEFAULT_OWNER_TIMEOUT_MS)).map_err(error)?);
+        }
+        if attempt.disposition.working_environment.is_none()
+            && attempt
+                .disposition
+                .placement
+                .as_ref()
+                .is_some_and(|placement| {
+                    !placement
+                        .writable_paths
+                        .iter()
+                        .any(|path| cwd.starts_with(path))
+                })
+        {
+            return Err(error(
+                "execution cwd is outside the explicitly resolved working world",
+            ));
+        }
+        let mut text = packet
             .pointer("/turn/packet/text")
             .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| error("native packet must contain the explicit task"))?;
-        let bounds = json!({"delegation":leg.delegation, "execution":request.execution_ref, "disposition":attempt.disposition});
-        effective_packet["turn"]["packet"]["text"] = Value::String(format!(
-            "Factory bounded attempt. These are the authorised task conditions, not new authority:\n{}\n\nTask:\n{task}",
-            serde_json::to_string(&bounds).map_err(error)?));
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| error("native send requires explicit bounded work text"))?
+            .to_owned();
+        if let Some(now) = &attempt.context.now_ref {
+            text.push_str(&format!("\nTask NOW: {now}"));
+        }
+        if let Some(now) = &attempt.context.now_path {
+            text.push_str(&format!("\nTask output directory: {}", now.display()));
+        }
+        text.push_str(&format!(
+            "\nTask: {}\nFactory attempt: {}\nExecution: {}\nReturn destination: {}",
+            attempt.task_ref,
+            attempt.attempt_ref,
+            request.execution_ref,
+            attempt.disposition.return_destination_ref
+        ));
+        effective_packet["turn"]["packet"]["text"] = json!(text);
     } else {
-        let sent = prior_send
-            .ok_or_else(|| error("delivery read must name this attempt's retained send intent"))?;
-        if sent.payload["executionRef"].as_str() != Some(request.execution_ref.as_str())
-            || sent
-                .payload
-                .get("transport")
-                .is_some_and(|identity| identity != &transport_identity)
-        {
+        if !previous_calls.values().any(|receipt| {
+            same_delivery(receipt, session, delivery) && receipt.payload["action"] == "send"
+        }) {
             return Err(error(
-                "delivery recovery cannot silently replace its original transport or Execution",
+                "delivery is not the retained original dispatch of this attempt",
             ));
         }
-        // Older v1 intents did not retain transport configuration. Their exact
-        // native delivery/session still remains mandatory for compatible reads.
-    }
-    let timeout_ms = attempt
-        .disposition
-        .budget
-        .wall_clock_timeout_ms
-        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS)
-        .min(DEFAULT_OWNER_TIMEOUT_MS);
-    if timeout_ms == 0 {
-        return Err(error("native owner transport budget is exhausted"));
-    }
-    let mut intent = stamp(
-        OwnerOperationReceipt {
-            owner_ref: "factory".into(),
-            contract: TRANSPORT_OBSERVATION.into(),
-            operation_ref: intent_ref(&request),
-            receipt_ref: String::new(),
-            source_revision: format!("factory-state:{}", request.expected_revision),
-            phase: OwnerOperationPhase::Dispatching,
-            evidence_refs: BTreeSet::new(),
-            partial_effect_refs: BTreeSet::new(),
-            payload: json!({"requestDigest":digest,"agentSession":session,"deliveryRef":delivery,"action":action,
-            "executionRef":request.execution_ref,"transport":transport_identity}),
-        },
-        OwnerOperationPhase::Dispatching,
-        json!({"meaning":"Factory intent before transport, not worker execution"}),
-    );
-    if action == "send" {
-        crate::attempt_runtime::validate_action_request(&action_request(
-            &request,
-            request.expected_revision,
-            "admission",
-            FactoryAttemptOperation::RecordObservation {
-                attempt_ref: request.attempt_ref.clone(),
-                receipt: intent.clone(),
-            },
-        ))
-        .map_err(error)?;
-        if let Some(preflight) = crate::attempt_central::preflight(attempt, cwd).map_err(error)? {
-            if preflight["policy"]["data"]["enforcement"] != "native-actions" {
-                return Err(error("the native policy requires worker interception/material enforcement not established by plain session delivery"));
-            }
-            intent.payload["placementPreflight"] = preflight.clone();
-            intent = stamp(
-                intent,
-                OwnerOperationPhase::Dispatching,
-                json!({"meaning":"Factory intent after fresh native Central readback, not worker enforcement"}),
-            );
-            let body = effective_packet["turn"]["packet"]["text"]
-                .as_str()
-                .ok_or_else(|| error("missing bounded task"))?;
-            effective_packet["turn"]["packet"]["text"] = json!(format!("{body}\n\nNative Central placement preflight (not new authority or worker confinement):\n{}",serde_json::to_string(&preflight).map_err(error)?));
+        if previous_calls.values().any(|receipt| {
+            same_delivery(receipt, session, delivery)
+                && receipt.payload["executionRef"] != request.execution_ref
+        }) {
+            return Err(error(
+                "delivery observation cannot rename the Factory Execution",
+            ));
         }
     }
-    let elapsed_ms = dispatch_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-    let timeout_ms = timeout_ms.saturating_sub(elapsed_ms);
-    if timeout_ms == 0 {
-        return Err(error(
-            "native owner transport budget exhausted during preparation",
-        ));
-    }
-    let invocation = NativeOwnerInvocation::AikitEncounter {
-        binary: binary.clone(),
-        cwd: cwd.clone(),
-        contract_revision: contract_revision.clone(),
-        request: effective_packet,
+    let payload = json!({
+        "requestRef":request.request_ref,"requestDigest":digest,"action":action,
+        "agentSession":session,"deliveryRef":delivery,"executionRef":request.execution_ref,
+        "nativeContractRevision":contract_revision,"cwd":cwd,
+        "taskAdmission":task_admission,
+        "dispatchPacket":effective_packet,
+        "meaning":"Factory transport intent; not an owner receipt, quiescence or task Return"
+    });
+    let base = OwnerOperationReceipt {
+        owner_ref: "factory".into(),
+        contract: TRANSPORT_OBSERVATION.into(),
+        operation_ref: intent_ref(&request),
+        receipt_ref: String::new(),
+        source_revision: "factory.attempt-owner-transport/v1".into(),
+        phase: OwnerOperationPhase::Dispatching,
+        evidence_refs: BTreeSet::new(),
+        partial_effect_refs: BTreeSet::new(),
+        payload,
     };
+    let intent = stamp(base, OwnerOperationPhase::Dispatching, Value::Null);
+    if action == "send" {
+        if let Some(prepared) = &attempt.central_preparation {
+            if prepared.placement_validation["enforcement"] != "native-actions" && task_admission.is_none() {
+                return Err(error("protected Central work requires the task-bound AIKit dispatch admission"));
+            }
+            prepared.validate_dispatch_basis().map_err(error)?;
+        }
+    }
+    // Atomic local intent publication arbitrates concurrent writers. External
+    // dispatch happens only after this native transaction is durably committed.
     store
         .apply(action_request(
             &request,
@@ -528,15 +486,27 @@ pub fn execute_attempt_owner_action(
             },
         ))
         .map_err(error)?;
-    let owner = match invoke_native_owner_bounded(&invocation, timeout_ms) {
-        Ok(owner) => owner,
+    let timeout = attempt
+        .disposition
+        .budget
+        .wall_clock_timeout_ms
+        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS)
+        .min(DEFAULT_OWNER_TIMEOUT_MS);
+    let effective_invocation = NativeOwnerInvocation::AikitEncounter {
+        binary: binary.clone(),
+        cwd: cwd.clone(),
+        contract_revision: contract_revision.clone(),
+        request: effective_packet,
+    };
+    let owner = match invoke_native_owner_bounded(&effective_invocation, timeout) {
+        Ok(receipt) => receipt,
         Err(failure) => {
             let uncertain = stamp(
                 intent,
                 OwnerOperationPhase::Uncertain,
-                json!({"failure":failure.to_string(),"instruction":"inspect original delivery, do not resend"}),
+                json!({"transportError":failure.to_string(),"instruction":"inspect original delivery; never resend"}),
             );
-            let retention_error = retain(
+            let retention = retain(
                 &mut store,
                 &request,
                 "uncertain",
@@ -553,57 +523,59 @@ pub fn execute_attempt_owner_action(
                 false,
                 uncertain,
                 None,
-                retention_error,
+                retention,
             ));
         }
     };
     let completion = (|| -> Result<OwnerOperationReceipt, AttemptOwnerError> {
-        retain(
-            &mut store,
-            &request,
-            "owner-evidence",
-            FactoryAttemptOperation::RecordObservation {
-                attempt_ref: request.attempt_ref.clone(),
-                receipt: owner.clone(),
-            },
-        )?;
         let current = store.reading().map_err(error)?;
-        let current_attempt = record(&current, &request.attempt_ref)?;
-        if current_attempt.execution_ref.is_none()
-            && current.source_current
+        task_dispatch::validate_response(record(&current, &request.attempt_ref)?, delivery, &owner).map_err(error)?;
+        // First retain the actual owner evidence. Never mark our pending call
+        // observed until every canonical worker/observation update succeeded.
+        let current = store.reading().map_err(error)?;
+        if record(&current, &request.attempt_ref)?.dispatch.is_none()
             && matches!(
                 owner.phase,
-                OwnerOperationPhase::Submitted | OwnerOperationPhase::Returned
+                OwnerOperationPhase::Submitted
+                    | OwnerOperationPhase::Returned
+                    | OwnerOperationPhase::Failed
+                    | OwnerOperationPhase::Cancelled
             )
-            && current
-                .legs
-                .get(&current_attempt.workflow_unit_ref)
-                .is_some_and(|leg| {
-                    leg.execution_ref == current_attempt.reserved_execution_ref
-                        && leg.status == crate::orchestration::LegStatus::Active
-                })
         {
+            store
+                .apply(action_request(
+                    &request,
+                    current.revision,
+                    "dispatch",
+                    FactoryAttemptOperation::RecordDispatch {
+                        attempt_ref: request.attempt_ref.clone(),
+                        execution_ref: request.execution_ref.clone(),
+                        receipt: owner.clone(),
+                    },
+                ))
+                .map_err(error)?;
+        } else {
             retain(
                 &mut store,
                 &request,
-                "bind",
-                FactoryAttemptOperation::BindDispatch {
+                "owner-observation",
+                FactoryAttemptOperation::RecordObservation {
                     attempt_ref: request.attempt_ref.clone(),
-                    execution_ref: request.execution_ref.clone(),
                     receipt: owner.clone(),
                 },
             )?;
         }
-        let current = store.reading().map_err(error)?;
-        let current_attempt = record(&current, &request.attempt_ref)?;
-        let mut calls = latest_transports(current_attempt)
+        let reading = store.reading().map_err(error)?;
+        let calls: Vec<_> = latest_transports(record(&reading, &request.attempt_ref)?)
             .into_values()
-            .filter(|receipt| same_delivery(receipt, session, delivery) && pending(receipt.phase))
-            .collect::<Vec<_>>();
-        // Current call settles last: any interrupted multi-receipt publication
-        // leaves a blocking intent rather than a premature resolved readback.
-        calls.sort_by_key(|receipt| receipt.operation_ref == intent.operation_ref);
-        let phase = if pending(owner.phase) {
+            .filter(|receipt| {
+                same_delivery(receipt, session, delivery) && pending(receipt.phase)
+            })
+            .collect();
+        let phase = if matches!(
+            owner.phase,
+            OwnerOperationPhase::Dispatching | OwnerOperationPhase::Uncertain
+        ) {
             OwnerOperationPhase::Uncertain
         } else {
             OwnerOperationPhase::Observed
