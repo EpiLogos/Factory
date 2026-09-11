@@ -30,6 +30,7 @@ factory attempt task <native-state> <run-ref> <task-ref> [--json] [--limit 1..10
 factory attempt return <native-state> <run-ref> <attempt-ref> [--json]
 factory attempt receiving <native-state> <request-json|-> --json
 factory attempt learn <native-state> <request-json|-> --json
+factory attempt material <native-state> <request-json|-> --json
 ```
 
 `factory development attempt ...` projects the same operations. The existing
@@ -40,9 +41,10 @@ Mutation requests carry the existing `FactoryActionCaller` and
 `ProjectedFactoryActionAuthority`, exact Run/attempt identity and expected
 revision. The concrete request structs and executable public-command examples
 are in `factory/src/attempt_runtime.rs`, `attempt_owner_dispatch.rs`,
-`attempt_receiving.rs`, `attempt_learning.rs` and the corresponding tests.
-Native authority fields are the established Factory admission boundary, not a
-new claim of credential isolation between hostile same-host processes.
+`attempt_receiving.rs`, `attempt_learning.rs`, `attempt_material.rs` and the
+corresponding tests. Native authority fields are the established Factory
+admission boundary, not a new claim of credential isolation between hostile
+same-host processes.
 
 ## Native preparation and fresh dispatch
 
@@ -112,6 +114,56 @@ protection. Factory therefore refuses protected or write-effect dispatch on
 this path rather than treating declared coverage or a sandboxed control client
 as confinement of an already-running worker. This restriction marks an
 unfinished adapter join, not completion of protected continuous work.
+
+## Attempt-scoped material lifecycle
+
+`factory attempt material` connects the existing Workcell World adapter to the
+same persisted attempt. It reuses `FactoryAttemptOwnerRequest`, with contract
+`factory.attempt-material-action/v1`, and returns
+`factory.attempt-material-receipt/v1`. The existing `WorkcellWorld` invocation
+selects `inspect`, `observe`, `expose`, `collect`, `recover` or `release`.
+`factory development attempt material` is the identical operation.
+
+A new call must identify the exact Run/attempt/Execution, current Factory
+revision, bound Workcell and original or recorded successor material World.
+The caller supplies the pinned native binary, explicit service endpoint and
+absolute material-receipt path. `WORKCELL_CONTROL_TOKEN` stays in the host
+environment; credential-bearing invocation JSON is refused before persistence.
+The bounded, private transport copy freezes the validated receipt bytes so a
+changed input path cannot redirect a call or let Workcell rewrite the original
+receipt. That temporary copy is not another material store.
+
+Factory persists its intent before transport, then validates and retains the
+actual owner response. Inspect/recovery preserve demand and caller subjects;
+other results must identify the addressed World and native result shape.
+Successful release is distinct from Workcell's preserved, suspended or
+snapshotted dispositions. Unknown dispositions remain uncertain. Material
+observations are visible in existing attempt/task readback; they are not
+converted into Agent liveness, task-specific usage or a completed Return.
+
+Recovery retains predecessor and replacement World identities without rewriting
+the historical disposition. A superseded or released binding cannot start new
+work. Recover/release also check other attempts sharing that Workcell/World in
+the same canonical provider. The existing native transaction excludes competing
+material effects and new starts, retries or dispatch while a consequential
+material call is unresolved. This is provider-local coordination, not a global
+inventory of every external user of a service.
+
+Release requires the addressed attempt's explicit quiescent state and no
+unresolved owner effects or active peer material users. This gate does not
+itself cancel an Agent or prove independent worker quiescence. Recovery is a
+material operation, not permission to continue an old Agent on a replacement
+body; further execution needs its proper re-resolution and dispatch admission.
+
+Exact replay never invokes Workcell again, including replay of a material read
+made before the Execution was subsequently bound. A new successful read can
+settle older uncertain transports for that same read operation and endpoint;
+a slow older read cannot settle newer uncertainty. The original responses stay
+in history. An ordinary healthy inspection cannot settle an interrupted
+recover/release by pretending its effects never occurred. Such consequential
+uncertainty remains blocked for explicit owner reconciliation. Post-effect
+retention failure returns actual owner output and an error, with null readback
+when current state is unavailable, rather than a fabricated rollback or replay.
 
 ## Task, source and telemetry reading
 
@@ -188,7 +240,7 @@ They are explicit adapter dependencies, not accepted-main claims.
 | Owner | PR and exact source revision | Contract used |
 | --- | --- | --- |
 | AIKit | EpiLogos/ai-kit#278, `3d23d1eefbb999b0a5058ed0b4ca98dd2575b632` | `docs/implementation/CAW-NATIVE-DELIVERY.md`; native addressed send/delivery |
-| Workcell | EpiLogos/Workcell#73, `f3a5be9fc751ee94b78aff11411e0cde65a46e4c` | `docs/CAW-MATERIAL-OPERATIONS.md`; standalone material and write-boundary adapters |
+| Workcell | EpiLogos/Workcell#73, `f3a5be9fc751ee94b78aff11411e0cde65a46e4c` | `docs/CAW-MATERIAL-OPERATIONS.md`; attempt-scoped material lifecycle and standalone write-boundary adapter |
 | Central | EpiLogos/Central#155, `e7e8479f1502732821bd3e7d3d5ceda38fd4279f` | `docs/CAW-NATIVE-CONSUMER-INTERFACES.md` and native receiving implementation |
 
 A pinned contract is not verification of a locally installed executable's
@@ -196,6 +248,26 @@ identity. Installation/source parity remains later proof. No owner repository
 was modified by this Factory continuation.
 
 ## Tests and checks
+
+The material continuation adds 24 portable public-binary regression cases and
+one separately executed source-built Workcell integration case. Regressions
+cover exact replay across later execution binding, wrong-World input/output,
+input-path swaps, bounded transport, retention failure, old/new observation
+ordering, retained versus released material, shared users, native transactional
+exclusion and preservation of original receipt/source identity.
+
+The `Factory native material integration` workflow builds the pinned Workcell
+CLI and control-service, requires exactly one discovered native test, and runs
+it with `--include-ignored`. Missing native binaries or zero discovered cases
+cannot pass. This exercises the actual Factory caller through Workcell's public
+CLI/control service: read operations, managed-service host death, restart,
+recovery to a new World and PID, replay without new effects, old-receipt refusal
+and release of the replacement. Original receipt, source and pending-Return
+bytes are checked unchanged. The hosted workload is a disposable TCP process,
+not an Agent, independent verifier or commercial-model execution. The native
+case is ignored only by standalone tests lacking the external owner binaries;
+its dedicated CI lane executes it. Exact heads, logs and binary digests belong
+to the retained run artifacts and PR return.
 
 Preparation adds seventeen cases to the existing public owner-delivery suite:
 identity/current-source gates, total transport budget, allocation-loss recovery,
@@ -217,12 +289,11 @@ producer/task/NOW attribution and unchanged target bytes. Provider/verification
 inputs remain controlled evidence, not independent Agent or commercial model
 acceptance. Exact executed heads and logs remain PR evidence.
 
-
-This continuation adds 37 tests: four bounded transport unit tests, ten public
-owner-delivery tests, seven task/Return-reading tests, seven public Central
-receiving tests and nine learning/ledger tests. They exercise the compiled
-Factory binary and disposable filesystem Worlds. Owner protocol children are
-explicit test doubles confined to tests, not commercial model evidence.
+The earlier dispatch/Return tranche added 37 tests: four bounded transport unit
+tests, ten public owner-delivery tests, seven task/Return-reading tests, seven
+public Central receiving tests and nine learning/ledger tests. They exercise
+the compiled Factory binary and disposable filesystem Worlds. Owner protocol
+children are explicit test doubles confined to tests, not commercial model evidence.
 
 Coverage includes persisted restart/readback, process death after send,
 original-intent recovery, no-resend replay, repeated observations, writer/CAS
@@ -258,12 +329,13 @@ results belong in PR #223, not an assertion that every later head is green.
 3. Finish Central source-horizon, Day/NOW obligation, archive lifecycle and
    cross-Day re-resolution joins. Receiving submit/read is implemented here;
    archive-reference attachment alone is not an archive operation.
-4. Finish continuously fed owner material-lifecycle/resource/usage observations
-   and their consumption by the full attempt workflow. The current task view
-   joins existing validated correlations but does not invent a live collector.
-   AIKit catalogue-to-execution, gateway, enforcement and recurrence joins, and
-   Workcell's ambiguous interrupted-provider-effect recovery remain their
-   owners' code obligations.
+4. Attempt-scoped material inspect/observe/expose/collect/recover/release and
+   their durable readback are implemented. Continuous observation scheduling,
+   resource/usage collection and the complete attempt workflow's response to
+   those updates remain separate work. The task view joins existing validated
+   correlations; it does not invent a live collector. AIKit catalogue-to-execution,
+   gateway, enforcement and recurrence joins, and Workcell's ambiguous
+   interrupted-provider-effect recovery remain their owners' code obligations.
 
 These are repository implementation gaps, not LOCAL PROOF and not grounds to
 wait for personal installation before writing the remaining Factory code.

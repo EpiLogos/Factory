@@ -207,3 +207,67 @@ fn post_effect_retention_failure_returns_actual_owner_output_not_a_stale_reading
     assert!(response["retentionError"].is_string());
     assert_eq!(world.calls(), 1);
 }
+
+#[test]
+fn a_late_older_read_cannot_settle_a_newer_unknown_observation() {
+    let world = World::with_timeout(15_000);
+    world.mode("hold");
+    let older = world.request("read:older", WorkcellWorldOperation::Observe);
+    let state = world.state();
+    let handle = std::thread::spawn(move || {
+        binary(
+            &[
+                "attempt".into(),
+                "material".into(),
+                state,
+                "-".into(),
+                "--json".into(),
+            ],
+            Some(serde_json::to_value(older).unwrap()),
+        )
+    });
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !world.dir.path().join("entered").exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(world.dir.path().join("entered").exists());
+    world.mode("lost");
+    let newer = world.request("read:newer", WorkcellWorldOperation::Observe);
+    assert_eq!(success(world.invoke(&newer))["needsReconciliation"], true);
+    fs::write(world.dir.path().join("continue"), b"continue").unwrap();
+    assert_eq!(success(handle.join().unwrap())["needsReconciliation"], true);
+    assert_eq!(
+        success(world.invoke(&newer))["transportObservation"]["phase"],
+        "uncertain"
+    );
+    world.mode("ok");
+    let fresh =
+        success(world.invoke(&world.request("read:latest", WorkcellWorldOperation::Observe)));
+    assert_eq!(fresh["needsReconciliation"], false);
+    assert_eq!(world.calls(), 3);
+}
+
+#[test]
+fn unknown_release_dispositions_remain_uncertain_and_prevent_material_reuse() {
+    let world = World::new();
+    world.quiesce();
+    let script = fs::read_to_string(world.owner()).unwrap();
+    let old = "else 'released','changed'";
+    assert_eq!(script.matches(old).count(), 1);
+    fs::write(
+        world.owner(),
+        script.replace(old, "else 'unrecognized','changed'"),
+    )
+    .unwrap();
+    let response =
+        success(world.invoke(&world.request("release:unknown", WorkcellWorldOperation::Release)));
+    assert_eq!(response["needsReconciliation"], true);
+    assert_eq!(
+        response["ownerReceipt"]["payload"]["disposition"],
+        "unrecognized"
+    );
+    refused(
+        world.start("peer-read", "attempt:reuse"),
+        "material lifecycle",
+    );
+}

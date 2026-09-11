@@ -277,10 +277,10 @@ fn validate_response(
             };
             if operation == WorkcellWorldOperation::Release {
                 // A successful call may retain material under Workcell policy.
-                receipt.phase = if text(payload, field)? == "released" {
-                    OwnerOperationPhase::Released
-                } else {
-                    OwnerOperationPhase::Observed
+                receipt.phase = match text(payload, field)? {
+                    "released" => OwnerOperationPhase::Released,
+                    "preserved" | "suspended" | "snapshotted" => OwnerOperationPhase::Observed,
+                    _ => return Err("unknown native material release disposition".into()),
                 };
             } else if !payload[field].is_array() {
                 return Err(format!("native material result omits {field}"));
@@ -382,6 +382,11 @@ fn settle_read_calls(
         .values()
         .filter(|receipt| {
             pending(receipt.phase)
+                && receipt
+                    .source_revision
+                    .strip_prefix("factory-state:")
+                    .and_then(|revision| revision.parse::<u64>().ok())
+                    .is_some_and(|revision| revision < request.expected_revision)
                 && ["worldRef", "workcellRef", "endpoint", "operation"]
                     .iter()
                     .all(|key| receipt.payload[key] == outcome.payload[key])
