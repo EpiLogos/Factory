@@ -26,10 +26,7 @@
         "transcripts"
       ],
       "baselineWorkflows": [
-        ".github/workflows/ql-experiment-native.yml",
-        ".github/workflows/ql-experiment-pi.yml",
-        ".github/workflows/ql-experiment-pydantic.yml",
-        ".github/workflows/ql-runtime-foundation.yml"
+        ".github/workflows/ql-experiments.yml"
       ]
     }
   },
