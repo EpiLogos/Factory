@@ -16,8 +16,6 @@ on:
       - '.cargo/**'
       - 'rust-toolchain*'
       - '.github/workflows/factory-rust.yml'
-      - '.github/workflows/factory-native-skills.yml'
-      - '.github/workflows/prelocal-build.yml'
   workflow_dispatch:
 
 permissions:

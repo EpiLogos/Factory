@@ -1,7 +1,7 @@
 {
   "schemaVersion": "factory.source-ground/v1",
   "repository": {
-    "id": "EpiLogos/agent-system-design",
+    "id": "EpiLogos/Factory",
     "baselineRef": "main",
     "baselineCommit": "cae178d1409bd9f0f022d4e2ff4ab8f70b0166b1",
     "determination": "OBSERVED"
@@ -26,10 +26,7 @@
         "transcripts"
       ],
       "baselineWorkflows": [
-        ".github/workflows/ql-experiment-native.yml",
-        ".github/workflows/ql-experiment-pi.yml",
-        ".github/workflows/ql-experiment-pydantic.yml",
-        ".github/workflows/ql-runtime-foundation.yml"
+        ".github/workflows/ql-experiments.yml"
       ]
     }
   },
