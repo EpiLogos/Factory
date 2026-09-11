@@ -41,7 +41,12 @@ impl Host {
             .open(root.join("host.log"))
             .unwrap();
         let child = Command::new(binary)
-            .args(["--state-root", root.to_str().unwrap(), "--workcell-ref", WORKCELL])
+            .args([
+                "--state-root",
+                root.to_str().unwrap(),
+                "--workcell-ref",
+                WORKCELL,
+            ])
             .args(["--listen", endpoint])
             .env("WORKCELL_CONTROL_TOKEN", TOKEN)
             .stdin(Stdio::null())
@@ -162,8 +167,18 @@ fn native_workcell_caller_retains_process_recovery_and_release() {
     let receipt_path = root.join("native-original-world.json");
     let prepared = success(
         Command::new(&workcell)
-            .args(["--endpoint", &endpoint, "--state-root", client.to_str().unwrap()])
-            .args(["--receipt", receipt_path.to_str().unwrap(), "--json", "prepare"])
+            .args([
+                "--endpoint",
+                &endpoint,
+                "--state-root",
+                client.to_str().unwrap(),
+            ])
+            .args([
+                "--receipt",
+                receipt_path.to_str().unwrap(),
+                "--json",
+                "prepare",
+            ])
             .args(["--demand-json", demand_path.to_str().unwrap()])
             .env("WORKCELL_CONTROL_TOKEN", TOKEN)
             .output()
@@ -210,13 +225,20 @@ fn native_workcell_caller_retains_process_recovery_and_release() {
     host.stop();
     await_port(workload_port, false);
     host = Host::launch(&service, &state, &endpoint);
-    let recover_request = request("native:recover", WorkcellWorldOperation::Recover, &receipt_path);
+    let recover_request = request(
+        "native:recover",
+        WorkcellWorldOperation::Recover,
+        &receipt_path,
+    );
     let recovered = success(native_call(&world, &recover_request));
     assert_eq!(recovered["needsReconciliation"], false, "{recovered}");
     let successor = recovered["ownerReceipt"]["payload"]["world"].clone();
     assert_ne!(successor["world_ref"], original["world_ref"]);
     assert_eq!(successor["subjects"], original["subjects"]);
-    assert_eq!(recovered["ownerReceipt"]["payload"]["previous_world_ref"], original_ref);
+    assert_eq!(
+        recovered["ownerReceipt"]["payload"]["previous_world_ref"],
+        original_ref
+    );
     await_port(workload_port, true);
     let pids = |value: &Value| {
         value["binding_graph"]["bindings"]
@@ -229,35 +251,73 @@ fn native_workcell_caller_retains_process_recovery_and_release() {
     assert_eq!(pids(&original).len(), 1);
     assert_eq!(pids(&successor).len(), 1);
     assert!(pids(&original).is_disjoint(&pids(&successor)));
-    assert_eq!(success(native_call(&world, &recover_request))["replayed"], true);
+    assert_eq!(
+        success(native_call(&world, &recover_request))["replayed"],
+        true
+    );
     refused(
-        native_call(&world, &request("native:old", WorkcellWorldOperation::Recover, &receipt_path)),
+        native_call(
+            &world,
+            &request("native:old", WorkcellWorldOperation::Recover, &receipt_path),
+        ),
         "superseded material",
     );
     let successor_path = root.join("native-successor-world.json");
     fs::write(&successor_path, successor.to_string()).unwrap();
     for operation in [
-        FactoryAttemptOperation::RequestCancellation { attempt_ref: NATIVE_ATTEMPT.into() },
-        FactoryAttemptOperation::AcceptCancellation { attempt_ref: NATIVE_ATTEMPT.into() },
-        FactoryAttemptOperation::RecordProcessTermination { attempt_ref: NATIVE_ATTEMPT.into() },
-        FactoryAttemptOperation::MarkQuiescent { attempt_ref: NATIVE_ATTEMPT.into() },
+        FactoryAttemptOperation::RequestCancellation {
+            attempt_ref: NATIVE_ATTEMPT.into(),
+        },
+        FactoryAttemptOperation::AcceptCancellation {
+            attempt_ref: NATIVE_ATTEMPT.into(),
+        },
+        FactoryAttemptOperation::RecordProcessTermination {
+            attempt_ref: NATIVE_ATTEMPT.into(),
+        },
+        FactoryAttemptOperation::MarkQuiescent {
+            attempt_ref: NATIVE_ATTEMPT.into(),
+        },
     ] {
         success(world.action(operation));
     }
     let released = success(native_call(
         &world,
-        &request("native:release", WorkcellWorldOperation::Release, &successor_path),
+        &request(
+            "native:release",
+            WorkcellWorldOperation::Release,
+            &successor_path,
+        ),
     ));
     assert_eq!(released["needsReconciliation"], false, "{released}");
-    assert_eq!(released["ownerReceipt"]["payload"]["disposition"], "released");
+    assert_eq!(
+        released["ownerReceipt"]["payload"]["disposition"],
+        "released"
+    );
     await_port(workload_port, false);
     assert_eq!(fs::read(&receipt_path).unwrap(), original_bytes);
-    assert_eq!(fs::read(&source).unwrap(), b"human source stays byte-identical\0");
-    assert_eq!(fs::read(now.join("pending-return.txt")).unwrap(), b"retained pending Return\0");
-    assert_eq!(world.calls(), 0, "the protocol double must never run in this native case");
+    assert_eq!(
+        fs::read(&source).unwrap(),
+        b"human source stays byte-identical\0"
+    );
+    assert_eq!(
+        fs::read(now.join("pending-return.txt")).unwrap(),
+        b"retained pending Return\0"
+    );
+    assert_eq!(
+        world.calls(),
+        0,
+        "the protocol double must never run in this native case"
+    );
     let reading = world.read();
-    let attempt = reading.attempts.iter().find(|attempt| attempt.attempt_ref == NATIVE_ATTEMPT).unwrap();
-    assert_eq!(attempt.disposition.body.material_world_ref.as_deref(), Some(original_ref));
+    let attempt = reading
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_ref == NATIVE_ATTEMPT)
+        .unwrap();
+    assert_eq!(
+        attempt.disposition.body.material_world_ref.as_deref(),
+        Some(original_ref)
+    );
     assert!(attempt.readable_return.is_none());
     assert!(!fs::read_to_string(world.state()).unwrap().contains(TOKEN));
     println!("native Workcell source {WORKCELL_CAW_CONTRACT_REVISION}; original={original_ref}; recovered={}; real managed child replaced and released; source/Return bytes preserved", successor["world_ref"]);

@@ -37,19 +37,32 @@ fn fresh_read_reconciles_the_original_unknown_read_without_repeating_an_effect()
     let world = World::new();
     world.mode("foreign");
     let original = world.request("read:unknown", WorkcellWorldOperation::Observe);
-    assert_eq!(success(world.invoke(&original))["needsReconciliation"], true);
+    assert_eq!(
+        success(world.invoke(&original))["needsReconciliation"],
+        true
+    );
     world.mode("ok");
-    let refreshed = success(world.invoke(&world.request("read:fresh", WorkcellWorldOperation::Observe)));
+    let refreshed =
+        success(world.invoke(&world.request("read:fresh", WorkcellWorldOperation::Observe)));
     assert_eq!(refreshed["needsReconciliation"], false);
     let replayed = success(world.invoke(&original));
     assert_eq!(replayed["needsReconciliation"], false);
-    assert_eq!(replayed["transportObservation"]["payload"]["detail"]["reconciledBy"], "read:fresh");
+    assert_eq!(
+        replayed["transportObservation"]["payload"]["detail"]["reconciledBy"],
+        "read:fresh"
+    );
     assert_eq!(world.calls(), 2);
-    assert!(world.read().attempts[0].observations.iter().any(|receipt| {
-        receipt.phase == OwnerOperationPhase::Uncertain
-            && receipt.payload.pointer("/detail/ownerReceipt/payload/world_ref")
-                .and_then(Value::as_str) == Some("world:foreign")
-    }), "original uncertain response must remain in history");
+    assert!(
+        world.read().attempts[0].observations.iter().any(|receipt| {
+            receipt.phase == OwnerOperationPhase::Uncertain
+                && receipt
+                    .payload
+                    .pointer("/detail/ownerReceipt/payload/world_ref")
+                    .and_then(Value::as_str)
+                    == Some("world:foreign")
+        }),
+        "original uncertain response must remain in history"
+    );
 }
 
 #[test]
@@ -59,9 +72,13 @@ fn a_healthy_inspection_does_not_claim_that_an_unknown_recovery_had_no_effect() 
     let original = world.request("recover:uncertain", WorkcellWorldOperation::Recover);
     success(world.invoke(&original));
     world.mode("ok");
-    let fresh = success(world.invoke(&world.request("inspect:later", WorkcellWorldOperation::Inspect)));
+    let fresh =
+        success(world.invoke(&world.request("inspect:later", WorkcellWorldOperation::Inspect)));
     assert_eq!(fresh["needsReconciliation"], true);
-    assert_eq!(success(world.invoke(&original))["transportObservation"]["phase"], "uncertain");
+    assert_eq!(
+        success(world.invoke(&original))["transportObservation"]["phase"],
+        "uncertain"
+    );
     assert_eq!(world.calls(), 2);
 }
 
@@ -95,7 +112,11 @@ fn another_workcell_with_the_same_world_label_is_not_a_shared_material_user() {
         tracking: vec![],
     }));
     world.quiesce();
-    assert_eq!(success(world.invoke(&world.request("release:scoped", WorkcellWorldOperation::Release)))["needsReconciliation"], false);
+    assert_eq!(
+        success(world.invoke(&world.request("release:scoped", WorkcellWorldOperation::Release)))
+            ["needsReconciliation"],
+        false
+    );
 }
 
 #[test]
@@ -132,19 +153,28 @@ fn native_transaction_refuses_a_competing_material_intent_and_released_reuse() {
     other.operation_ref = "factory-material:test-competing".into();
     other.receipt_ref = "factory-material:test-competing-intent".into();
     other.payload["operation"] = json!("recover");
-    refused(world.action(FactoryAttemptOperation::RecordObservation {
-        attempt_ref: ATTEMPT.into(), receipt: other.clone(),
-    }), "material lifecycle");
+    refused(
+        world.action(FactoryAttemptOperation::RecordObservation {
+            attempt_ref: ATTEMPT.into(),
+            receipt: other.clone(),
+        }),
+        "material lifecycle",
+    );
     let mut released = receipt;
     released.phase = OwnerOperationPhase::Released;
     released.receipt_ref = "factory-material:test-released".into();
     released.payload["detail"] = json!({"validated":true});
     success(world.action(FactoryAttemptOperation::RecordObservation {
-        attempt_ref: ATTEMPT.into(), receipt: released,
+        attempt_ref: ATTEMPT.into(),
+        receipt: released,
     }));
-    refused(world.action(FactoryAttemptOperation::RecordObservation {
-        attempt_ref: ATTEMPT.into(), receipt: other,
-    }), "material lifecycle");
+    refused(
+        world.action(FactoryAttemptOperation::RecordObservation {
+            attempt_ref: ATTEMPT.into(),
+            receipt: other,
+        }),
+        "material lifecycle",
+    );
     assert_eq!(world.calls(), 0);
 }
 
@@ -155,7 +185,10 @@ fn a_swapped_world_receipt_is_rejected_before_the_first_owner_call() {
     receipt["world_ref"] = json!("world:unrelated");
     fs::write(world.receipt(), receipt.to_string()).unwrap();
     let before = fs::read(world.state()).unwrap();
-    refused(world.invoke(&world.request("inspect:foreign", WorkcellWorldOperation::Inspect)), "not bound");
+    refused(
+        world.invoke(&world.request("inspect:foreign", WorkcellWorldOperation::Inspect)),
+        "not bound",
+    );
     assert_eq!(world.calls(), 0);
     assert_eq!(fs::read(world.state()).unwrap(), before);
 }
@@ -165,7 +198,9 @@ fn post_effect_retention_failure_returns_actual_owner_output_not_a_stale_reading
     let world = World::new();
     let script = fs::read_to_string(world.owner()).unwrap();
     fs::write(world.owner(), script.replace("value['ok'] = True", "(root/'state.json').write_text('interrupted unrelated publication')\nvalue['ok'] = True")).unwrap();
-    let response = success(world.invoke(&world.request("inspect:retention-failed", WorkcellWorldOperation::Inspect)));
+    let response = success(
+        world.invoke(&world.request("inspect:retention-failed", WorkcellWorldOperation::Inspect)),
+    );
     assert_eq!(response["ownerReceipt"]["payload"]["world_ref"], MATERIAL);
     assert_eq!(response["needsReconciliation"], true);
     assert!(response["reading"].is_null());
