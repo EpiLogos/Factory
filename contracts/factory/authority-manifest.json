@@ -1,7 +1,7 @@
 {
   "schemaVersion": "factory.authority-manifest/v1",
   "repository": {
-    "id": "EpiLogos/agent-system-design",
+    "id": "EpiLogos/Factory",
     "product": "Software Factory",
     "baselineRef": "main",
     "baselineCommit": "cae178d1409bd9f0f022d4e2ff4ab8f70b0166b1"

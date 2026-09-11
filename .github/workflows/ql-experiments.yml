@@ -1,0 +1,43 @@
+name: QL experiments
+
+# The three matched-runtime baselines share one foundation; one workflow, one
+# matrix, scoped to the experiment tree instead of every push.
+
+on:
+  pull_request:
+    paths:
+      - 'ql-agent-experiments/**'
+      - '.github/workflows/ql-experiments.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'ql-agent-experiments/**'
+      - '.github/workflows/ql-experiments.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    name: ${{ matrix.runtime }} baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runtime: [native, pi, pydantic]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Foundation tests
+        working-directory: ql-agent-experiments/foundation
+        run: npm test
+      - name: ${{ matrix.runtime }} matched runtime smoke
+        run: node ql-agent-experiments/experiments/${{ matrix.runtime }}/run-smoke.mjs

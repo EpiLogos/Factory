@@ -42,6 +42,7 @@ pub mod project_development;
 pub mod project_development_store;
 pub mod routine_continuation;
 pub mod structural_ground;
+pub mod system;
 pub mod workflow;
 
 impl AsRef<core::identity::Ref> for journey::JourneyRef {

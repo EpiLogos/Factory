@@ -90,6 +90,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         Some("conformance") => conformance_command(&args[1..], json),
         Some("development") => development_command(&args[1..], json, stdin_override),
         Some("action") => action_command(&args[1..], json, stdin_override),
+        Some("system") => crate::system::system_command(json),
         Some("verify") => verify_command(&args[1..], json),
         Some(command) => Err(CliError(format!(
             "unknown command `{command}`; run `factory help`"
@@ -100,7 +101,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 fn help() -> String {
     format!(
         "Software Factory {}\n\n\
-Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
+Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
