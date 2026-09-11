@@ -10,7 +10,7 @@ Use this Skill when an authorised human or Agent needs to orient in Factory deve
 ## Contract metadata
 
 - Semantic ref: `factory:operator`
-- Native owner: `EpiLogos/agent-system-design` / Software Factory
+- Native owner: `EpiLogos/Factory` / Software Factory
 - Executable root: `factory/`
 - Build read contract: `factory.build-view/v1`
 - Build provider contract: `factory.build-view-provider/v1`
