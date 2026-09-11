@@ -64,7 +64,9 @@ print(json.dumps({'ok':True,'status':'success','action':action,'data':data}))
 "#;
 
 fn setup(world: &World, native: bool) -> std::path::PathBuf {
-    let root = world.dir.path();
+    // macOS tempdirs hang under the /var symlink; canonicalise so the
+    // double's symlink-discipline check sees the real path components.
+    let root = world.dir.path().canonicalize().unwrap();
     fs::create_dir_all(root.join("Control/user")).unwrap();
     fs::create_dir_all(root.join("Control/relations")).unwrap();
     fs::create_dir_all(root.join("Work/demo/src")).unwrap();
@@ -100,15 +102,16 @@ fn setup(world: &World, native: bool) -> std::path::PathBuf {
 fn prepare_request(world: &World, ctrl: &Path, id: &str) -> Value {
     json!({"contract":CENTRAL_ACTION,"requestRef":id,"projectionRef":"projection:central-test",
         "caller":caller(),"runRef":RUN,"expectedRevision":world.reading().revision,"authority":authority(),
-        "attemptRef":ATTEMPT,"central":{"binary":ctrl,"root":world.dir.path(),"contractRevision":CENTRAL_CONTRACT_REVISION,"project":null},
-        "workingDirectory":world.dir.path().join("Work/demo"),"destinations":[world.dir.path().join("Work/demo/src/result.rs")]})
+        "attemptRef":ATTEMPT,"central":{"binary":ctrl,"root":world.dir.path().canonicalize().unwrap(),"contractRevision":CENTRAL_CONTRACT_REVISION,"project":null},
+        "workingDirectory":world.dir.path().canonicalize().unwrap().join("Work/demo"),"destinations":[world.dir.path().canonicalize().unwrap().join("Work/demo/src/result.rs")]})
 }
 fn preparation(world: &World, request: &Value) -> Value {
     success(world.call("prepare", Some(request)))
 }
 fn owner_request(world: &World) -> Value {
     let mut request = world.request("native-central-dispatch", "send");
-    request["invocation"]["cwd"] = json!(world.dir.path().join("Work/demo"));
+    request["invocation"]["cwd"] =
+        json!(world.dir.path().canonicalize().unwrap().join("Work/demo"));
     request
 }
 fn policy_change(world: &World, key: &str, value: Value) {
@@ -170,7 +173,7 @@ fn native_central_exact_replay_retains_bytes_and_does_not_reallocate() {
     assert_eq!(fs::read(world.state()).unwrap(), before);
     assert_eq!(central_calls(&world), calls);
     let mut changed = request;
-    changed["workingDirectory"] = json!(world.dir.path());
+    changed["workingDirectory"] = json!(world.dir.path().canonicalize().unwrap());
     assert!(!world.call("prepare", Some(&changed)).status.success());
     assert_eq!(fs::read(world.state()).unwrap(), before);
 }
@@ -184,7 +187,7 @@ fn native_central_stale_policy_and_wrong_cwd_stop_before_worker_transport() {
         if change_policy {
             policy_change(&world, "lease_seconds", json!(299));
         } else {
-            owner["invocation"]["cwd"] = json!(world.dir.path());
+            owner["invocation"]["cwd"] = json!(world.dir.path().canonicalize().unwrap());
         }
         let result = world.owner(&owner);
         assert!(
@@ -226,7 +229,12 @@ fn native_central_changed_now_or_destination_anchor_stops_dispatch() {
 #[test]
 fn native_central_rejected_root_scratch_keeps_actual_allocation_for_corrected_retry() {
     let (world, ctrl, mut request) = native_world();
-    request["destinations"] = json!([world.dir.path().join("Work/scratch.diff")]);
+    request["destinations"] = json!([world
+        .dir
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("Work/scratch.diff")]);
     let refused = preparation(&world, &request);
     assert_eq!(refused["needsReconciliation"], true);
     let responses = refused["observation"]["payload"]["detail"]["nativeResponses"]
