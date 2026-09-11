@@ -24,6 +24,10 @@ use std::path::Path;
 
 pub const FACTORY_ATTEMPT_OWNER_ACTION: &str = "factory.attempt-owner-action/v1";
 pub const FACTORY_ATTEMPT_OWNER_RECEIPT: &str = "factory.attempt-owner-receipt/v1";
+#[path = "attempt_task_dispatch.rs"]
+mod task_dispatch;
+pub use task_dispatch::AIKIT_TASK_CONTRACT_REVISION;
+
 const TRANSPORT_OBSERVATION: &str = "factory.attempt-owner-transport/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,7 +339,11 @@ pub fn execute_attempt_owner_action(
             "this attempt handoff supports AIKit send/delivery only",
         ));
     };
-    if contract_revision != AIKIT_CAW_CONTRACT_REVISION || !cwd.is_absolute() {
+    if !matches!(
+        contract_revision.as_str(),
+        AIKIT_CAW_CONTRACT_REVISION | AIKIT_TASK_CONTRACT_REVISION
+    ) || !cwd.is_absolute()
+    {
         return Err(error(
             "AIKit requires the exact published owner revision and an absolute cwd",
         ));
@@ -383,6 +391,7 @@ pub fn execute_attempt_owner_action(
     });
     let dispatch_started = std::time::Instant::now();
     let mut effective_packet = packet.clone();
+    let mut task_admission = None;
     if action == "send" {
         let leg = reading
             .legs
@@ -411,8 +420,25 @@ pub fn execute_attempt_owner_action(
                 || effect.contains("write ")
                 || effect.starts_with("mutate:")
         });
-        if protected || writing {
-            return Err(error("AIKit #277 has not published fresh enforcement admission on this plain session path; declared placement is not effective protection"));
+        if protected || writing || packet.pointer("/turn/expected_task").is_some() {
+            if contract_revision != AIKIT_TASK_CONTRACT_REVISION {
+                return Err(error("Protected/writing attempts require AIKit's actual task-dispatch contract; plain encounter delivery is not enforcement"));
+            }
+            task_admission = Some(
+                task_dispatch::prepare(
+                    attempt,
+                    binary,
+                    cwd,
+                    packet,
+                    attempt
+                        .disposition
+                        .budget
+                        .wall_clock_timeout_ms
+                        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS)
+                        .min(DEFAULT_OWNER_TIMEOUT_MS),
+                )
+                .map_err(error)?,
+            );
         }
         if packet.pointer("/turn/sender").and_then(Value::as_str)
             != Some(request.caller.caller_ref.as_str())
@@ -472,7 +498,7 @@ pub fn execute_attempt_owner_action(
             evidence_refs: BTreeSet::new(),
             partial_effect_refs: BTreeSet::new(),
             payload: json!({"requestDigest":digest,"agentSession":session,"deliveryRef":delivery,"action":action,
-            "executionRef":request.execution_ref,"transport":transport_identity}),
+            "executionRef":request.execution_ref,"transport":transport_identity,"taskAdmission":task_admission}),
         },
         OwnerOperationPhase::Dispatching,
         json!({"meaning":"Factory intent before transport, not worker execution"}),
@@ -489,7 +515,9 @@ pub fn execute_attempt_owner_action(
         ))
         .map_err(error)?;
         if let Some(preflight) = crate::attempt_central::preflight(attempt, cwd).map_err(error)? {
-            if preflight["policy"]["data"]["enforcement"] != "native-actions" {
+            if preflight["policy"]["data"]["enforcement"] != "native-actions"
+                && task_admission.is_none()
+            {
                 return Err(error("the native policy requires worker interception/material enforcement not established by plain session delivery"));
             }
             intent.payload["placementPreflight"] = preflight.clone();
@@ -569,6 +597,7 @@ pub fn execute_attempt_owner_action(
         )?;
         let current = store.reading().map_err(error)?;
         let current_attempt = record(&current, &request.attempt_ref)?;
+        task_dispatch::validate_response(current_attempt, delivery, &owner).map_err(error)?;
         if current_attempt.execution_ref.is_none()
             && current.source_current
             && matches!(

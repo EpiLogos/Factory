@@ -175,7 +175,9 @@ fn invoke_aikit(
     request: &Value,
     timeout: Duration,
 ) -> Result<OwnerOperationReceipt, NativeOwnerError> {
-    require_revision("AIKit", contract_revision, AIKIT_CAW_CONTRACT_REVISION)?;
+    if contract_revision != crate::attempt_owner_dispatch::AIKIT_TASK_CONTRACT_REVISION {
+        require_revision("AIKit", contract_revision, AIKIT_CAW_CONTRACT_REVISION)?;
+    }
     if !cwd.is_absolute() {
         return Err(NativeOwnerError::InvalidInvocation(
             "AIKit encounter cwd must be an absolute Project path".into(),
@@ -215,6 +217,9 @@ fn invoke_aikit(
         .arg(serde_json::to_string(request)?);
     let output = owner_output("AIKit", binary, &mut command, timeout)?;
     let payload = parse_json_output("AIKit", &output)?;
+    if payload.get("ok") == Some(&Value::Bool(false)) {
+        return Err(command_failure("AIKit", output, Some(payload)));
+    }
     let delivery = locate_delivery(&payload);
     if let Some(expected) = delivery_ref {
         if delivery
@@ -228,6 +233,16 @@ fn invoke_aikit(
         {
             return Err(NativeOwnerError::InvalidResponse(
                 "AIKit response omitted or changed the addressed delivery/session identity".into(),
+            ));
+        }
+    }
+    if let Some(expected) = request.pointer("/turn/expected_task") {
+        if contract_revision != crate::attempt_owner_dispatch::AIKIT_TASK_CONTRACT_REVISION
+            || delivery.and_then(|v| v.pointer("/request/submission/turn/expected_task"))
+                != Some(expected)
+        {
+            return Err(NativeOwnerError::InvalidResponse(
+                "Native delivery did not retain the exact locked task admission".into(),
             ));
         }
     }
@@ -439,15 +454,22 @@ fn parse_json_output(owner: &str, output: &Output) -> Result<Value, NativeOwnerE
     })
 }
 
-fn locate_delivery(payload: &Value) -> Option<&Value> {
+pub(crate) fn locate_delivery(payload: &Value) -> Option<&Value> {
+    // The native IPC envelope puts send's receipt in data.delivery and a
+    // delivery read directly in data. Do not search unrelated nested JSON.
+    if let Some(data) = payload.get("data") {
+        if payload.get("ok") != Some(&Value::Bool(true)) {
+            return None;
+        }
+        return data
+            .get("delivery")
+            .or_else(|| data.get("delivery_ref").map(|_| data));
+    }
+    // Retain the existing explicitly supported owner adapter envelopes.
     payload
         .get("delivery")
-        .or_else(|| {
-            payload
-                .get("result")
-                .and_then(|value| value.get("delivery"))
-        })
-        .or_else(|| payload.get("value").and_then(|value| value.get("delivery")))
+        .or_else(|| payload.pointer("/result/delivery"))
+        .or_else(|| payload.pointer("/value/delivery"))
 }
 
 fn parse_delivery_phase(phase: &str) -> Result<OwnerOperationPhase, NativeOwnerError> {
@@ -712,5 +734,16 @@ mod native_adapter_regressions {
             invoke_native_owner(&invocation),
             Err(NativeOwnerError::ContractRevisionMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn native_send_and_read_envelopes_are_not_replaced_by_fixture_shapes() {
+        let delivery = json!({"delivery_ref":"delivery/native", "agent_session":"agent-session/native", "phase":"returned"});
+        let sent = json!({"ok":true,"data":{"delivery":delivery}});
+        let read = json!({"ok":true,"data":delivery});
+        assert_eq!(locate_delivery(&sent), Some(&delivery));
+        assert_eq!(locate_delivery(&read), Some(&delivery));
+        assert!(locate_delivery(&json!({"ok":false,"data":delivery})).is_none());
+        assert!(locate_delivery(&json!({"ok":true,"data":{"unrelated":delivery}})).is_none());
     }
 }
