@@ -2,7 +2,7 @@
 
 **Status:** AUTHORITATIVE TARGET DESIGN — executable QL/MEF module  
 **Date:** 2026-08-13  
-**Repository:** `EpiLogos/agent-system-design`  
+**Repository:** `EpiLogos/Factory`  
 **Intended location:** `docs/canon/`  
 **Authority:** subordinate to the QL canon and `QL-SOFTWARE-FACTORY-CONSTITUTIONAL-INDEX.md`; authoritative for the software/module boundary through which QL and MEF become executable and interoperable. It does not alter the QL canon, replace Factory primitives, or supersede the experimental `ql-agent-spec` runtime semantics.  
 **Scope:** QL canon/kernel distinction, MEF manifold, shared references, provider/service APIs, refraction and relation semantics, provenance, operational parity, no-QL modularity, AIKit/Factory adapters, agent-runtime integration, experimental extensions, and development programme.

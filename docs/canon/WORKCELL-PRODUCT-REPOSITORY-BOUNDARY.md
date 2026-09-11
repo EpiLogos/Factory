@@ -6,7 +6,7 @@
 
 Workcell is a **distinct EpiLogos product** implemented in `EpiLogos/Workcell`.
 
-Where the Factory corpus calls Workcell a module or subsystem, that language describes its architectural function in the larger composition. It does not assign Workcell product-code ownership to `EpiLogos/agent-system-design`.
+Where the Factory corpus calls Workcell a module or subsystem, that language describes its architectural function in the larger composition. It does not assign Workcell product-code ownership to `EpiLogos/Factory`.
 
 The stable boundary is:
 
