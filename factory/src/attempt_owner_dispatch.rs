@@ -339,7 +339,11 @@ pub fn execute_attempt_owner_action(
             "this attempt handoff supports AIKit send/delivery only",
         ));
     };
-    if !matches!(contract_revision.as_str(), AIKIT_CAW_CONTRACT_REVISION | AIKIT_TASK_CONTRACT_REVISION) || !cwd.is_absolute() {
+    if !matches!(
+        contract_revision.as_str(),
+        AIKIT_CAW_CONTRACT_REVISION | AIKIT_TASK_CONTRACT_REVISION
+    ) || !cwd.is_absolute()
+    {
         return Err(error(
             "AIKit requires the exact published owner revision and an absolute cwd",
         ));
@@ -420,10 +424,21 @@ pub fn execute_attempt_owner_action(
             if contract_revision != AIKIT_TASK_CONTRACT_REVISION {
                 return Err(error("Protected/writing attempts require AIKit's actual task-dispatch contract; plain encounter delivery is not enforcement"));
             }
-            task_admission = Some(task_dispatch::prepare(
-                attempt, binary, cwd, packet,
-                attempt.disposition.budget.wall_clock_timeout_ms.unwrap_or(DEFAULT_OWNER_TIMEOUT_MS).min(DEFAULT_OWNER_TIMEOUT_MS),
-            ).map_err(error)?);
+            task_admission = Some(
+                task_dispatch::prepare(
+                    attempt,
+                    binary,
+                    cwd,
+                    packet,
+                    attempt
+                        .disposition
+                        .budget
+                        .wall_clock_timeout_ms
+                        .unwrap_or(DEFAULT_OWNER_TIMEOUT_MS)
+                        .min(DEFAULT_OWNER_TIMEOUT_MS),
+                )
+                .map_err(error)?,
+            );
         }
         if packet.pointer("/turn/sender").and_then(Value::as_str)
             != Some(request.caller.caller_ref.as_str())
@@ -500,7 +515,9 @@ pub fn execute_attempt_owner_action(
         ))
         .map_err(error)?;
         if let Some(preflight) = crate::attempt_central::preflight(attempt, cwd).map_err(error)? {
-            if preflight["policy"]["data"]["enforcement"] != "native-actions" && task_admission.is_none() {
+            if preflight["policy"]["data"]["enforcement"] != "native-actions"
+                && task_admission.is_none()
+            {
                 return Err(error("the native policy requires worker interception/material enforcement not established by plain session delivery"));
             }
             intent.payload["placementPreflight"] = preflight.clone();

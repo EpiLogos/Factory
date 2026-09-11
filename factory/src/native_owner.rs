@@ -238,8 +238,12 @@ fn invoke_aikit(
     }
     if let Some(expected) = request.pointer("/turn/expected_task") {
         if contract_revision != crate::attempt_owner_dispatch::AIKIT_TASK_CONTRACT_REVISION
-            || delivery.and_then(|v| v.pointer("/request/submission/turn/expected_task")) != Some(expected) {
-            return Err(NativeOwnerError::InvalidResponse("Native delivery did not retain the exact locked task admission".into()));
+            || delivery.and_then(|v| v.pointer("/request/submission/turn/expected_task"))
+                != Some(expected)
+        {
+            return Err(NativeOwnerError::InvalidResponse(
+                "Native delivery did not retain the exact locked task admission".into(),
+            ));
         }
     }
     let phase = match delivery
@@ -457,12 +461,13 @@ pub(crate) fn locate_delivery(payload: &Value) -> Option<&Value> {
         if payload.get("ok") != Some(&Value::Bool(true)) {
             return None;
         }
-        return data.get("delivery").or_else(|| {
-            data.get("delivery_ref").map(|_| data)
-        });
+        return data
+            .get("delivery")
+            .or_else(|| data.get("delivery_ref").map(|_| data));
     }
     // Retain the existing explicitly supported owner adapter envelopes.
-    payload.get("delivery")
+    payload
+        .get("delivery")
         .or_else(|| payload.pointer("/result/delivery"))
         .or_else(|| payload.pointer("/value/delivery"))
 }
