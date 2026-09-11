@@ -344,6 +344,47 @@ impl FactoryBuildState {
         self.bump_revision()
     }
 
+    /// Commit the existing coordinator's Run under the provider's locked CAS.
+    /// Semantic identity, writer ownership and unrelated cognition cannot drift.
+    pub(crate) fn replace_attempt_run(
+        &mut self,
+        expected_revision: Revision,
+        next: Run,
+    ) -> Result<(), FactoryBuildError> {
+        let reference = next.reference().clone();
+        let current = self
+            .runs
+            .get(&reference)
+            .ok_or_else(|| FactoryBuildError::RunNotFound(reference.to_string()))?;
+        if current.revision() != expected_revision {
+            return Err(RunContractError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision(),
+            }
+            .into());
+        }
+        if next.project_ref() != current.project_ref()
+            || next.destination() != current.destination()
+            || next.lifecycle() != current.lifecycle()
+            || next.write_authority() != current.write_authority()
+            || next.thought_field() != current.thought_field()
+            || next.revision().get() < current.revision().get()
+        {
+            return Err(RunContractError::CorruptRun.into());
+        }
+        next.validate()?;
+        let revision = self
+            .revision
+            .next()
+            .ok_or(FactoryBuildError::RevisionOverflow)?;
+        *self
+            .runs
+            .get_mut(&reference)
+            .expect("canonical Run checked above") = next;
+        self.revision = revision;
+        Ok(())
+    }
+
     fn request_more_evidence(
         &mut self,
         run_ref: &RunRef,

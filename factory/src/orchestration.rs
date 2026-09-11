@@ -16,6 +16,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 
+#[path = "orchestration_persistence.rs"]
+mod persistence;
+pub use persistence::OrchestrationSnapshot;
+
 pub const ORCHESTRATION_CONTRACT: &str = "factory.agent-orchestration/v1";
 
 /// All information a child receives at the fork boundary. This is a value,
@@ -282,6 +286,7 @@ pub enum OrchestrationError {
     BarrierIncomplete(String),
     ConcatenationRejected(String),
     SynthesisAlreadyExists(String),
+    InvalidSnapshot(String),
 }
 
 impl Display for OrchestrationError {
@@ -406,8 +411,14 @@ impl ExecutableOrchestration {
         unit: &WorkflowUnitRef,
         launch: ExecutionLaunch,
     ) -> Result<DelegationContract, OrchestrationError> {
+        if self.legs.contains_key(unit) {
+            return Err(OrchestrationError::DuplicateExecution(unit.to_string()));
+        }
         self.validate_launch(unit, &launch)?;
-        self.start_unit(parent_journey_ref.into(), unit, launch)
+        let mut staged = self.clone();
+        let delegation = staged.start_unit(parent_journey_ref.into(), unit, launch)?;
+        *self = staged;
+        Ok(delegation)
     }
 
     fn validate_fork(
@@ -563,7 +574,7 @@ impl ExecutableOrchestration {
             self.active_writers
                 .insert(compiled.subject_ref.to_string(), unit.clone());
         }
-        let delegation = delegation_for(
+        let mut delegation = delegation_for(
             &self.run,
             &parent_journey_ref,
             unit,
@@ -575,6 +586,11 @@ impl ExecutableOrchestration {
                     .or_else(|| Some(grant.clone()))
             }),
         );
+        delegation.basis_revision = self
+            .subject_revisions
+            .get(&delegation.subject_ref)
+            .cloned()
+            .ok_or(OrchestrationError::EmptyField("subjectRevision"))?;
         let execution_ref = launch.execution_ref;
         let attempt = ExecutionAttempt {
             execution_ref: execution_ref.clone(),
@@ -772,6 +788,7 @@ impl ExecutableOrchestration {
             &[
                 LegStatus::ProcessTerminated,
                 LegStatus::CancellationAccepted,
+                LegStatus::LateResult,
             ],
         )
     }
@@ -843,9 +860,17 @@ impl ExecutableOrchestration {
             .execution_ref
             .clone();
         let expected_subject = self.unit(unit)?.subject_ref.to_string();
-        let expected_basis = self.unit(unit)?.basis_revision.clone();
+        let expected_basis = self
+            .leg(unit)
+            .ok_or_else(|| OrchestrationError::MissingLeg(unit.to_string()))?
+            .delegation
+            .basis_revision
+            .clone();
+        if artifact.producing_execution_ref != expected_execution {
+            return self.record_historical_late_artifact(unit, artifact);
+        }
         let leg = self.leg_mut(unit)?;
-        if leg.status != LegStatus::Active {
+        if !matches!(leg.status, LegStatus::Active | LegStatus::Detached) {
             return self.return_late_artifact(
                 unit,
                 artifact,
@@ -865,6 +890,39 @@ impl ExecutableOrchestration {
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
         self.release_writer(unit);
         self.set_unit_state(unit, NodeState::Returned)
+    }
+
+    /// A result from an earlier attempt remains attached to that attempt. It
+    /// cannot replace the current attempt, satisfy a barrier or release its writer.
+    fn record_historical_late_artifact(
+        &mut self,
+        unit: &WorkflowUnitRef,
+        artifact: ReturnedArtifact,
+    ) -> Result<(), OrchestrationError> {
+        let leg = self.leg_mut(unit)?;
+        let attempt = leg
+            .attempts
+            .iter_mut()
+            .find(|attempt| attempt.execution_ref == artifact.producing_execution_ref)
+            .ok_or_else(|| OrchestrationError::InvalidArtifact(artifact.artifact_ref.clone()))?;
+        if attempt.delegation.subject_ref != artifact.subject_ref
+            || attempt.delegation.basis_revision != artifact.subject_revision
+        {
+            return Err(OrchestrationError::InvalidArtifact(artifact.artifact_ref));
+        }
+        if let Some(previous) = attempt
+            .late_artifacts
+            .iter()
+            .find(|previous| previous.artifact_ref == artifact.artifact_ref)
+        {
+            return if previous == &artifact {
+                Ok(())
+            } else {
+                Err(OrchestrationError::InvalidArtifact(artifact.artifact_ref))
+            };
+        }
+        attempt.late_artifacts.push(artifact);
+        Ok(())
     }
 
     fn return_late_artifact(
@@ -930,9 +988,23 @@ impl ExecutableOrchestration {
                 current_revision: current,
             });
         }
+        if !matches!(
+            leg.status,
+            LegStatus::LateResult | LegStatus::Quiescent | LegStatus::ProcessTerminated
+        ) || !leg
+            .status_history
+            .iter()
+            .any(|status| matches!(status, LegStatus::Quiescent | LegStatus::ProcessTerminated))
+        {
+            return Err(OrchestrationError::InvalidTransition {
+                unit: unit.clone(),
+                status: leg.status,
+            });
+        }
         leg.artifacts.push(artifact.clone());
         set_current_status(leg, LegStatus::Returned);
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
+        self.release_writer(unit);
         self.set_unit_state(unit, NodeState::Returned)
     }
 
@@ -988,9 +1060,24 @@ impl ExecutableOrchestration {
                 status,
             });
         }
+        if status == LegStatus::LateResult
+            && !self.leg(unit).is_some_and(|leg| {
+                leg.status_history.iter().any(|status| {
+                    matches!(status, LegStatus::Quiescent | LegStatus::ProcessTerminated)
+                })
+            })
+        {
+            return Err(OrchestrationError::InvalidTransition {
+                unit: unit.clone(),
+                status,
+            });
+        }
         self.validate_launch(unit, &launch)?;
-        self.release_writer(unit);
-        self.start_unit(parent_journey_ref.into(), unit, launch)
+        let mut staged = self.clone();
+        staged.release_writer(unit);
+        let delegation = staged.start_unit(parent_journey_ref.into(), unit, launch)?;
+        *self = staged;
+        Ok(delegation)
     }
 
     pub fn barrier_reading(&self, key: &str) -> Result<BarrierReading, OrchestrationError> {
@@ -1071,11 +1158,11 @@ impl ExecutableOrchestration {
         review_of: BTreeSet<WorkflowUnitRef>,
     ) -> Result<IndependentReviewer, OrchestrationError> {
         let execution_ref = execution_ref.into();
-        if self
-            .legs
-            .values()
-            .any(|leg| leg.execution_ref == execution_ref)
-        {
+        if self.legs.values().any(|leg| {
+            leg.attempts
+                .iter()
+                .any(|attempt| attempt.execution_ref == execution_ref)
+        }) {
             self.self_review_attempts.insert(execution_ref.clone());
             return Err(OrchestrationError::ReviewerAlreadyProducer(execution_ref));
         }
