@@ -84,7 +84,11 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 
     match args.first().map(String::as_str) {
         None | Some("help") | Some("--help") | Some("-h") => Ok(help()),
-        Some("--version") | Some("version") => Ok(format!("factory {}", env!("CARGO_PKG_VERSION"))),
+        Some("--version") | Some("version") => Ok(format!(
+            "factory {} ({})",
+            env!("CARGO_PKG_VERSION"),
+            option_env!("SUITE_BUILD_REVISION").unwrap_or("unknown")
+        )),
         Some("capabilities") => render_capabilities(json),
         Some("build") => build_command(&args[1..], json),
         Some("conformance") => conformance_command(&args[1..], json),
@@ -901,7 +905,11 @@ mod tests {
     #[test]
     fn version_and_help_are_native_and_stable() {
         let version = execute_cli(&["--version".into()], None).unwrap();
-        assert_eq!(version, format!("factory {}", env!("CARGO_PKG_VERSION")));
+        assert!(
+            version == format!("factory {}", env!("CARGO_PKG_VERSION"))
+                || version.starts_with(&format!("factory {} (", env!("CARGO_PKG_VERSION"))),
+            "version must be '<pkg-version>' or '<pkg-version> (<build-revision>)': {version:?}"
+        );
         let help = execute_cli(&[], None).unwrap();
         assert!(help.contains("factory build snapshot"));
         assert!(help.contains("factory action invoke"));
