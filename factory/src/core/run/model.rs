@@ -266,6 +266,48 @@ impl Run {
         })
     }
 
+    /// Consume retained cognition only after its native inputs and useful outputs
+    /// have been observed. The same Run authority/revision governs this mutation.
+    pub fn apply_thought_consumption<P: super::ThoughtConsumptionSources>(
+        &mut self,
+        authority: &RunMutationAuthority,
+        command: super::RunThoughtConsumptionCommand,
+        sources: &P,
+    ) -> Result<RunThoughtOutcome, RunContractError> {
+        self.validate_authority(authority)?;
+        if command.command_id.trim().is_empty() {
+            return Err(RunContractError::InvalidCommandId);
+        }
+        if self.thought_field.consumption_replay(&command)? {
+            return Ok(RunThoughtOutcome::AlreadyApplied {
+                revision: self.revision,
+            });
+        }
+        if self.applied_command_ids.contains(&command.command_id) {
+            return Err(RunContractError::Thought(
+                ThoughtFieldError::InvalidConsumption(
+                    "command already used by a different Run operation".into(),
+                ),
+            ));
+        }
+        if command.expected_revision != self.revision {
+            return Err(RunContractError::RevisionConflict {
+                expected: command.expected_revision,
+                actual: self.revision,
+            });
+        }
+        let next = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
+        let command_id = command.command_id.clone();
+        self.thought_field
+            .consume(&self.reference, command, sources)?;
+        self.revision = next;
+        self.applied_command_ids.insert(command_id);
+        Ok(RunThoughtOutcome::Applied { revision: next })
+    }
+
     pub fn transfer_write_authority(
         &mut self,
         authority: &RunMutationAuthority,
@@ -305,6 +347,13 @@ impl Run {
         }
         self.map.validate()?;
         self.thought_field.validate(&self.reference)?;
+        if self
+            .thought_field
+            .consumptions()
+            .any(|receipt| !self.applied_command_ids.contains(&receipt.command_id))
+        {
+            return Err(RunContractError::CorruptRun);
+        }
         Ok(())
     }
 

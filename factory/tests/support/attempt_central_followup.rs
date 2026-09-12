@@ -83,6 +83,10 @@ fn expired_preparation_requires_explicit_fresh_native_readback() {
     std::thread::sleep(Duration::from_secs(3));
     assert!(!world.owner(&owner_request(&world)).status.success());
     assert!(world.calls().is_empty());
+    // The expired lease above exercises the real clock. Explicit recovery must
+    // obtain a fresh native policy; the successful dispatch is not itself a race
+    // against a two-second fixture lease on a loaded runner.
+    policy_change(&world, "lease_seconds", json!(300));
     request["recover"] = json!(true);
     request["expectedRevision"] = json!(world.reading().revision);
     assert_eq!(preparation(&world, &request)["needsReconciliation"], false);

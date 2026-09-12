@@ -1,7 +1,7 @@
 use crate::build::{
     FactoryBuildError, FactoryBuildSelection, FactoryBuildState, FACTORY_NATIVE_OWNER,
 };
-use crate::core::run::{RunThought, RunThoughtId, RunThoughtLifecycle};
+use crate::core::run::{RunThought, RunThoughtId, RunThoughtLifecycle, ThoughtConsumptionReceipt};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -98,6 +98,10 @@ pub struct FactoryBuildCognitiveProvenance {
 pub struct FactoryBuildCognitiveView {
     pub run_ref: String,
     pub thought_count: usize,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub consumption_refs: BTreeMap<RunThoughtId, RunThoughtId>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub consumptions: Vec<ThoughtConsumptionReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub focus: Option<FactoryBuildCognitiveFocus>,
     pub thoughts: Vec<RunThought>,
@@ -155,7 +159,29 @@ impl FactoryBuildCognitiveViewProvider {
             .filter(|thought| focus.is_none_or(|selector| selector.matches(thought)))
             .cloned()
             .collect::<Vec<_>>();
-        let view = materialise_view(run.reference().to_string(), focus.cloned(), thoughts);
+        let mut view = materialise_view(run.reference().to_string(), focus.cloned(), thoughts);
+        for thought in &view.thoughts {
+            if let Some(receipt) = run.thought_field().consumed_by(&thought.id) {
+                view.consumption_refs.insert(
+                    thought.id.clone(),
+                    receipt.consumption.consumption_id.clone(),
+                );
+            }
+        }
+        // A focused projection does not expand into unrelated reports merely
+        // because one of its reports was consumed together with them.
+        view.consumptions = run
+            .thought_field()
+            .consumptions()
+            .filter(|receipt| {
+                receipt.consumption.inputs.iter().all(|input| {
+                    view.thoughts
+                        .iter()
+                        .any(|thought| thought.id == input.thought_id)
+                })
+            })
+            .cloned()
+            .collect();
 
         Ok(FactoryBuildCognitiveSnapshot {
             contract: FACTORY_BUILD_COGNITIVE_VIEW_CONTRACT.into(),
@@ -217,6 +243,8 @@ fn materialise_view(
     FactoryBuildCognitiveView {
         run_ref,
         thought_count: thoughts.len(),
+        consumption_refs: BTreeMap::new(),
+        consumptions: Vec::new(),
         focus,
         thoughts,
         by_run_map_subject,

@@ -1,3 +1,4 @@
+mod consumption;
 mod model;
 mod projection;
 mod refs;
@@ -17,4 +18,10 @@ pub use thought::{
 pub use topology::{
     EdgeKind, NodeId, NodeKind, NodeState, RunMap, TopologyEdge, TopologyError, TopologyMutation,
     TopologyNode,
+};
+
+pub use consumption::{
+    RunThoughtConsumptionCommand, ThoughtConsumption, ThoughtConsumptionInput,
+    ThoughtConsumptionReceipt, ThoughtConsumptionSources, ThoughtSource, ThoughtSourceObservation,
+    ThoughtUse, ThoughtUseKind, THOUGHT_CONSUMPTION_CONTRACT,
 };

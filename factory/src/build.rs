@@ -231,6 +231,28 @@ impl FactoryBuildState {
         Ok(outcome)
     }
 
+    /// Publish consumption through the same canonical Build/Run mutation path.
+    /// Stage the Run so a Build revision overflow cannot partially retire input.
+    pub fn apply_run_thought_consumption<P: crate::core::run::ThoughtConsumptionSources>(
+        &mut self,
+        run_ref: &RunRef,
+        authority: &RunMutationAuthority,
+        command: crate::core::run::RunThoughtConsumptionCommand,
+        sources: &P,
+    ) -> Result<RunThoughtOutcome, FactoryBuildError> {
+        let mut run = self
+            .runs
+            .get(run_ref)
+            .ok_or_else(|| FactoryBuildError::RunNotFound(run_ref.to_string()))?
+            .clone();
+        let outcome = run.apply_thought_consumption(authority, command, sources)?;
+        if matches!(outcome, RunThoughtOutcome::Applied { .. }) {
+            self.bump_revision()?;
+            *self.runs.get_mut(run_ref).expect("validated Run") = run;
+        }
+        Ok(outcome)
+    }
+
     pub fn insert_claim(&mut self, claim: ClaimRecord) -> Result<(), FactoryBuildError> {
         self.ensure_run(&claim.run_ref)?;
         insert_unique(&mut self.claims, claim.claim_ref.clone(), claim, "claim")?;

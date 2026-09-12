@@ -193,7 +193,9 @@ impl RunThought {
 #[serde(rename_all = "camelCase")]
 pub struct RunThoughtField {
     #[serde(default)]
-    thoughts: BTreeMap<RunThoughtId, RunThought>,
+    pub(super) thoughts: BTreeMap<RunThoughtId, RunThought>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) consumptions: BTreeMap<RunThoughtId, super::ThoughtConsumptionReceipt>,
 }
 
 impl RunThoughtField {
@@ -259,13 +261,14 @@ impl RunThoughtField {
             }
             thought.validate(owning_run)?;
         }
-        Ok(())
+        self.validate_consumptions(owning_run)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThoughtFieldError {
     InvalidThoughtId(String),
+    InvalidConsumption(String),
     WrongRun {
         expected: RunRef,
         actual: RunRef,
