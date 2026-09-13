@@ -1,0 +1,39 @@
+name: Factory Vāk formatter helper
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vak-format-helper.yml'
+permissions:
+  contents: read
+jobs:
+  format:
+    if: github.head_ref == 'agent/aw94-cprime-orchestration'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.1'
+          components: rustfmt
+      - name: Format Vāk tranche and retain exact files
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          mkdir -p formatter/factory/src/vak_orchestration formatter/factory/tests formatter/factory/src
+          cp factory/src/vak_orchestration.rs formatter/factory/src/vak_orchestration.rs
+          cp factory/src/vak_orchestration/model.rs formatter/factory/src/vak_orchestration/model.rs
+          cp factory/src/vak_orchestration/plan.rs formatter/factory/src/vak_orchestration/plan.rs
+          cp factory/src/vak_orchestration/runtime.rs formatter/factory/src/vak_orchestration/runtime.rs
+          cp factory/src/vak_orchestration/z.rs formatter/factory/src/vak_orchestration/z.rs
+          cp factory/tests/vak_orchestration.rs formatter/factory/tests/vak_orchestration.rs
+          cp factory/src/lib.rs formatter/factory/src/lib.rs
+          git diff --check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-vak-formatted-${{ github.event.pull_request.head.sha || github.sha }}
+          path: formatter/
+          retention-days: 2
