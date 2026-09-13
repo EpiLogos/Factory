@@ -355,7 +355,7 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     let inspect = unit(&workflow, "inspect-source");
     let implement = unit(&workflow, "implement-compiler");
     let mut orchestration = engine(workflow.clone());
-    let plan = plan(
+    let chain_plan = plan(
         &workflow,
         "CFP2",
         &[
@@ -368,7 +368,8 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
         launch(&orchestration, &inspect, "execution:chain-a"),
     )]);
     let mut performance =
-        NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", chain_plan, launches)
+            .unwrap();
     let premature = launch(&orchestration, &implement, "execution:chain-premature");
     assert!(performance
         .continue_chain(
