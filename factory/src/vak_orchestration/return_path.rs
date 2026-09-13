@@ -1,6 +1,4 @@
-use super::{
-    required, NativeVakPerformance, VakOrchestrationError, VakPerformanceSnapshot,
-};
+use super::{required, NativeVakPerformance, VakOrchestrationError, VakPerformanceSnapshot};
 use crate::core::run::{
     RunRef, RunThoughtConsumptionCommand, RunThoughtId, RunThoughtLifecycle, RunThoughtOutcome,
     ThoughtConsumption, ThoughtConsumptionInput, ThoughtConsumptionSources, ThoughtFieldError,
