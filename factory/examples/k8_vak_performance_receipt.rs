@@ -4,15 +4,15 @@
 
 use epilogos_factory::core::run::{ProjectRef, Run, RunRef, WorkflowUnitRef};
 use epilogos_factory::execution_intelligence::{
-    AIKIT_MODEL_ROSTER_VERSION, AikitModelRosterSelection, ExecutionDemand, ExecutionDisposition,
-    accept_aikit_selection,
+    accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, ExecutionDisposition,
+    AIKIT_MODEL_ROSTER_VERSION,
 };
 use epilogos_factory::orchestration::{ExecutableOrchestration, ExecutionLaunch, ReturnedArtifact};
 use epilogos_factory::vak_orchestration::{
-    AIKIT_OPERATIVE_SCOPE_CONTRACT, CPrimeExecutionBinding, NativeVakPerformance,
-    QL_C_PRIME_PROFILE_CONTRACT, VAK_ORCHESTRATION_CONTRACT, VakConductPlan, VakUnitScope,
+    CPrimeExecutionBinding, NativeVakPerformance, VakConductPlan, VakUnitScope,
+    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT, VAK_ORCHESTRATION_CONTRACT,
 };
-use epilogos_factory::workflow::{CompiledWorkflow, WorkflowSource, compile_workflow};
+use epilogos_factory::workflow::{compile_workflow, CompiledWorkflow, WorkflowSource};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
