@@ -51,6 +51,27 @@ impl ExecutableOrchestration {
         self.subject_revisions.get(subject_ref).map(String::as_str)
     }
 
+    /// Retain Run-scoped cognition through the same private Run mutation authority
+    /// that owns orchestration topology. This is not a second cognitive owner.
+    pub fn retain_run_thought(
+        &mut self,
+        command: crate::core::run::RunThoughtCommand,
+    ) -> Result<crate::core::run::RunThoughtOutcome, OrchestrationError> {
+        Ok(self.run.apply_thought_command(&self.authority, command)?)
+    }
+
+    /// Consume Run-scoped cognition through the existing RunThoughtField source
+    /// checks. The orchestration only carries its native authority to the Run.
+    pub fn consume_run_thoughts<P: crate::core::run::ThoughtConsumptionSources>(
+        &mut self,
+        command: crate::core::run::RunThoughtConsumptionCommand,
+        sources: &P,
+    ) -> Result<crate::core::run::RunThoughtOutcome, OrchestrationError> {
+        Ok(self
+            .run
+            .apply_thought_consumption(&self.authority, command, sources)?)
+    }
+
     /// Bind a reserved Factory attempt to the execution identity returned by the
     /// native owner. This is not a claim that the admitted execution ran.
     pub fn bind_execution_identity(
