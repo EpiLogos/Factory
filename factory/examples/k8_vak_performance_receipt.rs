@@ -4,17 +4,15 @@
 
 use epilogos_factory::core::run::{ProjectRef, Run, RunRef, WorkflowUnitRef};
 use epilogos_factory::execution_intelligence::{
-    accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, ExecutionDisposition,
-    AIKIT_MODEL_ROSTER_VERSION,
+    AIKIT_MODEL_ROSTER_VERSION, AikitModelRosterSelection, ExecutionDemand, ExecutionDisposition,
+    accept_aikit_selection,
 };
-use epilogos_factory::orchestration::{
-    ExecutableOrchestration, ExecutionLaunch, ReturnedArtifact,
-};
+use epilogos_factory::orchestration::{ExecutableOrchestration, ExecutionLaunch, ReturnedArtifact};
 use epilogos_factory::vak_orchestration::{
-    CPrimeExecutionBinding, NativeVakPerformance, VakConductPlan, VakUnitScope,
-    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT, VAK_ORCHESTRATION_CONTRACT,
+    AIKIT_OPERATIVE_SCOPE_CONTRACT, CPrimeExecutionBinding, NativeVakPerformance,
+    QL_C_PRIME_PROFILE_CONTRACT, VAK_ORCHESTRATION_CONTRACT, VakConductPlan, VakUnitScope,
 };
-use epilogos_factory::workflow::{compile_workflow, CompiledWorkflow, WorkflowSource};
+use epilogos_factory::workflow::{CompiledWorkflow, WorkflowSource, compile_workflow};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -163,12 +161,17 @@ fn main() {
     assert_eq!(snapshot.contract, VAK_ORCHESTRATION_CONTRACT);
     assert_eq!(snapshot.musical_role, "single-voice");
     let bytes = serde_json::to_vec_pretty(&snapshot).expect("serialize receipt");
-    let roundtrip = serde_json::from_slice::<epilogos_factory::vak_orchestration::VakPerformanceSnapshot>(&bytes)
-        .expect("roundtrip receipt");
+    let roundtrip = serde_json::from_slice::<
+        epilogos_factory::vak_orchestration::VakPerformanceSnapshot,
+    >(&bytes)
+    .expect("roundtrip receipt");
     assert_eq!(roundtrip, snapshot);
     if let Some(parent) = Path::new(&output).parent() {
         std::fs::create_dir_all(parent).expect("output directory");
     }
     std::fs::write(&output, bytes).expect("write receipt");
-    println!("{}", serde_json::to_string(&snapshot).expect("receipt line"));
+    println!(
+        "{}",
+        serde_json::to_string(&snapshot).expect("receipt line")
+    );
 }
