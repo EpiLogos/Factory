@@ -1,5 +1,5 @@
 use super::{required, VakChainMaterial, VakConductPlan, VakOrchestrationError};
-use crate::attempt_runtime::AttemptTrackingFact;
+use crate::attempt_runtime::{AttemptTrackingFact, SituatedExecutionDisposition};
 use crate::core::run::WorkflowUnitRef;
 use std::collections::BTreeSet;
 
@@ -37,6 +37,29 @@ pub fn vak_scope_tracking(
         source_revision: plan.binding.ql_binding_revision.clone(),
         evidence_refs,
     })
+}
+
+/// The native owner handoff already serializes `SituatedExecutionDisposition` as
+/// the bounded attempt context. Carry the persisted fact identities and their
+/// exact source/evidence refs into that existing context so execution consumes
+/// the same lineage that Factory retains. This does not replace the tracking facts.
+pub fn carry_vak_tracking_into_disposition(
+    disposition: &mut SituatedExecutionDisposition,
+    tracking: &[AttemptTrackingFact],
+) -> Result<(), VakOrchestrationError> {
+    for fact in tracking {
+        required(&fact.fact_ref, "trackingFactRef")?;
+        required(&fact.owner_ref, "trackingOwnerRef")?;
+        required(&fact.subject_ref, "trackingSubjectRef")?;
+        required(&fact.source_revision, "trackingSourceRevision")?;
+        disposition.context_refs.insert(fact.fact_ref.clone());
+        disposition.context_refs.insert(fact.subject_ref.clone());
+        disposition
+            .context_refs
+            .insert(format!("source-revision:{}", fact.source_revision));
+        disposition.context_refs.extend(fact.evidence_refs.clone());
+    }
+    Ok(())
 }
 
 impl VakChainMaterial {
