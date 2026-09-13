@@ -1,0 +1,135 @@
+name: Factory Vāk chain closure helper
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/vak-chain-close-helper.yml'
+permissions:
+  contents: write
+jobs:
+  close-chain:
+    if: github.head_ref == 'agent/aw94-chain-input-close'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.98.1'
+          components: rustfmt
+      - name: Apply source-authored chain input and native basis recheck
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f'missing expected text in {path}: {old[:80]!r}')
+              p.write_text(text.replace(old, new, 1))
+
+          # model errors
+          replace('factory/src/vak_orchestration/model.rs',
+          '''    InvalidChain {\n        predecessor: String,\n        successor: String,\n    },\n    PredecessorNotReturned(String),\n    MissingPredecessorMaterial(String),\n    InvalidPredecessorMaterial(String),\n''',
+          '''    InvalidChain {\n        predecessor: String,\n        successor: String,\n    },\n    MissingChainInput {\n        predecessor: String,\n        successor: String,\n    },\n    InvalidChainInput(String),\n    PredecessorNotReturned(String),\n    MissingPredecessorMaterial(String),\n    InvalidPredecessorMaterial(String),\n    StalePredecessorMaterial(String),\n    SourceBasisMismatch,\n''')
+
+          # source-authored chain binding in the Vāk conduct plan
+          replace('factory/src/vak_orchestration/plan.rs',
+          '''#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct VakConductPlan {\n''',
+          '''#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct VakChainInputBinding {\n    pub predecessor_unit_ref: WorkflowUnitRef,\n    pub successor_unit_ref: WorkflowUnitRef,\n    pub receiving_context_ref: String,\n}\nimpl VakChainInputBinding {\n    fn validate(&self) -> Result<(), VakOrchestrationError> {\n        required(&self.receiving_context_ref, "chainInput.receivingContextRef")\n    }\n}\n\n#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]\n#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct VakConductPlan {\n''')
+          replace('factory/src/vak_orchestration/plan.rs',
+          '''    pub binding: CPrimeExecutionBinding,\n    pub units: Vec<VakUnitScope>,\n''',
+          '''    pub binding: CPrimeExecutionBinding,\n    pub units: Vec<VakUnitScope>,\n    #[serde(default, skip_serializing_if = "Vec::is_empty")]\n    pub chain_inputs: Vec<VakChainInputBinding>,\n''')
+          replace('factory/src/vak_orchestration/plan.rs',
+          '''        match self.binding.thread_form() {\n''',
+          '''        if self.binding.thread_form() != ThreadForm::Chain && !self.chain_inputs.is_empty() {\n            return Err(VakOrchestrationError::UnexpectedField("chainInputs"));\n        }\n        match self.binding.thread_form() {\n''')
+          replace('factory/src/vak_orchestration/plan.rs',
+          '''            ThreadForm::Chain => {\n                at_least(self.units.len(), 2)?;\n                for pair in self.units.windows(2) {\n                    if !unit(workflow, &pair[1].unit_ref)?\n                        .dependencies\n                        .contains(&pair[0].unit_ref)\n                    {\n                        return Err(VakOrchestrationError::InvalidChain {\n                            predecessor: pair[0].unit_ref.to_string(),\n                            successor: pair[1].unit_ref.to_string(),\n                        });\n                    }\n                }\n                self.no_extras(false, false, false, false)?;\n            }\n''',
+          '''            ThreadForm::Chain => {\n                at_least(self.units.len(), 2)?;\n                if self.chain_inputs.len() != self.units.len() - 1 {\n                    return Err(VakOrchestrationError::InvalidChainInput(\n                        "a melody requires one authored input binding per transition".into(),\n                    ));\n                }\n                for pair in self.units.windows(2) {\n                    if !unit(workflow, &pair[1].unit_ref)?\n                        .dependencies\n                        .contains(&pair[0].unit_ref)\n                    {\n                        return Err(VakOrchestrationError::InvalidChain {\n                            predecessor: pair[0].unit_ref.to_string(),\n                            successor: pair[1].unit_ref.to_string(),\n                        });\n                    }\n                    let input = self\n                        .chain_input(&pair[0].unit_ref, &pair[1].unit_ref)\n                        .ok_or_else(|| VakOrchestrationError::MissingChainInput {\n                            predecessor: pair[0].unit_ref.to_string(),\n                            successor: pair[1].unit_ref.to_string(),\n                        })?;\n                    input.validate()?;\n                }\n                self.no_extras(false, false, false, false)?;\n            }\n''')
+          replace('factory/src/vak_orchestration/plan.rs',
+          '''    fn no_extras(\n''',
+          '''    pub fn chain_input(\n        &self,\n        predecessor: &WorkflowUnitRef,\n        successor: &WorkflowUnitRef,\n    ) -> Option<&VakChainInputBinding> {\n        self.chain_inputs.iter().find(|input| {\n            &input.predecessor_unit_ref == predecessor && &input.successor_unit_ref == successor\n        })\n    }\n\n    fn no_extras(\n''')
+
+          # material carries the source-authored receiving context
+          replace('factory/src/vak_orchestration/runtime.rs',
+          '''    pub subject_ref: String,\n    pub subject_revision: String,\n    pub artifact_refs: BTreeSet<String>,\n''',
+          '''    pub subject_ref: String,\n    pub subject_revision: String,\n    pub receiving_context_ref: String,\n    pub artifact_refs: BTreeSet<String>,\n''')
+          replace('factory/src/vak_orchestration/runtime.rs',
+          '''        let previous = &self.plan.units[next_index - 1].unit_ref;\n        let successor = self.plan.units[next_index].unit_ref.clone();\n        let leg = orchestration\n''',
+          '''        let previous = &self.plan.units[next_index - 1].unit_ref;\n        let successor = self.plan.units[next_index].unit_ref.clone();\n        let receiving_context_ref = self\n            .plan\n            .chain_input(previous, &successor)\n            .ok_or_else(|| VakOrchestrationError::MissingChainInput {\n                predecessor: previous.to_string(),\n                successor: successor.to_string(),\n            })?\n            .receiving_context_ref\n            .clone();\n        let leg = orchestration\n''')
+          replace('factory/src/vak_orchestration/runtime.rs',
+          '''            subject_ref: leg.delegation.subject_ref.clone(),\n            subject_revision: leg.delegation.basis_revision.clone(),\n            artifact_refs: selected_artifact_refs,\n''',
+          '''            subject_ref: leg.delegation.subject_ref.clone(),\n            subject_revision: leg.delegation.basis_revision.clone(),\n            receiving_context_ref,\n            artifact_refs: selected_artifact_refs,\n''')
+
+          # durable-attempt admission rechecks current workflow/source/leg/basis/material
+          replace('factory/src/vak_orchestration/lineage.rs',
+          '''use crate::orchestration::RetryGrant;\nuse crate::workflow::CompiledWorkflow;\n''',
+          '''use crate::orchestration::{ExecutableOrchestration, LegStatus, RetryGrant};\n''')
+          replace('factory/src/vak_orchestration/lineage.rs',
+          '''pub fn vak_attempt_start(\n    workflow: &CompiledWorkflow,\n''',
+          '''pub fn vak_attempt_start(\n    orchestration: &ExecutableOrchestration,\n''')
+          replace('factory/src/vak_orchestration/lineage.rs',
+          '''    chain_material: Option<&VakChainMaterial>,\n) -> Result<AttemptStart, VakOrchestrationError> {\n    plan.validate(workflow)?;\n    let attempt_ref = attempt_ref.into();\n''',
+          '''    chain_material: Option<&VakChainMaterial>,\n) -> Result<AttemptStart, VakOrchestrationError> {\n    let workflow = orchestration.workflow();\n    plan.validate(workflow)?;\n    let expected_digest = format!("blake3:{}", workflow.source.digest);\n    if disposition.participant.source_ref != workflow.source.reference.to_string()\n        || disposition.participant.source_revision != workflow.source.revision\n        || disposition.participant.source_digest != expected_digest\n    {\n        return Err(VakOrchestrationError::SourceBasisMismatch);\n    }\n    let attempt_ref = attempt_ref.into();\n''')
+          replace('factory/src/vak_orchestration/lineage.rs',
+          '''    if let Some(material) = chain_material {\n        if &material.successor_unit_ref != unit_ref {\n            return Err(VakOrchestrationError::InvalidPredecessorMaterial(\n                material.predecessor_unit_ref.to_string(),\n            ));\n        }\n        tracking.push(material.tracking_fact(&plan.performance_ref)?);\n    }\n''',
+          '''    if let Some(material) = chain_material {\n        if &material.successor_unit_ref != unit_ref {\n            return Err(VakOrchestrationError::InvalidPredecessorMaterial(\n                material.predecessor_unit_ref.to_string(),\n            ));\n        }\n        let authored = plan\n            .chain_input(&material.predecessor_unit_ref, &material.successor_unit_ref)\n            .ok_or_else(|| VakOrchestrationError::MissingChainInput {\n                predecessor: material.predecessor_unit_ref.to_string(),\n                successor: material.successor_unit_ref.to_string(),\n            })?;\n        if authored.receiving_context_ref != material.receiving_context_ref {\n            return Err(VakOrchestrationError::InvalidChainInput(\n                material.receiving_context_ref.clone(),\n            ));\n        }\n        let leg = orchestration\n            .leg(&material.predecessor_unit_ref)\n            .ok_or_else(|| {\n                VakOrchestrationError::PredecessorNotReturned(\n                    material.predecessor_unit_ref.to_string(),\n                )\n            })?;\n        if leg.status != LegStatus::Returned\n            || leg.execution_ref != material.predecessor_execution_ref\n            || orchestration.current_subject_revision(&material.subject_ref)\n                != Some(material.subject_revision.as_str())\n        {\n            return Err(VakOrchestrationError::StalePredecessorMaterial(\n                material.predecessor_unit_ref.to_string(),\n            ));\n        }\n        let selected = leg\n            .artifacts\n            .iter()\n            .filter(|artifact| material.artifact_refs.contains(&artifact.artifact_ref))\n            .collect::<Vec<_>>();\n        let actual_evidence = selected\n            .iter()\n            .flat_map(|artifact| artifact.evidence_refs.iter().cloned())\n            .collect::<BTreeSet<_>>();\n        if selected.len() != material.artifact_refs.len()\n            || !material.evidence_refs.is_subset(&actual_evidence)\n        {\n            return Err(VakOrchestrationError::InvalidPredecessorMaterial(\n                material.predecessor_unit_ref.to_string(),\n            ));\n        }\n        disposition\n            .context_refs\n            .insert(material.receiving_context_ref.clone());\n        tracking.push(material.tracking_fact(&plan.performance_ref)?);\n    }\n''')
+          replace('factory/src/vak_orchestration/lineage.rs',
+          '''        evidence_refs.insert(self.predecessor_execution_ref.clone());\n        evidence_refs.insert(self.predecessor_unit_ref.to_string());\n''',
+          '''        evidence_refs.insert(self.predecessor_execution_ref.clone());\n        evidence_refs.insert(self.predecessor_unit_ref.to_string());\n        evidence_refs.insert(self.receiving_context_ref.clone());\n''')
+
+          # CFP2 tests author the routing/receiving context in the plan
+          replace('factory/tests/vak_orchestration.rs',
+          '''    VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope, VakZCycle, ZStage,\n''',
+          '''    VakChainInputBinding, VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope,\n    VakZCycle, ZStage,\n''')
+          replace('factory/tests/vak_orchestration.rs',
+          '''        units: keys\n            .iter()\n            .map(|(key, suffix)| scope(workflow, key, suffix))\n            .collect(),\n        continuation_ref: (thread == "CFP4").then(|| "continuation:sustained".into()),\n''',
+          '''        units: keys\n            .iter()\n            .map(|(key, suffix)| scope(workflow, key, suffix))\n            .collect(),\n        chain_inputs: if thread == "CFP2" {\n            keys.windows(2)\n                .map(|pair| VakChainInputBinding {\n                    predecessor_unit_ref: unit(workflow, pair[0].0),\n                    successor_unit_ref: unit(workflow, pair[1].0),\n                    receiving_context_ref: format!(\n                        "receiving-context:{}-to-{}",\n                        pair[0].0, pair[1].0\n                    ),\n                })\n                .collect()\n        } else {\n            Vec::new()\n        },\n        continuation_ref: (thread == "CFP4").then(|| "continuation:sustained".into()),\n''')
+          replace('factory/tests/vak_orchestration.rs',
+          '''    assert_eq!(material.predecessor_execution_ref, "execution:chain-a");\n    assert_eq!(material.successor_unit_ref, implement);\n''',
+          '''    assert_eq!(material.predecessor_execution_ref, "execution:chain-a");\n    assert_eq!(material.successor_unit_ref, implement);\n    assert_eq!(\n        material.receiving_context_ref,\n        "receiving-context:inspect-source-to-implement-compiler"\n    );\n''')
+          replace('factory/tests/vak_orchestration.rs',
+          '''    assert_eq!(\n        performance\n            .snapshot(&orchestration)\n            .unwrap()\n            .chain_inputs\n            .len(),\n        1\n    );\n}\n\n#[test]\nfn fusion_preserves''',
+          '''    assert_eq!(\n        performance\n            .snapshot(&orchestration)\n            .unwrap()\n            .chain_inputs\n            .len(),\n        1\n    );\n    let mut unauthored = plan(\n        &workflow,\n        "CFP2",\n        &[("inspect-source", "inspect"), ("implement-compiler", "implementation")],\n    );\n    unauthored.chain_inputs.clear();\n    assert!(unauthored.validate(&workflow).is_err());\n}\n\n#[test]\nfn fusion_preserves''')
+
+          # durable attempt acceptance now uses a live returned predecessor and rechecks stale/source-basis negatives
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''use epilogos_factory::attempt_runtime::{\n''',
+          '''use epilogos_factory::core::run::{ProjectRef, Run, RunRef};\nuse epilogos_factory::attempt_runtime::{\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''use epilogos_factory::vak_orchestration::{\n    vak_attempt_start, CPrimeExecutionBinding, VakChainMaterial, VakConductPlan, VakUnitScope,\n''',
+          '''use epilogos_factory::orchestration::{\n    ExecutableOrchestration, ExecutionLaunch, ReturnedArtifact,\n};\nuse epilogos_factory::vak_orchestration::{\n    vak_attempt_start, CPrimeExecutionBinding, VakChainInputBinding, VakChainMaterial,\n    VakConductPlan, VakUnitScope,\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''        units: vec![\n            scope(workflow, "inspect-source", "inspect"),\n            scope(workflow, "review-adversarially", "review"),\n        ],\n        continuation_ref: None,\n''',
+          '''        units: vec![\n            scope(workflow, "inspect-source", "inspect"),\n            scope(workflow, "review-adversarially", "review"),\n        ],\n        chain_inputs: vec![VakChainInputBinding {\n            predecessor_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),\n            successor_unit_ref: workflow\n                .unit("review-adversarially")\n                .unwrap()\n                .reference\n                .clone(),\n            receiving_context_ref: "receiving-context:inspect-to-review".into(),\n        }],\n        continuation_ref: None,\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''fn disposition(workflow: &CompiledWorkflow) -> SituatedExecutionDisposition {\n    let unit = workflow.unit("review-adversarially").unwrap();\n''',
+          '''fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDisposition {\n    let unit = workflow.unit(key).unwrap();\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''    let predecessor = workflow.unit("inspect-source").unwrap();\n    let successor = workflow.unit("review-adversarially").unwrap();\n    let material = VakChainMaterial {\n''',
+          '''    let predecessor = workflow.unit("inspect-source").unwrap();\n    let successor = workflow.unit("review-adversarially").unwrap();\n    let run = Run::new(\n        RUN.parse::<RunRef>().unwrap(),\n        PROJECT.parse::<ProjectRef>().unwrap(),\n        "Factory Vāk durable lineage acceptance",\n        "factory-vak-lineage",\n    )\n    .unwrap();\n    let mut orchestration = ExecutableOrchestration::new(workflow.clone(), run).unwrap();\n    let predecessor_disposition = disposition(&workflow, "inspect-source");\n    orchestration\n        .start_serial(\n            "journey:durable-chain",\n            &predecessor.reference,\n            ExecutionLaunch {\n                execution_ref: "execution:inspect-returned".into(),\n                disposition: predecessor_disposition.selection,\n                retry_grant: None,\n            },\n        )\n        .unwrap();\n    orchestration\n        .return_artifact(\n            &predecessor.reference,\n            ReturnedArtifact {\n                artifact_ref: "artifact:inspect-returned".into(),\n                subject_ref: predecessor.subject_ref.to_string(),\n                subject_revision: predecessor.basis_revision.clone(),\n                producing_execution_ref: "execution:inspect-returned".into(),\n                evidence_refs: BTreeSet::from(["evidence:inspect-returned".into()]),\n                semantic_difference: "inspected source basis".into(),\n            },\n        )\n        .unwrap();\n    let material = VakChainMaterial {\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''        subject_ref: predecessor.subject_ref.to_string(),\n        subject_revision: predecessor.basis_revision.clone(),\n        artifact_refs: BTreeSet::from(["artifact:inspect-returned".into()]),\n''',
+          '''        subject_ref: predecessor.subject_ref.to_string(),\n        subject_revision: predecessor.basis_revision.clone(),\n        receiving_context_ref: "receiving-context:inspect-to-review".into(),\n        artifact_refs: BTreeSet::from(["artifact:inspect-returned".into()]),\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''    let original = disposition(&workflow);\n    let start = vak_attempt_start(\n        &workflow,\n''',
+          '''    let original = disposition(&workflow, "review-adversarially");\n    let start = vak_attempt_start(\n        &orchestration,\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''        "execution:inspect-returned",\n    ] {\n''',
+          '''        "execution:inspect-returned",\n        "receiving-context:inspect-to-review",\n    ] {\n''')
+          replace('factory/tests/vak_attempt_lineage.rs',
+          '''    assert_eq!(start.disposition.return_address, original.return_address);\n}\n''',
+          '''    assert_eq!(start.disposition.return_address, original.return_address);\n\n    let mut stale = orchestration.clone();\n    stale.advance_subject(PROJECT, "advanced-project-revision");\n    assert!(vak_attempt_start(\n        &stale,\n        &plan,\n        &successor.reference,\n        "attempt:stale-chain",\n        "task:stale-review",\n        original.clone(),\n        None,\n        Some(&material),\n    )\n    .is_err());\n\n    let mut foreign_source = original;\n    foreign_source.participant.source_revision = "foreign-workflow-revision".into();\n    assert!(vak_attempt_start(\n        &orchestration,\n        &plan,\n        &successor.reference,\n        "attempt:foreign-source",\n        "task:foreign-review",\n        foreign_source,\n        None,\n        Some(&material),\n    )\n    .is_err());\n}\n''')
+
+          PY
+          cargo fmt --all
+          git diff --check
+          git config user.name 'Epii'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add factory/src/vak_orchestration factory/tests/vak_orchestration.rs factory/tests/vak_attempt_lineage.rs
+          git commit -m 'feat(vak): author chain inputs and recheck native basis'
+          git push origin HEAD:${{ github.head_ref }}
