@@ -50,11 +50,29 @@ impl VakUnitScope {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VakChainInputBinding {
+    pub predecessor_unit_ref: WorkflowUnitRef,
+    pub successor_unit_ref: WorkflowUnitRef,
+    pub receiving_context_ref: String,
+}
+impl VakChainInputBinding {
+    fn validate(&self) -> Result<(), VakOrchestrationError> {
+        required(
+            &self.receiving_context_ref,
+            "chainInput.receivingContextRef",
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VakConductPlan {
     pub contract: String,
     pub performance_ref: String,
     pub binding: CPrimeExecutionBinding,
     pub units: Vec<VakUnitScope>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chain_inputs: Vec<VakChainInputBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -85,6 +103,9 @@ impl VakConductPlan {
             }
             scope.validate(workflow, &self.binding)?;
         }
+        if self.binding.thread_form() != ThreadForm::Chain && !self.chain_inputs.is_empty() {
+            return Err(VakOrchestrationError::UnexpectedField("chainInputs"));
+        }
         match self.binding.thread_form() {
             ThreadForm::Single => {
                 exactly(self.units.len(), 1)?;
@@ -97,6 +118,11 @@ impl VakConductPlan {
             }
             ThreadForm::Chain => {
                 at_least(self.units.len(), 2)?;
+                if self.chain_inputs.len() != self.units.len() - 1 {
+                    return Err(VakOrchestrationError::InvalidChainInput(
+                        "a melody requires one authored input binding per transition".into(),
+                    ));
+                }
                 for pair in self.units.windows(2) {
                     if !unit(workflow, &pair[1].unit_ref)?
                         .dependencies
@@ -107,6 +133,13 @@ impl VakConductPlan {
                             successor: pair[1].unit_ref.to_string(),
                         });
                     }
+                    let input = self
+                        .chain_input(&pair[0].unit_ref, &pair[1].unit_ref)
+                        .ok_or_else(|| VakOrchestrationError::MissingChainInput {
+                            predecessor: pair[0].unit_ref.to_string(),
+                            successor: pair[1].unit_ref.to_string(),
+                        })?;
+                    input.validate()?;
                 }
                 self.no_extras(false, false, false, false)?;
             }
@@ -183,6 +216,16 @@ impl VakConductPlan {
             }
         }
         Ok(())
+    }
+
+    pub fn chain_input(
+        &self,
+        predecessor: &WorkflowUnitRef,
+        successor: &WorkflowUnitRef,
+    ) -> Option<&VakChainInputBinding> {
+        self.chain_inputs.iter().find(|input| {
+            &input.predecessor_unit_ref == predecessor && &input.successor_unit_ref == successor
+        })
     }
 
     fn no_extras(

@@ -16,9 +16,9 @@ use epilogos_factory::orchestration::{
 };
 use epilogos_factory::vak_orchestration::{
     sustained_retry_grant, vak_scope_tracking, CPrimeExecutionBinding, NativeVakPerformance,
-    VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope, VakZCycle, ZStage,
-    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT, VAK_CHAIN_INPUT_TRACKING_KIND,
-    VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
+    VakChainInputBinding, VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope, VakZCycle,
+    ZStage, AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT,
+    VAK_CHAIN_INPUT_TRACKING_KIND, VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
 };
 use epilogos_factory::workflow::{
     compile_workflow, workflow_source_digest, CompiledWorkflow, WorkflowNestingSource,
@@ -107,6 +107,20 @@ fn plan(workflow: &CompiledWorkflow, thread: &str, keys: &[(&str, &str)]) -> Vak
             .iter()
             .map(|(key, suffix)| scope(workflow, key, suffix))
             .collect(),
+        chain_inputs: if thread == "CFP2" {
+            keys.windows(2)
+                .map(|pair| VakChainInputBinding {
+                    predecessor_unit_ref: unit(workflow, pair[0].0),
+                    successor_unit_ref: unit(workflow, pair[1].0),
+                    receiving_context_ref: format!(
+                        "receiving-context:{}-to-{}",
+                        pair[0].0, pair[1].0
+                    ),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        },
         continuation_ref: (thread == "CFP4").then(|| "continuation:sustained".into()),
         stop_condition_ref: (thread == "CFP4").then(|| "stop:sustained".into()),
         fusion_barrier_ref: (thread == "CFP3").then(|| "implementation-reviewed".into()),
@@ -341,7 +355,7 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     let inspect = unit(&workflow, "inspect-source");
     let implement = unit(&workflow, "implement-compiler");
     let mut orchestration = engine(workflow.clone());
-    let plan = plan(
+    let chain_plan = plan(
         &workflow,
         "CFP2",
         &[
@@ -354,7 +368,8 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
         launch(&orchestration, &inspect, "execution:chain-a"),
     )]);
     let mut performance =
-        NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", chain_plan, launches)
+            .unwrap();
     let premature = launch(&orchestration, &implement, "execution:chain-premature");
     assert!(performance
         .continue_chain(
@@ -393,6 +408,10 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     assert_eq!(material.predecessor_execution_ref, "execution:chain-a");
     assert_eq!(material.successor_unit_ref, implement);
     assert_eq!(
+        material.receiving_context_ref,
+        "receiving-context:inspect-source-to-implement-compiler"
+    );
+    assert_eq!(
         material.evidence_refs,
         BTreeSet::from(["evidence:chain-a".into()])
     );
@@ -414,6 +433,16 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
             .len(),
         1
     );
+    let mut unauthored = plan(
+        &workflow,
+        "CFP2",
+        &[
+            ("inspect-source", "inspect"),
+            ("implement-compiler", "implementation"),
+        ],
+    );
+    unauthored.chain_inputs.clear();
+    assert!(unauthored.validate(&workflow).is_err());
 }
 
 #[test]

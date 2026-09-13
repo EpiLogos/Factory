@@ -1,13 +1,15 @@
 use epilogos_factory::attempt_runtime::{
     ExecutionBody, ExecutionBudget, SituatedExecutionDisposition, SituatedParticipant,
 };
+use epilogos_factory::core::run::{ProjectRef, Run, RunRef};
 use epilogos_factory::execution_intelligence::{
     accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, AIKIT_MODEL_ROSTER_VERSION,
 };
+use epilogos_factory::orchestration::{ExecutableOrchestration, ExecutionLaunch, ReturnedArtifact};
 use epilogos_factory::vak_orchestration::{
-    vak_attempt_start, CPrimeExecutionBinding, VakChainMaterial, VakConductPlan, VakUnitScope,
-    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT, VAK_CHAIN_INPUT_TRACKING_KIND,
-    VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
+    vak_attempt_start, CPrimeExecutionBinding, VakChainInputBinding, VakChainMaterial,
+    VakConductPlan, VakUnitScope, AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT,
+    VAK_CHAIN_INPUT_TRACKING_KIND, VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
 };
 use epilogos_factory::workflow::{compile_workflow, CompiledWorkflow, WorkflowSource};
 use serde_json::json;
@@ -66,6 +68,15 @@ fn plan(workflow: &CompiledWorkflow) -> VakConductPlan {
             scope(workflow, "inspect-source", "inspect"),
             scope(workflow, "review-adversarially", "review"),
         ],
+        chain_inputs: vec![VakChainInputBinding {
+            predecessor_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),
+            successor_unit_ref: workflow
+                .unit("review-adversarially")
+                .unwrap()
+                .reference
+                .clone(),
+            receiving_context_ref: "receiving-context:inspect-to-review".into(),
+        }],
         continuation_ref: None,
         stop_condition_ref: None,
         fusion_barrier_ref: None,
@@ -73,8 +84,8 @@ fn plan(workflow: &CompiledWorkflow) -> VakConductPlan {
     }
 }
 
-fn disposition(workflow: &CompiledWorkflow) -> SituatedExecutionDisposition {
-    let unit = workflow.unit("review-adversarially").unwrap();
+fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDisposition {
+    let unit = workflow.unit(key).unwrap();
     let demand = ExecutionDemand {
         project_ref: PROJECT.into(),
         run_ref: RUN.into(),
@@ -158,19 +169,53 @@ fn durable_attempt_carries_scope_and_predecessor_result_into_native_owner_contex
     let plan = plan(&workflow);
     let predecessor = workflow.unit("inspect-source").unwrap();
     let successor = workflow.unit("review-adversarially").unwrap();
+    let run = Run::new(
+        RUN.parse::<RunRef>().unwrap(),
+        PROJECT.parse::<ProjectRef>().unwrap(),
+        "Factory Vāk durable lineage acceptance",
+        "factory-vak-lineage",
+    )
+    .unwrap();
+    let mut orchestration = ExecutableOrchestration::new(workflow.clone(), run).unwrap();
+    let predecessor_disposition = disposition(&workflow, "inspect-source");
+    orchestration
+        .start_serial(
+            "journey:durable-chain",
+            &predecessor.reference,
+            ExecutionLaunch {
+                execution_ref: "execution:inspect-returned".into(),
+                disposition: predecessor_disposition.selection,
+                retry_grant: None,
+            },
+        )
+        .unwrap();
+    orchestration
+        .return_artifact(
+            &predecessor.reference,
+            ReturnedArtifact {
+                artifact_ref: "artifact:inspect-returned".into(),
+                subject_ref: predecessor.subject_ref.to_string(),
+                subject_revision: predecessor.basis_revision.clone(),
+                producing_execution_ref: "execution:inspect-returned".into(),
+                evidence_refs: BTreeSet::from(["evidence:inspect-returned".into()]),
+                semantic_difference: "inspected source basis".into(),
+            },
+        )
+        .unwrap();
     let material = VakChainMaterial {
         predecessor_unit_ref: predecessor.reference.clone(),
         predecessor_execution_ref: "execution:inspect-returned".into(),
         successor_unit_ref: successor.reference.clone(),
         subject_ref: predecessor.subject_ref.to_string(),
         subject_revision: predecessor.basis_revision.clone(),
+        receiving_context_ref: "receiving-context:inspect-to-review".into(),
         artifact_refs: BTreeSet::from(["artifact:inspect-returned".into()]),
         evidence_refs: BTreeSet::from(["evidence:inspect-returned".into()]),
         semantic_differences: BTreeSet::from(["inspected source basis".into()]),
     };
-    let original = disposition(&workflow);
+    let original = disposition(&workflow, "review-adversarially");
     let start = vak_attempt_start(
-        &workflow,
+        &orchestration,
         &plan,
         &successor.reference,
         "attempt:durable-chain",
@@ -197,6 +242,7 @@ fn durable_attempt_carries_scope_and_predecessor_result_into_native_owner_contex
         "artifact:inspect-returned",
         "evidence:inspect-returned",
         "execution:inspect-returned",
+        "receiving-context:inspect-to-review",
     ] {
         assert!(start.disposition.context_refs.contains(reference));
     }
@@ -215,4 +261,32 @@ fn durable_attempt_carries_scope_and_predecessor_result_into_native_owner_contex
         original.verification_obligations
     );
     assert_eq!(start.disposition.return_address, original.return_address);
+
+    let mut stale = orchestration.clone();
+    stale.advance_subject(PROJECT, "advanced-project-revision");
+    assert!(vak_attempt_start(
+        &stale,
+        &plan,
+        &successor.reference,
+        "attempt:stale-chain",
+        "task:stale-review",
+        original.clone(),
+        None,
+        Some(&material),
+    )
+    .is_err());
+
+    let mut foreign_source = original;
+    foreign_source.participant.source_revision = "foreign-workflow-revision".into();
+    assert!(vak_attempt_start(
+        &orchestration,
+        &plan,
+        &successor.reference,
+        "attempt:foreign-source",
+        "task:foreign-review",
+        foreign_source,
+        None,
+        Some(&material),
+    )
+    .is_err());
 }

@@ -1,8 +1,7 @@
 use super::{required, VakChainMaterial, VakConductPlan, VakOrchestrationError};
 use crate::attempt_runtime::{AttemptStart, AttemptTrackingFact, SituatedExecutionDisposition};
 use crate::core::run::WorkflowUnitRef;
-use crate::orchestration::RetryGrant;
-use crate::workflow::CompiledWorkflow;
+use crate::orchestration::{ExecutableOrchestration, LegStatus, RetryGrant};
 use std::collections::BTreeSet;
 
 pub const VAK_SCOPE_TRACKING_KIND: &str = "factory.vak-scope/v1";
@@ -71,7 +70,7 @@ pub fn carry_vak_tracking_into_disposition(
 /// not a new dispatch path.
 #[allow(clippy::too_many_arguments)]
 pub fn vak_attempt_start(
-    workflow: &CompiledWorkflow,
+    orchestration: &ExecutableOrchestration,
     plan: &VakConductPlan,
     unit_ref: &WorkflowUnitRef,
     attempt_ref: impl Into<String>,
@@ -80,7 +79,15 @@ pub fn vak_attempt_start(
     retry_grant: Option<RetryGrant>,
     chain_material: Option<&VakChainMaterial>,
 ) -> Result<AttemptStart, VakOrchestrationError> {
+    let workflow = orchestration.workflow();
     plan.validate(workflow)?;
+    let expected_digest = format!("blake3:{}", workflow.source.digest);
+    if disposition.participant.source_ref != workflow.source.reference.to_string()
+        || disposition.participant.source_revision != workflow.source.revision
+        || disposition.participant.source_digest != expected_digest
+    {
+        return Err(VakOrchestrationError::SourceBasisMismatch);
+    }
     let attempt_ref = attempt_ref.into();
     let task_ref = task_ref.into();
     required(&attempt_ref, "attemptRef")?;
@@ -92,6 +99,52 @@ pub fn vak_attempt_start(
                 material.predecessor_unit_ref.to_string(),
             ));
         }
+        let authored = plan
+            .chain_input(&material.predecessor_unit_ref, &material.successor_unit_ref)
+            .ok_or_else(|| VakOrchestrationError::MissingChainInput {
+                predecessor: material.predecessor_unit_ref.to_string(),
+                successor: material.successor_unit_ref.to_string(),
+            })?;
+        if authored.receiving_context_ref != material.receiving_context_ref {
+            return Err(VakOrchestrationError::InvalidChainInput(
+                material.receiving_context_ref.clone(),
+            ));
+        }
+        let leg = orchestration
+            .leg(&material.predecessor_unit_ref)
+            .ok_or_else(|| {
+                VakOrchestrationError::PredecessorNotReturned(
+                    material.predecessor_unit_ref.to_string(),
+                )
+            })?;
+        if leg.status != LegStatus::Returned
+            || leg.execution_ref != material.predecessor_execution_ref
+            || orchestration.current_subject_revision(&material.subject_ref)
+                != Some(material.subject_revision.as_str())
+        {
+            return Err(VakOrchestrationError::StalePredecessorMaterial(
+                material.predecessor_unit_ref.to_string(),
+            ));
+        }
+        let selected = leg
+            .artifacts
+            .iter()
+            .filter(|artifact| material.artifact_refs.contains(&artifact.artifact_ref))
+            .collect::<Vec<_>>();
+        let actual_evidence = selected
+            .iter()
+            .flat_map(|artifact| artifact.evidence_refs.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        if selected.len() != material.artifact_refs.len()
+            || !material.evidence_refs.is_subset(&actual_evidence)
+        {
+            return Err(VakOrchestrationError::InvalidPredecessorMaterial(
+                material.predecessor_unit_ref.to_string(),
+            ));
+        }
+        disposition
+            .context_refs
+            .insert(material.receiving_context_ref.clone());
         tracking.push(material.tracking_fact(&plan.performance_ref)?);
     }
     carry_vak_tracking_into_disposition(&mut disposition, &tracking)?;
@@ -117,6 +170,7 @@ impl VakChainMaterial {
         evidence_refs.extend(self.artifact_refs.clone());
         evidence_refs.insert(self.predecessor_execution_ref.clone());
         evidence_refs.insert(self.predecessor_unit_ref.to_string());
+        evidence_refs.insert(self.receiving_context_ref.clone());
         evidence_refs.insert(self.successor_unit_ref.to_string());
         Ok(AttemptTrackingFact {
             fact_ref: format!(
