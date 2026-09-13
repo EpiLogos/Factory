@@ -274,7 +274,7 @@ fn chord_is_independent_parallelism_and_partial_failure_does_not_relabel_sibling
     complete_inspect(&mut orchestration);
     let left = unit(&workflow, "implement-compiler");
     let right = unit(&workflow, "review-adversarially");
-    let plan = plan(
+    let chord_plan = plan(
         &workflow,
         "CFP1",
         &[
@@ -292,8 +292,13 @@ fn chord_is_independent_parallelism_and_partial_failure_does_not_relabel_sibling
             launch(&orchestration, &right, "execution:parallel-b"),
         ),
     ]);
-    let performance =
-        NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
+    let performance = NativeVakPerformance::start(
+        &mut orchestration,
+        "journey:vak",
+        chord_plan,
+        launches,
+    )
+    .unwrap();
 
     // Return the second voice first: completion order must not become identity.
     let returned = artifact(
@@ -688,13 +693,15 @@ fn performed_return_is_consumed_by_existing_run_cognition_and_journey_praxis_wit
         NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
 
     let thought_id = RunThoughtId::new("question-one").unwrap();
+    let thought_expected_revision = orchestration.run().revision();
+    let thought_run_ref = orchestration.run().reference().clone();
     orchestration
         .retain_run_thought(RunThoughtCommand {
             command_id: "retain:question-one".into(),
-            expected_revision: orchestration.run().revision(),
+            expected_revision: thought_expected_revision,
             thought: RunThought {
                 id: thought_id.clone(),
-                run_ref: orchestration.run().reference().clone(),
+                run_ref: thought_run_ref,
                 anchor_ref: "source:thought".into(),
                 anchor_revision: Some("thought-r1".into()),
                 passage: None,
