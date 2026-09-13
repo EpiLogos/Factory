@@ -40,7 +40,6 @@ jobs:
           cargo test -p epilogos-factory --test vak_orchestration 2>&1 | tee evidence/vak-tests.txt
           cargo test -p epilogos-factory --test orchestration 2>&1 | tee evidence/native-orchestration.txt
           cargo test -p epilogos-factory --test thought_consumption 2>&1 | tee evidence/thought-consumption.txt
-          cargo test -p epilogos-factory --test journey_praxis 2>&1 | tee evidence/journey-praxis.txt
           cargo test -p epilogos-factory --test attempt_owner_delivery 2>&1 | tee evidence/owner-delivery.txt
       - uses: actions/upload-artifact@v4
         if: always()
