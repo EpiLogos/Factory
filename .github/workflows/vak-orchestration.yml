@@ -7,6 +7,7 @@ on:
       - 'factory/src/orchestration_persistence.rs'
       - 'factory/tests/vak_orchestration.rs'
       - 'factory/tests/vak_attempt_lineage.rs'
+      - 'factory/examples/k8_vak_performance_receipt.rs'
       - 'factory/src/lib.rs'
       - '.github/workflows/vak-orchestration.yml'
   workflow_dispatch:
@@ -43,6 +44,13 @@ jobs:
           cargo test -p epilogos-factory --test orchestration 2>&1 | tee evidence/native-orchestration.txt
           cargo test -p epilogos-factory --test thought_consumption 2>&1 | tee evidence/thought-consumption.txt
           cargo test -p epilogos-factory --test attempt_owner_delivery 2>&1 | tee evidence/owner-delivery.txt
+      - name: Emit owner-executed K8 performance receipt
+        run: |
+          set -euo pipefail
+          cargo run -p epilogos-factory --example k8_vak_performance_receipt -- evidence/k8-vak-performance.json \
+            2>&1 | tee evidence/k8-vak-performance.log
+          test -s evidence/k8-vak-performance.json
+          sha256sum evidence/k8-vak-performance.json > evidence/k8-vak-performance.sha256
       - uses: actions/upload-artifact@v4
         if: always()
         with:
