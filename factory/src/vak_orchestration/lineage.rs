@@ -1,7 +1,5 @@
 use super::{required, VakChainMaterial, VakConductPlan, VakOrchestrationError};
-use crate::attempt_runtime::{
-    AttemptStart, AttemptTrackingFact, SituatedExecutionDisposition,
-};
+use crate::attempt_runtime::{AttemptStart, AttemptTrackingFact, SituatedExecutionDisposition};
 use crate::core::run::WorkflowUnitRef;
 use crate::orchestration::RetryGrant;
 use crate::workflow::CompiledWorkflow;
