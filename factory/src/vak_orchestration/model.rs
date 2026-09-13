@@ -54,7 +54,9 @@ impl CPrimeExecutionBinding {
             return Err(VakOrchestrationError::WrongContract("QL C-prime"));
         }
         if self.ai_kit_scope_contract != AIKIT_OPERATIVE_SCOPE_CONTRACT {
-            return Err(VakOrchestrationError::WrongContract("AIKit operative scope"));
+            return Err(VakOrchestrationError::WrongContract(
+                "AIKit operative scope",
+            ));
         }
         for (value, field) in [
             (&self.ql_binding_ref, "qlBindingRef"),
@@ -85,7 +87,9 @@ impl CPrimeExecutionBinding {
         }
         match self.participation.as_str() {
             "authorised-undertaking" => required(
-                self.undertaking_authority_ref.as_deref().unwrap_or_default(),
+                self.undertaking_authority_ref
+                    .as_deref()
+                    .unwrap_or_default(),
                 "undertakingAuthorityRef",
             )?,
             "dialogical" if self.undertaking_authority_ref.is_some() => {
@@ -145,8 +149,14 @@ pub enum VakOrchestrationError {
     UnknownUnit(String),
     SubjectMismatch(String),
     SourceScopeWidening(String),
-    NotIndependent { left: String, right: String },
-    InvalidChain { predecessor: String, successor: String },
+    NotIndependent {
+        left: String,
+        right: String,
+    },
+    InvalidChain {
+        predecessor: String,
+        successor: String,
+    },
     FusionConcernMismatch,
     MissingBarrier(String),
     FusionBarrierMismatch,
