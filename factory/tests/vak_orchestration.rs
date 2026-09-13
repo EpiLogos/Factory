@@ -292,13 +292,9 @@ fn chord_is_independent_parallelism_and_partial_failure_does_not_relabel_sibling
             launch(&orchestration, &right, "execution:parallel-b"),
         ),
     ]);
-    let performance = NativeVakPerformance::start(
-        &mut orchestration,
-        "journey:vak",
-        chord_plan,
-        launches,
-    )
-    .unwrap();
+    let performance =
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", chord_plan, launches)
+            .unwrap();
 
     // Return the second voice first: completion order must not become identity.
     let returned = artifact(
