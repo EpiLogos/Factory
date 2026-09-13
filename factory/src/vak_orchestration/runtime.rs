@@ -25,6 +25,7 @@ pub struct VakChainMaterial {
     pub successor_unit_ref: WorkflowUnitRef,
     pub subject_ref: String,
     pub subject_revision: String,
+    pub receiving_context_ref: String,
     pub artifact_refs: BTreeSet<String>,
     pub evidence_refs: BTreeSet<String>,
     pub semantic_differences: BTreeSet<String>,
@@ -198,6 +199,15 @@ impl NativeVakPerformance {
         let next_index = self.next_index()?;
         let previous = &self.plan.units[next_index - 1].unit_ref;
         let successor = self.plan.units[next_index].unit_ref.clone();
+        let receiving_context_ref = self
+            .plan
+            .chain_input(previous, &successor)
+            .ok_or_else(|| VakOrchestrationError::MissingChainInput {
+                predecessor: previous.to_string(),
+                successor: successor.to_string(),
+            })?
+            .receiving_context_ref
+            .clone();
         let leg = orchestration
             .leg(previous)
             .ok_or_else(|| VakOrchestrationError::PredecessorNotReturned(previous.to_string()))?;
@@ -247,6 +257,7 @@ impl NativeVakPerformance {
             successor_unit_ref: successor.clone(),
             subject_ref: leg.delegation.subject_ref.clone(),
             subject_revision: leg.delegation.basis_revision.clone(),
+            receiving_context_ref,
             artifact_refs: selected_artifact_refs,
             evidence_refs,
             semantic_differences,
