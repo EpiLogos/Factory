@@ -17,8 +17,8 @@ use epilogos_factory::orchestration::{
 use epilogos_factory::vak_orchestration::{
     sustained_retry_grant, vak_scope_tracking, CPrimeExecutionBinding, NativeVakPerformance,
     VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope, VakZCycle, ZStage,
-    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT,
-    VAK_CHAIN_INPUT_TRACKING_KIND, VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
+    AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT, VAK_CHAIN_INPUT_TRACKING_KIND,
+    VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
 };
 use epilogos_factory::workflow::{
     compile_workflow, workflow_source_digest, CompiledWorkflow, WorkflowNestingSource,
@@ -358,16 +358,14 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     let mut performance =
         NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
     let premature = launch(&orchestration, &implement, "execution:chain-premature");
-    assert!(
-        performance
-            .continue_chain(
-                &mut orchestration,
-                "journey:vak",
-                BTreeSet::from(["artifact:chain-a".into()]),
-                premature,
-            )
-            .is_err()
-    );
+    assert!(performance
+        .continue_chain(
+            &mut orchestration,
+            "journey:vak",
+            BTreeSet::from(["artifact:chain-a".into()]),
+            premature,
+        )
+        .is_err());
     let returned = artifact(
         &orchestration,
         &inspect,
@@ -377,16 +375,14 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     );
     orchestration.return_artifact(&inspect, returned).unwrap();
     let invalid = launch(&orchestration, &implement, "execution:chain-invalid");
-    assert!(
-        performance
-            .continue_chain(
-                &mut orchestration,
-                "journey:vak",
-                BTreeSet::from(["artifact:not-returned".into()]),
-                invalid,
-            )
-            .is_err()
-    );
+    assert!(performance
+        .continue_chain(
+            &mut orchestration,
+            "journey:vak",
+            BTreeSet::from(["artifact:not-returned".into()]),
+            invalid,
+        )
+        .is_err());
     let continuation = launch(&orchestration, &implement, "execution:chain-b");
     let material = performance
         .continue_chain(
@@ -398,7 +394,10 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
         .unwrap();
     assert_eq!(material.predecessor_execution_ref, "execution:chain-a");
     assert_eq!(material.successor_unit_ref, implement);
-    assert_eq!(material.evidence_refs, BTreeSet::from(["evidence:chain-a".into()]));
+    assert_eq!(
+        material.evidence_refs,
+        BTreeSet::from(["evidence:chain-a".into()])
+    );
     let input_fact = material
         .tracking_fact(&performance.plan().performance_ref)
         .unwrap();
@@ -409,7 +408,14 @@ fn melody_consumes_selected_current_predecessor_result_not_a_label_or_late_resul
     assert!(scope_fact
         .evidence_refs
         .contains("resolve-scoped-path:implementation"));
-    assert_eq!(performance.snapshot(&orchestration).unwrap().chain_inputs.len(), 1);
+    assert_eq!(
+        performance
+            .snapshot(&orchestration)
+            .unwrap()
+            .chain_inputs
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -437,13 +443,9 @@ fn fusion_preserves_distinct_readings_then_uses_native_barrier_reviewer_and_synt
             launch(&orchestration, &right, "execution:fusion-b"),
         ),
     ]);
-    let performance = NativeVakPerformance::start(
-        &mut orchestration,
-        "journey:vak",
-        fusion_plan,
-        launches,
-    )
-    .unwrap();
+    let performance =
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", fusion_plan, launches)
+            .unwrap();
     let right_return = artifact(
         &orchestration,
         &right,
@@ -515,12 +517,7 @@ fn drone_retry_stop_cancellation_and_late_returns_preserve_every_attempt_and_sem
     );
     second.retry_grant = Some(retry.clone());
     performance
-        .resume_sustained(
-            &mut orchestration,
-            "journey:vak",
-            "retry:sustained",
-            second,
-        )
+        .resume_sustained(&mut orchestration, "journey:vak", "retry:sustained", second)
         .unwrap();
 
     // A late result from the failed first attempt stays on that historical attempt.
@@ -545,7 +542,10 @@ fn drone_retry_stop_cancellation_and_late_returns_preserve_every_attempt_and_sem
             BTreeSet::from(["evidence:stop-condition".into()]),
         )
         .unwrap();
-    assert_eq!(orchestration.leg(&inspect).unwrap().status, LegStatus::Quiescent);
+    assert_eq!(
+        orchestration.leg(&inspect).unwrap().status,
+        LegStatus::Quiescent
+    );
 
     // Current work returning after explicit cancellation is retained as late Return.
     let current_late = artifact(
@@ -555,8 +555,13 @@ fn drone_retry_stop_cancellation_and_late_returns_preserve_every_attempt_and_sem
         "execution:sustain-2",
         "evidence:sustain-current-late",
     );
-    orchestration.return_artifact(&inspect, current_late).unwrap();
-    assert_eq!(orchestration.leg(&inspect).unwrap().status, LegStatus::LateResult);
+    orchestration
+        .return_artifact(&inspect, current_late)
+        .unwrap();
+    assert_eq!(
+        orchestration.leg(&inspect).unwrap().status,
+        LegStatus::LateResult
+    );
 
     let mut forbidden = launch_provider(
         &orchestration,
@@ -565,16 +570,14 @@ fn drone_retry_stop_cancellation_and_late_returns_preserve_every_attempt_and_sem
         "provider-c",
     );
     forbidden.retry_grant = Some(retry);
-    assert!(
-        performance
-            .resume_sustained(
-                &mut orchestration,
-                "journey:vak",
-                "retry:sustained",
-                forbidden,
-            )
-            .is_err()
-    );
+    assert!(performance
+        .resume_sustained(
+            &mut orchestration,
+            "journey:vak",
+            "retry:sustained",
+            forbidden,
+        )
+        .is_err());
 
     let snapshot = performance.snapshot(&orchestration).unwrap();
     assert_eq!(snapshot.attempts.len(), 2);
@@ -607,22 +610,15 @@ fn canon_uses_compiled_native_parent_child_nesting_without_inventing_child_scope
     let nested_plan = plan(
         &workflow,
         "CFP5",
-        &[
-            ("inspect-source", "root"),
-            ("implement-compiler", "child"),
-        ],
+        &[("inspect-source", "root"), ("implement-compiler", "child")],
     );
     let launches = BTreeMap::from([(
         inspect.clone(),
         launch(&orchestration, &inspect, "execution:nested-root"),
     )]);
-    let mut performance = NativeVakPerformance::start(
-        &mut orchestration,
-        "journey:vak",
-        nested_plan,
-        launches,
-    )
-    .unwrap();
+    let mut performance =
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", nested_plan, launches)
+            .unwrap();
     let returned = artifact(
         &orchestration,
         &inspect,
@@ -655,13 +651,9 @@ fn z_cycle_rehears_actual_evidence_and_requires_changed_binding_to_recompose() {
         inspect.clone(),
         launch(&orchestration, &inspect, "execution:z"),
     )]);
-    let performance = NativeVakPerformance::start(
-        &mut orchestration,
-        "journey:vak",
-        plan.clone(),
-        launches,
-    )
-    .unwrap();
+    let performance =
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", plan.clone(), launches)
+            .unwrap();
     z.performing(&performance.snapshot(&orchestration).unwrap())
         .unwrap();
     let returned = artifact(
@@ -692,13 +684,8 @@ fn performed_return_is_consumed_by_existing_run_cognition_and_journey_praxis_wit
         inspect.clone(),
         launch(&orchestration, &inspect, "execution:return"),
     )]);
-    let performance = NativeVakPerformance::start(
-        &mut orchestration,
-        "journey:vak",
-        plan,
-        launches,
-    )
-    .unwrap();
+    let performance =
+        NativeVakPerformance::start(&mut orchestration, "journey:vak", plan, launches).unwrap();
 
     let thought_id = RunThoughtId::new("question-one").unwrap();
     orchestration
@@ -798,7 +785,10 @@ fn performed_return_is_consumed_by_existing_run_cognition_and_journey_praxis_wit
         .unwrap();
     journey.correlate_activity("activity:factory-vak").unwrap();
     let returned = snapshot
-        .journey_return("return:factory-vak", "Actual commissioned Vāk performance returned")
+        .journey_return(
+            "return:factory-vak",
+            "Actual commissioned Vāk performance returned",
+        )
         .unwrap();
     assert!(returned.recognition_ref.is_none());
     journey.record_return(returned).unwrap();
