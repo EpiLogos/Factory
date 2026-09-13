@@ -78,10 +78,7 @@ impl VakZCycle {
         Ok(())
     }
 
-    pub fn rehear(
-        &mut self,
-        evidence_refs: BTreeSet<String>,
-    ) -> Result<(), VakOrchestrationError> {
+    pub fn rehear(&mut self, evidence_refs: BTreeSet<String>) -> Result<(), VakOrchestrationError> {
         if self.stage != ZStage::Recorded
             || evidence_refs.is_empty()
             || !evidence_refs.is_subset(&self.record_evidence_refs)
