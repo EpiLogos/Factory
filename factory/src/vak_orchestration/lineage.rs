@@ -1,6 +1,10 @@
 use super::{required, VakChainMaterial, VakConductPlan, VakOrchestrationError};
-use crate::attempt_runtime::{AttemptTrackingFact, SituatedExecutionDisposition};
+use crate::attempt_runtime::{
+    AttemptStart, AttemptTrackingFact, SituatedExecutionDisposition,
+};
 use crate::core::run::WorkflowUnitRef;
+use crate::orchestration::RetryGrant;
+use crate::workflow::CompiledWorkflow;
 use std::collections::BTreeSet;
 
 pub const VAK_SCOPE_TRACKING_KIND: &str = "factory.vak-scope/v1";
@@ -60,6 +64,47 @@ pub fn carry_vak_tracking_into_disposition(
         disposition.context_refs.extend(fact.evidence_refs.clone());
     }
     Ok(())
+}
+
+/// Prepare the existing durable Factory attempt carrier from one validated Vāk
+/// unit. The same tracking facts are persisted on the attempt and projected into
+/// the situated disposition that the native owner handoff already serializes.
+/// This is the production join from C′/Resolve lineage to commissioned execution,
+/// not a new dispatch path.
+#[allow(clippy::too_many_arguments)]
+pub fn vak_attempt_start(
+    workflow: &CompiledWorkflow,
+    plan: &VakConductPlan,
+    unit_ref: &WorkflowUnitRef,
+    attempt_ref: impl Into<String>,
+    task_ref: impl Into<String>,
+    mut disposition: SituatedExecutionDisposition,
+    retry_grant: Option<RetryGrant>,
+    chain_material: Option<&VakChainMaterial>,
+) -> Result<AttemptStart, VakOrchestrationError> {
+    plan.validate(workflow)?;
+    let attempt_ref = attempt_ref.into();
+    let task_ref = task_ref.into();
+    required(&attempt_ref, "attemptRef")?;
+    required(&task_ref, "taskRef")?;
+    let mut tracking = vec![vak_scope_tracking(plan, unit_ref)?];
+    if let Some(material) = chain_material {
+        if &material.successor_unit_ref != unit_ref {
+            return Err(VakOrchestrationError::InvalidPredecessorMaterial(
+                material.predecessor_unit_ref.to_string(),
+            ));
+        }
+        tracking.push(material.tracking_fact(&plan.performance_ref)?);
+    }
+    carry_vak_tracking_into_disposition(&mut disposition, &tracking)?;
+    Ok(AttemptStart {
+        attempt_ref,
+        task_ref,
+        workflow_unit_ref: unit_ref.clone(),
+        disposition,
+        retry_grant,
+        tracking,
+    })
 }
 
 impl VakChainMaterial {
