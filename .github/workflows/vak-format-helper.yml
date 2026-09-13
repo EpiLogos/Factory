@@ -28,7 +28,10 @@ jobs:
           cp factory/src/vak_orchestration/model.rs formatter/factory/src/vak_orchestration/model.rs
           cp factory/src/vak_orchestration/plan.rs formatter/factory/src/vak_orchestration/plan.rs
           cp factory/src/vak_orchestration/runtime.rs formatter/factory/src/vak_orchestration/runtime.rs
+          cp factory/src/vak_orchestration/lineage.rs formatter/factory/src/vak_orchestration/lineage.rs
+          cp factory/src/vak_orchestration/return_path.rs formatter/factory/src/vak_orchestration/return_path.rs
           cp factory/src/vak_orchestration/z.rs formatter/factory/src/vak_orchestration/z.rs
+          cp factory/src/orchestration_persistence.rs formatter/factory/src/orchestration_persistence.rs
           cp factory/tests/vak_orchestration.rs formatter/factory/tests/vak_orchestration.rs
           cp factory/src/lib.rs formatter/factory/src/lib.rs
           git diff --check
