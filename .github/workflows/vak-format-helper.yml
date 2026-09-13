@@ -4,7 +4,7 @@ on:
     paths:
       - '.github/workflows/vak-format-helper.yml'
 permissions:
-  contents: read
+  contents: write
 jobs:
   format:
     if: github.head_ref == 'agent/aw94-cprime-orchestration'
@@ -13,30 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
+          ref: ${{ github.head_ref }}
+          persist-credentials: true
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.98.1'
           components: rustfmt
-      - name: Format Vāk tranche and retain exact files
+      - name: Apply exact Rust formatting
         run: |
           set -euo pipefail
           cargo fmt --all
-          mkdir -p formatter/factory/src/vak_orchestration formatter/factory/tests formatter/factory/src
-          cp factory/src/vak_orchestration.rs formatter/factory/src/vak_orchestration.rs
-          cp factory/src/vak_orchestration/model.rs formatter/factory/src/vak_orchestration/model.rs
-          cp factory/src/vak_orchestration/plan.rs formatter/factory/src/vak_orchestration/plan.rs
-          cp factory/src/vak_orchestration/runtime.rs formatter/factory/src/vak_orchestration/runtime.rs
-          cp factory/src/vak_orchestration/lineage.rs formatter/factory/src/vak_orchestration/lineage.rs
-          cp factory/src/vak_orchestration/return_path.rs formatter/factory/src/vak_orchestration/return_path.rs
-          cp factory/src/vak_orchestration/z.rs formatter/factory/src/vak_orchestration/z.rs
-          cp factory/src/orchestration_persistence.rs formatter/factory/src/orchestration_persistence.rs
-          cp factory/tests/vak_orchestration.rs formatter/factory/tests/vak_orchestration.rs
-          cp factory/src/lib.rs formatter/factory/src/lib.rs
           git diff --check
-      - uses: actions/upload-artifact@v4
-        with:
-          name: factory-vak-formatted-${{ github.event.pull_request.head.sha || github.sha }}
-          path: formatter/
-          retention-days: 2
+          if ! git diff --quiet; then
+            git config user.name 'Epii'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add factory/src/vak_orchestration.rs factory/src/vak_orchestration factory/src/orchestration_persistence.rs factory/tests/vak_orchestration.rs factory/src/lib.rs
+            git commit -m 'style(vak): apply exact Rust 1.98.1 formatting'
+            git push origin HEAD:${{ github.head_ref }}
+          fi
