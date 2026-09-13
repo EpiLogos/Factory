@@ -1,0 +1,46 @@
+name: Factory Vāk orchestration
+on:
+  pull_request:
+    paths:
+      - 'factory/src/vak_orchestration.rs'
+      - 'factory/src/vak_orchestration/**'
+      - 'factory/tests/vak_orchestration.rs'
+      - 'factory/src/lib.rs'
+      - '.github/workflows/vak-orchestration.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: factory-vak-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  vak-orchestration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Exact source
+        run: |
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source-sha.txt
+          git rev-parse HEAD^{tree} > evidence/source-tree.txt
+          rustc --version > evidence/toolchain.txt
+      - name: Native conduct acceptance
+        run: |
+          set -euo pipefail
+          cargo fmt --all -- --check 2>&1 | tee evidence/format.txt
+          cargo clippy -p epilogos-factory --all-targets -- -D warnings 2>&1 | tee evidence/clippy.txt
+          cargo test -p epilogos-factory --test vak_orchestration 2>&1 | tee evidence/vak-tests.txt
+          cargo test -p epilogos-factory --test orchestration 2>&1 | tee evidence/native-orchestration.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: factory-vak-${{ github.event.pull_request.head.sha || github.sha }}
+          path: evidence/
+          retention-days: 14
