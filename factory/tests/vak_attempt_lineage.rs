@@ -206,7 +206,10 @@ fn durable_attempt_carries_scope_and_predecessor_result_into_native_owner_contex
         .contains("context:preexisting"));
     assert_eq!(start.disposition.participant, original.participant);
     assert_eq!(start.disposition.body, original.body);
-    assert_eq!(start.disposition.permitted_effects, original.permitted_effects);
+    assert_eq!(
+        start.disposition.permitted_effects,
+        original.permitted_effects
+    );
     assert_eq!(
         start.disposition.verification_obligations,
         original.verification_obligations
