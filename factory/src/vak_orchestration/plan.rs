@@ -1,4 +1,6 @@
-use super::{required, CPrimeExecutionBinding, ThreadForm, VakOrchestrationError, VAK_ORCHESTRATION_CONTRACT};
+use super::{
+    required, CPrimeExecutionBinding, ThreadForm, VakOrchestrationError, VAK_ORCHESTRATION_CONTRACT,
+};
 use crate::core::run::WorkflowUnitRef;
 use crate::workflow::{CompiledWorkflow, CompiledWorkflowUnit};
 use serde::{Deserialize, Serialize};
@@ -165,9 +167,11 @@ impl VakConductPlan {
                     return Err(VakOrchestrationError::InvalidNestedTopology);
                 }
                 for scope in self.units.iter().skip(1) {
-                    if !workflow.nesting.iter().any(|edge| {
-                        edge.child == scope.unit_ref && planned.contains(&edge.parent)
-                    }) {
+                    if !workflow
+                        .nesting
+                        .iter()
+                        .any(|edge| edge.child == scope.unit_ref && planned.contains(&edge.parent))
+                    {
                         return Err(VakOrchestrationError::InvalidNestedTopology);
                     }
                 }
