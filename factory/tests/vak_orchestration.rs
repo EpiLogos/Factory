@@ -149,9 +149,6 @@ fn disposition_provider(
     )
     .unwrap()
 }
-fn disposition(run: &Run, unit: Option<&WorkflowUnitRef>) -> ExecutionDisposition {
-    disposition_provider(run, unit, BTreeSet::new(), "factory-vak-test")
-}
 fn disposition_independent(
     run: &Run,
     unit: Option<&WorkflowUnitRef>,
