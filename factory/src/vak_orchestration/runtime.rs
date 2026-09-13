@@ -251,12 +251,7 @@ impl NativeVakPerformance {
             evidence_refs,
             semantic_differences,
         };
-        self.start_next(
-            orchestration,
-            parent_journey_ref,
-            next_index,
-            launch,
-        )?;
+        self.start_next(orchestration, parent_journey_ref, next_index, launch)?;
         self.chain_inputs.insert(successor, material.clone());
         Ok(material)
     }
@@ -324,17 +319,13 @@ impl NativeVakPerformance {
         grant_ref: &str,
         launch: ExecutionLaunch,
     ) -> Result<(), VakOrchestrationError> {
-        if !self
-            .plan
-            .units
-            .iter()
-            .any(|scope| &scope.unit_ref == unit)
-        {
+        if !self.plan.units.iter().any(|scope| &scope.unit_ref == unit) {
             return Err(VakOrchestrationError::UnknownPerformanceUnit(
                 unit.to_string(),
             ));
         }
-        if self.plan.binding.thread_form() == ThreadForm::Sustained && self.sustained_stop.is_some() {
+        if self.plan.binding.thread_form() == ThreadForm::Sustained && self.sustained_stop.is_some()
+        {
             return Err(VakOrchestrationError::SustainedStopAlreadySatisfied);
         }
         let unit_ref = unit.to_string();
@@ -362,13 +353,7 @@ impl NativeVakPerformance {
             return Err(VakOrchestrationError::SustainedStopAlreadySatisfied);
         }
         let unit = self.plan.units[0].unit_ref.clone();
-        self.retry_unit(
-            orchestration,
-            parent_journey_ref,
-            &unit,
-            grant_ref,
-            launch,
-        )
+        self.retry_unit(orchestration, parent_journey_ref, &unit, grant_ref, launch)
     }
 
     #[allow(clippy::too_many_arguments)]
