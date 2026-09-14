@@ -16,10 +16,11 @@ use crate::conformance::{
 };
 use crate::core::run::{ProjectRef, RunRef, WorkflowUnitRef};
 use crate::developmental_read::{
-    FactoryDevelopmentalFileProvider, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
-    FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT, FACTORY_JOURNEY_READING_CONTRACT,
-    FACTORY_PROJECT_READING_CONTRACT, FACTORY_RUN_READING_CONTRACT,
-    FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT, FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
+    FactoryCentralProjectLinkRequest, FactoryDevelopmentalFileProvider,
+    FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER, FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT,
+    FACTORY_JOURNEY_READING_CONTRACT, FACTORY_PROJECT_READING_CONTRACT,
+    FACTORY_RUN_READING_CONTRACT, FACTORY_WORKFLOW_UNIT_LIST_READING_CONTRACT,
+    FACTORY_WORKFLOW_UNIT_READING_CONTRACT,
 };
 use crate::journey::JourneyRef;
 use crate::project_development::{
@@ -106,7 +107,7 @@ fn help() -> String {
     format!(
         "Software Factory {}\n\n\
 Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
-Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
+Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development build   <state> <run-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
@@ -268,6 +269,20 @@ fn development_command(
                 .ok_or_else(|| CliError("missing development ledger root".into()))?;
             return observations_operation(ledger_root, &args[2..], json);
         }
+        "central-project-link" => {
+            let state_path = args
+                .get(1)
+                .ok_or_else(|| CliError("missing developmental state path".into()))?;
+            let request_path = args.get(2).map(String::as_str).unwrap_or("-");
+            let request: FactoryCentralProjectLinkRequest =
+                serde_json::from_str(&read_input(request_path, stdin_override)?)?;
+            let mut provider = FactoryDevelopmentalFileProvider::open(state_path)
+                .map_err(|error| CliError(error.to_string()))?;
+            let receipt = provider
+                .admit_central_project_link(request)
+                .map_err(|error| CliError(error.to_string()))?;
+            return serde_json::to_string_pretty(&receipt).map_err(CliError::from);
+        }
         "commission" => {
             let state_path = args
                 .get(1)
@@ -301,6 +316,15 @@ fn development_command(
         .map_err(|error| CliError(error.to_string()))?;
 
     match operation.as_str() {
+        "central-project-link-read" => {
+            let central_project_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing central-project-ref".into()))?;
+            let reading = provider
+                .central_project_link_reading(central_project_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            serde_json::to_string_pretty(&reading).map_err(CliError::from)
+        }
         "project" => {
             let project_ref = args
                 .get(2)
@@ -376,6 +400,27 @@ fn development_command(
                     reading.destination,
                     reading.run_map.address(),
                     reading.run_map.topology_revision().get()
+                ))
+            }
+        }
+        "build" => {
+            let run_ref = args
+                .get(2)
+                .ok_or_else(|| CliError("missing run-ref".into()))?
+                .parse::<RunRef>()
+                .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+            let snapshot = provider
+                .build_snapshot(&run_ref)
+                .map_err(|error| CliError(error.to_string()))?;
+            if json {
+                snapshot.to_json().map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nProject: {}\nRun: {}\nRevision: {}",
+                    snapshot.contract,
+                    snapshot.view.project.project_ref,
+                    snapshot.view.run.run_ref,
+                    snapshot.revision
                 ))
             }
         }

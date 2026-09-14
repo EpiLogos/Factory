@@ -221,6 +221,11 @@ impl World {
             Some(serde_json::to_value(request).unwrap()),
         ));
     }
+    fn list(&self, extra: &[&str]) -> Output {
+        let mut args = vec!["attempt".into(), "list".into(), self.state(), RUN.into()];
+        args.extend(extra.iter().map(|value| (*value).into()));
+        binary(&args, None)
+    }
     fn task(&self, extra: &[&str]) -> Output {
         let mut args = vec![
             "attempt".into(),
@@ -254,6 +259,20 @@ impl World {
             reresolution: None,
         });
     }
+}
+
+#[test]
+fn task_list_discovers_retained_native_task_refs_without_mutating_owner_state() {
+    let world = World::new();
+    let before = std::fs::read(world.state()).unwrap();
+
+    let value = success(world.list(&["--json"]));
+    assert_eq!(value["contract"], "factory.attempt-task-list-reading/v1");
+    assert_eq!(value["projectRef"], PROJECT);
+    assert_eq!(value["runRef"], RUN);
+    assert_eq!(value["taskRefs"], json!([TASK]));
+    assert_eq!(value["totalTasks"], 1);
+    assert_eq!(before, std::fs::read(world.state()).unwrap());
 }
 
 #[test]

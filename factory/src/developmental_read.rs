@@ -11,8 +11,8 @@ use crate::action_projection::{
 use crate::build::{
     AgencyRecord, CandidateRecord, EvidenceRecord, ExecutionRecord, FactoryActionAuthority,
     FactoryActionExecutor, FactoryActionInvocation, FactoryActionReceipt, FactoryBuildError,
-    FactoryBuildSelection, FactoryBuildState, FactoryBuildViewProvider, HumanRequestRecord,
-    FACTORY_NATIVE_OWNER,
+    FactoryBuildSelection, FactoryBuildSnapshot, FactoryBuildState, FactoryBuildViewProvider,
+    HumanRequestRecord, FACTORY_NATIVE_OWNER,
 };
 use crate::commission::{
     CommissionError, FactoryCommission, FactoryCommissionReading, FactoryCommissionReceipt,
@@ -54,6 +54,73 @@ pub const FACTORY_WORKFLOW_UNIT_READING_CONTRACT: &str = "factory.workflow-unit-
 pub const FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT: &str =
     "factory.execution-telemetry-reading/v1";
 pub const FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER: &str = "factory.developmental-local-provider/v1";
+pub const FACTORY_CENTRAL_PROJECT_LINK_REQUEST: &str = "factory.central-project-link-request/v1";
+pub const FACTORY_CENTRAL_PROJECT_LINK_RECEIPT: &str = "factory.central-project-link-receipt/v1";
+pub const FACTORY_CENTRAL_PROJECT_LINK_READING: &str = "factory.central-project-link-reading/v1";
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCentralProjectLinkRequest {
+    pub contract: String,
+    pub factory_project_ref: ProjectRef,
+    pub central_project_ref: String,
+    pub source_path: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCentralProjectLink {
+    pub factory_project_ref: ProjectRef,
+    pub central_project_ref: String,
+    pub source_path: String,
+    pub source_revision: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCentralProjectLinkReceipt {
+    pub contract: String,
+    pub result: String,
+    pub link: FactoryCentralProjectLink,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCentralProjectLinkReading {
+    pub contract: String,
+    pub link: FactoryCentralProjectLink,
+    pub project: FactoryProjectReading,
+}
+#[derive(Debug, Deserialize)]
+struct CentralProjectSource {
+    schema: String,
+    project_id: String,
+}
+
+fn verify_central_project_link(
+    request: &FactoryCentralProjectLinkRequest,
+) -> Result<FactoryCentralProjectLink, FactoryDevelopmentalReadError> {
+    if request.contract != FACTORY_CENTRAL_PROJECT_LINK_REQUEST
+        || request.central_project_ref.trim().is_empty()
+        || request.source_path.trim().is_empty()
+    {
+        return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink(
+            "invalid link request".into(),
+        ));
+    }
+    let bytes = fs::read(&request.source_path)
+        .map_err(|e| FactoryDevelopmentalReadError::InvalidCentralProjectLink(e.to_string()))?;
+    let source: CentralProjectSource = serde_json::from_slice(&bytes)
+        .map_err(|e| FactoryDevelopmentalReadError::InvalidCentralProjectLink(e.to_string()))?;
+    if source.schema != "central.project/v1" || source.project_id != request.central_project_ref {
+        return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink(
+            "Central project source does not identify the requested project".into(),
+        ));
+    }
+    Ok(FactoryCentralProjectLink {
+        factory_project_ref: request.factory_project_ref.clone(),
+        central_project_ref: request.central_project_ref.clone(),
+        source_path: request.source_path.clone(),
+        source_revision: format!("blake3:{}", blake3::hash(&bytes).to_hex()),
+    })
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +149,8 @@ pub struct FactoryDevelopmentalState {
     /// Native coordinator metadata only; the Run remains in Build's registry.
     #[serde(default)]
     pub attempt_states: BTreeMap<RunRef, crate::attempt_native_store::FactoryRunAttempts>,
+    #[serde(default)]
+    pub central_project_links: BTreeMap<ProjectRef, FactoryCentralProjectLink>,
 }
 
 impl FactoryDevelopmentalState {
@@ -100,9 +169,73 @@ impl FactoryDevelopmentalState {
             commissions: Vec::new(),
             developmental_mutations: Vec::new(),
             attempt_states: BTreeMap::new(),
+            central_project_links: BTreeMap::new(),
         };
         state.validate()?;
         Ok(state)
+    }
+
+    pub fn admit_central_project_link(
+        &mut self,
+        request: FactoryCentralProjectLinkRequest,
+    ) -> Result<FactoryCentralProjectLinkReceipt, FactoryDevelopmentalReadError> {
+        let link = verify_central_project_link(&request)?;
+        if link.factory_project_ref != *self.build.project().reference() {
+            return Err(FactoryDevelopmentalReadError::ProjectNotFound(
+                link.factory_project_ref.to_string(),
+            ));
+        }
+        if let Some(existing) = self.central_project_links.get(&link.factory_project_ref) {
+            if existing == &link {
+                return Ok(FactoryCentralProjectLinkReceipt {
+                    contract: FACTORY_CENTRAL_PROJECT_LINK_RECEIPT.into(),
+                    result: "already-applied".into(),
+                    link,
+                });
+            }
+            return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink(
+                "Factory Project already has a different Central project link".into(),
+            ));
+        }
+        self.central_project_links
+            .insert(link.factory_project_ref.clone(), link.clone());
+        Ok(FactoryCentralProjectLinkReceipt {
+            contract: FACTORY_CENTRAL_PROJECT_LINK_RECEIPT.into(),
+            result: "applied".into(),
+            link,
+        })
+    }
+    pub fn central_project_link_reading(
+        &self,
+        central_project_ref: &str,
+    ) -> Result<FactoryCentralProjectLinkReading, FactoryDevelopmentalReadError> {
+        let link = self
+            .central_project_links
+            .values()
+            .find(|link| link.central_project_ref == central_project_ref)
+            .cloned()
+            .ok_or_else(|| {
+                FactoryDevelopmentalReadError::CentralProjectLinkNotFound(
+                    central_project_ref.into(),
+                )
+            })?;
+        let verified = verify_central_project_link(&FactoryCentralProjectLinkRequest {
+            contract: FACTORY_CENTRAL_PROJECT_LINK_REQUEST.into(),
+            factory_project_ref: link.factory_project_ref.clone(),
+            central_project_ref: link.central_project_ref.clone(),
+            source_path: link.source_path.clone(),
+        })?;
+        if verified.source_revision != link.source_revision {
+            return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink(
+                "Central project source revision changed; admit a new Factory state before reading"
+                    .into(),
+            ));
+        }
+        Ok(FactoryCentralProjectLinkReading {
+            contract: FACTORY_CENTRAL_PROJECT_LINK_READING.into(),
+            project: self.project_reading(&link.factory_project_ref)?,
+            link,
+        })
     }
 
     /// Attach authoritative workflow source to the developmental owner state.
@@ -340,6 +473,21 @@ impl FactoryDevelopmentalState {
             started_at: journey.started_at.clone(),
             completed_at: journey.completed_at.clone(),
         })
+    }
+
+    /// Read the canonical Build projection held inside a developmental provider.
+    /// The Run supplies the Project identity; callers cannot pair an unrelated
+    /// Project ref with this Run.
+    pub fn build_snapshot(
+        &self,
+        run_ref: &RunRef,
+    ) -> Result<FactoryBuildSnapshot, FactoryDevelopmentalReadError> {
+        let reading = self.run_reading(run_ref)?;
+        let selection = FactoryBuildSelection {
+            project_ref: reading.project_ref,
+            run_ref: reading.run_ref,
+        };
+        Ok(FactoryBuildViewProvider.snapshot(&self.build, &selection)?)
     }
 
     pub fn run_reading(
@@ -1033,6 +1181,30 @@ impl FactoryDevelopmentalFileProvider {
         &self.path
     }
 
+    pub fn admit_central_project_link(
+        &mut self,
+        request: FactoryCentralProjectLinkRequest,
+    ) -> Result<FactoryCentralProjectLinkReceipt, FactoryDevelopmentalProviderError> {
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let receipt = candidate.admit_central_project_link(request)?;
+        candidate.validate()?;
+        if receipt.result == "applied" {
+            self.persist_state(&candidate)?;
+        }
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
+        Ok(receipt)
+    }
+    pub fn central_project_link_reading(
+        &self,
+        central_project_ref: &str,
+    ) -> Result<FactoryCentralProjectLinkReading, FactoryDevelopmentalProviderError> {
+        Ok(self
+            .state
+            .central_project_link_reading(central_project_ref)?)
+    }
+
     pub fn project_reading(
         &self,
         project_ref: &ProjectRef,
@@ -1052,6 +1224,14 @@ impl FactoryDevelopmentalFileProvider {
         run_ref: &RunRef,
     ) -> Result<FactoryRunReading, FactoryDevelopmentalProviderError> {
         Ok(self.state.run_reading(run_ref)?)
+    }
+
+    /// Read the canonical Build projection from this developmental state.
+    pub fn build_snapshot(
+        &self,
+        run_ref: &RunRef,
+    ) -> Result<FactoryBuildSnapshot, FactoryDevelopmentalProviderError> {
+        Ok(self.state.build_snapshot(run_ref)?)
     }
 
     pub fn workflow_units_reading(
@@ -2912,6 +3092,8 @@ pub enum FactoryDevelopmentalReadError {
     },
     InvalidRoutineContinuation(String),
     InvalidCommission(String),
+    InvalidCentralProjectLink(String),
+    CentralProjectLinkNotFound(String),
     Build(FactoryBuildError),
 }
 
@@ -3462,6 +3644,95 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&cli).unwrap();
         assert_eq!(value["contract"], FACTORY_JOURNEY_READING_CONTRACT);
         assert_eq!(value["journeyRef"], JOURNEY);
+    }
+
+    #[test]
+    fn central_project_link_verifies_source_identity_and_refuses_stale_or_mismatched_sources() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("developmental.json");
+        let source_path = directory.path().join("project.json");
+        fs::write(
+            &source_path,
+            r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I"},"wiki":{"schema":"central.wiki/v1"}}"#,
+        )
+        .unwrap();
+        let mut provider = FactoryDevelopmentalFileProvider::create(&state_path, state()).unwrap();
+        let request = FactoryCentralProjectLinkRequest {
+            contract: FACTORY_CENTRAL_PROJECT_LINK_REQUEST.into(),
+            factory_project_ref: PROJECT.parse().unwrap(),
+            central_project_ref: "project:o-i".into(),
+            source_path: source_path.to_string_lossy().into_owned(),
+        };
+        assert_eq!(
+            provider
+                .admit_central_project_link(request.clone())
+                .unwrap()
+                .result,
+            "applied"
+        );
+        assert_eq!(
+            provider
+                .central_project_link_reading("project:o-i")
+                .unwrap()
+                .project
+                .project_ref
+                .to_string(),
+            PROJECT
+        );
+        fs::write(
+            &source_path,
+            r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I revised"},"wiki":{"schema":"central.wiki/v1"}}"#,
+        )
+        .unwrap();
+        assert!(provider
+            .central_project_link_reading("project:o-i")
+            .is_err());
+        fs::write(
+            &source_path,
+            r#"{"schema":"central.project/v1","project_id":"project:o-other"}"#,
+        )
+        .unwrap();
+        assert!(provider
+            .central_project_link_reading("project:o-i")
+            .is_err());
+        assert!(provider.admit_central_project_link(request).is_err());
+    }
+
+    #[test]
+    fn attempt_task_list_reports_no_task_refs_for_a_queued_run_without_attempts() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental.json");
+        FactoryDevelopmentalFileProvider::create(&path, state()).unwrap();
+        let run: RunRef = RUN.parse().unwrap();
+
+        let reading = crate::attempt_task::read_task_list(&path, &run).unwrap();
+        assert_eq!(reading["contract"], "factory.attempt-task-list-reading/v1");
+        assert_eq!(reading["runRef"], RUN);
+        assert_eq!(reading["taskRefs"], serde_json::json!([]));
+        assert_eq!(reading["totalTasks"], 0);
+    }
+
+    #[test]
+    fn developmental_build_cli_returns_the_canonical_build_snapshot_for_its_run() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("developmental.json");
+        FactoryDevelopmentalFileProvider::create(&path, state()).unwrap();
+
+        let output = execute_cli(
+            &[
+                "development".into(),
+                "build".into(),
+                path.to_string_lossy().into_owned(),
+                RUN.into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(snapshot["contract"], "factory.build-view/v1");
+        assert_eq!(snapshot["view"]["project"]["projectRef"], PROJECT);
+        assert_eq!(snapshot["view"]["run"]["runRef"], RUN);
     }
 
     #[test]
