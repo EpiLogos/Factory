@@ -149,7 +149,7 @@ pub struct FactoryDevelopmentalState {
     /// Native coordinator metadata only; the Run remains in Build's registry.
     #[serde(default)]
     pub attempt_states: BTreeMap<RunRef, crate::attempt_native_store::FactoryRunAttempts>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub central_project_links: BTreeMap<ProjectRef, FactoryCentralProjectLink>,
 }
 
