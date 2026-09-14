@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub const TASK_READING: &str = "factory.attempt-task-reading/v1";
+pub const TASK_LIST_READING: &str = "factory.attempt-task-list-reading/v1";
 pub const RETURN_READING: &str = "factory.attempt-return-reading/v1";
 const MAX_PAGE: usize = 100;
 
@@ -171,6 +172,43 @@ pub fn read_task(
     )
 }
 
+/// Discover only task identities already retained by Factory for this Run.
+/// A Run with no attempt field is valid and has no retained task identities.
+pub fn read_task_list(path: &Path, run: &RunRef) -> Result<Value, String> {
+    let state = read_developmental_state(path).map_err(|error| error.to_string())?;
+    let run_reading = state.run_reading(run).map_err(|error| error.to_string())?;
+    if !state.attempt_states.contains_key(run) {
+        return Ok(json!({
+            "contract": TASK_LIST_READING,
+            "projectRef": run_reading.project_ref,
+            "runRef": run,
+            "runRevision": run_reading.revision,
+            "taskRefs": [],
+            "totalTasks": 0
+        }));
+    }
+    let (_, reading) = coherent_read(path, run)?;
+    let task_refs = reading
+        .attempts
+        .iter()
+        .map(|attempt| attempt.task_ref.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let total_tasks = task_refs.len();
+    Ok(json!({
+        "contract": TASK_LIST_READING,
+        "projectRef": state.build.project().reference(),
+        "runRef": run,
+        "revision": reading.revision,
+        "runRevision": reading.run_revision,
+        "topologyRevision": reading.topology_revision,
+        "sourceCurrent": reading.source_current,
+        "taskRefs": task_refs,
+        "totalTasks": total_tasks
+    }))
+}
+
 pub fn read_return(path: &Path, run: &RunRef, attempt_ref: &str) -> Result<Value, String> {
     let (state, reading) = coherent_read(path, run)?;
     let attempt = reading
@@ -204,6 +242,17 @@ fn text(value: &Value) -> &str {
 }
 
 pub fn render_reading(value: &Value) -> String {
+    if value["contract"].as_str() == Some(TASK_LIST_READING) {
+        let tasks = strings(&value["taskRefs"]);
+        return format!(
+            "{}\nProject: {}\nRun: {}\nRetained tasks ({}): {}",
+            TASK_LIST_READING,
+            text(&value["projectRef"]),
+            text(&value["runRef"]),
+            value["totalTasks"],
+            tasks
+        );
+    }
     let mut lines = vec![format!("{}\nProject: {}\nRun: {}\nRevision: {}\nSource: {} @ {}\nSource digest: {}\nSource current: {}",
         text(&value["contract"]),text(&value["projectRef"]),text(&value["runRef"]),value["revision"],
         text(&value["workflowSourceRef"]),text(&value["workflowSourceRevision"]),text(&value["workflowSourceDigest"]),value["sourceCurrent"])];
@@ -258,8 +307,14 @@ pub fn render_reading(value: &Value) -> String {
 }
 
 pub fn execute_cli(args: &[String]) -> Result<String, String> {
-    if args.len() < 4 {
-        return Err("Usage: factory attempt task|return <state> <run-ref> <task-ref|attempt-ref> [--json] [--limit N] [--cursor JSON]".into());
+    let operation = args.first().map(String::as_str).unwrap_or_default();
+    let required = match operation {
+        "list" => 3,
+        "task" | "return" => 4,
+        _ => 0,
+    };
+    if required == 0 || args.len() < required {
+        return Err("Usage: factory attempt list <state> <run-ref> [--json] | factory attempt task|return <state> <run-ref> <task-ref|attempt-ref> [--json] [--limit N] [--cursor JSON]".into());
     }
     let run: RunRef = args[2]
         .parse()
@@ -267,11 +322,11 @@ pub fn execute_cli(args: &[String]) -> Result<String, String> {
     let mut limit = 50;
     let mut cursor = None;
     let mut json = false;
-    let mut index = 4;
+    let mut index = required;
     while index < args.len() {
         match args[index].as_str() {
             "--json" => json = true,
-            "--limit" => {
+            "--limit" if operation != "list" => {
                 index += 1;
                 limit = args
                     .get(index)
@@ -279,7 +334,7 @@ pub fn execute_cli(args: &[String]) -> Result<String, String> {
                     .parse::<usize>()
                     .map_err(|error| error.to_string())?;
             }
-            "--cursor" => {
+            "--cursor" if operation != "list" => {
                 index += 1;
                 cursor = Some(
                     serde_json::from_str::<TaskCursor>(args.get(index).ok_or("missing cursor")?)
@@ -290,7 +345,8 @@ pub fn execute_cli(args: &[String]) -> Result<String, String> {
         }
         index += 1;
     }
-    let reading = match args[0].as_str() {
+    let reading = match operation {
+        "list" => read_task_list(Path::new(&args[1]), &run)?,
         "task" => read_task(Path::new(&args[1]), &run, &args[3], limit, cursor.as_ref())?,
         "return" if cursor.is_none() && limit == 50 => {
             read_return(Path::new(&args[1]), &run, &args[3])?
