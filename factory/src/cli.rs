@@ -65,6 +65,12 @@ struct FactoryCliVerification<'a> {
 
 pub fn cli_main() -> ExitCode {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    // The configuration plane contract (C0 §6) puts its structured failure
+    // document on stdout while the process still exits non-zero, so those two
+    // command heads report through their own entry.
+    if crate::configuration::is_config_command(args.first().map(String::as_str)) {
+        return crate::configuration::config_main(&args);
+    }
     match execute_cli(&args, None) {
         Ok(output) => {
             if !output.is_empty() {
@@ -96,6 +102,9 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         Some("development") => development_command(&args[1..], json, stdin_override),
         Some("action") => action_command(&args[1..], json, stdin_override),
         Some("system") => crate::system::system_command(json),
+        Some("config-contribution") | Some("config") => {
+            crate::configuration::execute_config(&args, stdin_override, json).map_err(CliError)
+        }
         Some("verify") => verify_command(&args[1..], json),
         Some(command) => Err(CliError(format!(
             "unknown command `{command}`; run `factory help`"
@@ -106,7 +115,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 fn help() -> String {
     format!(
         "Software Factory {}\n\n\
-Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
+Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory config-contribution [--json]\n  factory config validate --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config plan     --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config apply    --plan-file <path|-> [--changeset <id>] [--json]\n  factory config reset    --setting <setting-ref> [--scope <kind>:<ref>] [--changeset <id>] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development build   <state> <run-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
@@ -139,6 +148,11 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.observations",
             "action.list",
             "action.invoke",
+            "config-contribution",
+            "config.validate",
+            "config.plan",
+            "config.apply",
+            "config.reset",
             "verify",
         ],
         native_contracts: vec![
