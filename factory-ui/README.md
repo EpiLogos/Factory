@@ -22,6 +22,10 @@ Canonical mutations are emitted as `{ actionRef, subjectRef }` through `onAction
 
 The package uses O:I semantic CSS variable names with conservative standalone fallbacks. The O:I host should provide `@epilogos/oi-design-system/tokens.css`; Factory does not copy a second token authority into this repository. Scarce O:I gold is not used as a generic success colour.
 
+The host owns the theme. The surface sets no `color-scheme` and no appearance class of its own; it inhabits whichever of O:I's light or dark grounds the host selects. The package-private status hues (`--fb-ok`, `--fb-error`, `--fb-running`, `--fb-warn`) are `light-dark()` pairs that follow the host's scheme, and the standalone fallbacks follow it the same way.
+
+A library does not style the host document. Every rule in `styles.css` and `build-surface.css` is scoped under `.fb-build-surface`, the root class of `BuildSurface` and of the standalone `ExecutionTraceExplorer`; nothing is applied to `:root`, `*`, `button` or `code` globally.
+
 ## Verify
 
 ```bash

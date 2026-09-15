@@ -14,8 +14,6 @@
   "harnessCompositionFingerprint":"dsh-demo-4c9a",
   "agentSessionRef":"agent-session/dsh-demo",
   "sessionSpaceRef":null,
-  "sessionSpaceRevision":null,
-  "sessionSpaceLifecycle":"unavailable-pending-aikit-61-63",
   "workcellBindingRefs":["workcell:binding/execution-demo","workcell:binding/preview-demo"],
   "surfaceRefs":["surface/dsh/web","surface/aikit/tui"],
   "totalTokens":12140,

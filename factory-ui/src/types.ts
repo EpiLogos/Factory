@@ -53,7 +53,8 @@ export interface TraceEvent {
   actuationRef?: string
   harnessRef?: string
   agentSessionRef?: string
-  sessionSpaceRef?: string
+  /** null = the producer reported no SessionSpace bound (see ExecutionTraceView). */
+  sessionSpaceRef?: string | null
   workcellBindingRef?: string
   status?: Status
   severity?: 'info' | 'warning' | 'error'
@@ -96,7 +97,16 @@ export interface ExecutionTraceView {
   harnessCompositionRevision?: number
   harnessCompositionFingerprint?: string
   agentSessionRef?: string
-  sessionSpaceRef?: string
+  /**
+   * Opaque AIKit-owned SessionSpace identity. Factory's execution condition
+   * (factory/src/build.rs ExecutionRecord.session_space_ref,
+   * developmental_read.rs FactoryExecutionCondition) carries it as
+   * Option<String>; a trajectory says "no SessionSpace bound" with null
+   * rather than inventing a ref. Consumers treat null and undefined alike.
+   */
+  sessionSpaceRef?: string | null
+  /** AIKit-owned Surface refs from the same execution condition (surface_refs). */
+  surfaceRefs?: string[]
   workcellBindingRefs?: string[]
   totalTokens?: number
   totalCost?: number

@@ -49,7 +49,7 @@ There is **no process event at this pinned revision**. Factory F0 therefore rend
 | SSSF native IDs | retained as provenance, intentionally **not** promoted to Factory identity | `nativeRef` / `nativeSpanRef` | binding fixture + conformance tests |
 | SSSF sessions/phases as the top-level product ontology | intentionally replaced at F1 | Project / Run / RunMap / frontier / Candidate semantic envelope | `BuildSurface.tsx`, `BuildSurface.test.tsx` |
 | SSSF Vue component technology | intentionally replaced, behaviour retained | React 18 package matching current O:I Surface line | package build/typecheck |
-| SSSF dark visual tokens | intentionally restyled *after* behavioural port | O:I semantic token names with local fallbacks | `styles.css`; host owns final token values |
+| SSSF dark visual tokens | intentionally restyled *after* behavioural port | O:I semantic token names with local fallbacks; package-private status hues follow the host colour scheme (`light-dark()`) so the surface inhabits O:I light and dark | `styles.css`; host owns final token values |
 | process/service timeline material | **not present upstream; not fabricated** | absent on SSSF path; optional on richer native trajectory | `trace-conformance.test.ts` proves SSSF absence and DSH presence |
 
 ## Factory F1 envelope
@@ -85,7 +85,7 @@ Likewise:
 
 ## Deterministic comparison evidence
 
-`factory-ui/fixtures/source-parity-expected.json` fixes the upstream revision and key structured expectations. `src/fixtures/sssf-parity.ts` provides a deterministic execution specimen including a failed tool call and queued post-failure phase. The tests prove:
+`factory-ui/fixtures/source-parity-expected.json` fixes the upstream revision and key structured expectations; `src/read-model.test.ts` asserts every field of it against what the read model derives from the specimen, so the file cannot drift from the code. `src/fixtures/sssf-parity.ts` provides that deterministic execution specimen, including a failed tool call and a queued post-failure phase. The tests prove:
 
 - lane and phase ordering;
 - source-derived waterfall geometry, minimum block width, non-overlap and bounds;
