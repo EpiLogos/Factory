@@ -198,6 +198,7 @@ fn native_workcell_caller_retains_process_recovery_and_release() {
         disposition,
         retry_grant: None,
         tracking: vec![],
+        place_grant: None,
     }));
     let request = |key: &str, operation: WorkcellWorldOperation, receipt: &Path| {
         let mut request = world.request(key, operation);

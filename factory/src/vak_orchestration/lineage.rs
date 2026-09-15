@@ -155,6 +155,9 @@ pub fn vak_attempt_start(
         disposition,
         retry_grant,
         tracking,
+        // Vāk chains do not request Workcell rooms today; a successor attempt
+        // never inherits a predecessor's place implicitly.
+        place_grant: None,
     })
 }
 
