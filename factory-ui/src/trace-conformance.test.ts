@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import liveDshFixture from '../fixtures/dsh-trajectory.json'
+import liveDshFixtureJson from '../fixtures/dsh-trajectory.json'
 import { processEvents, toolEvents } from './read-model'
+import type { ExecutionTraceView } from './types'
 import { drainSssfEvents, type SssfApi, type SssfEvent } from './sssf'
 import { dshMaximalTrace } from './fixtures/factory-build'
 import { sssfParityTrace } from './fixtures/sssf-parity'
+
+// Typed so the type system guards the fixture's shape: a field the fixture
+// carries that ExecutionTraceView does not declare cannot be asserted on.
+const liveDshFixture = liveDshFixtureJson as ExecutionTraceView
 
 describe('SSSF source-fidelity trace conformance', () => {
   it('drains event pages through the insertion-ordered rowid cursor', async () => {
@@ -60,10 +65,13 @@ describe('heterogeneous native trajectory conformance', () => {
     expect(permission?.payload).toMatchObject({ factoryHumanRequest: false })
   })
 
-  it('keeps SessionSpace unavailable until the current AIKit producer implements #61-#63', () => {
+  it('keeps an unbound SessionSpace explicit rather than fabricated', () => {
+    // The producer reports no SessionSpace for this execution: the trajectory
+    // and every event say so with null, and no event carries an invented ref,
+    // while the AIKit-owned Surface refs it does have stay attributable.
     expect(liveDshFixture.sessionSpaceRef).toBeNull()
-    expect(liveDshFixture.sessionSpaceRevision).toBeNull()
-    expect(liveDshFixture.sessionSpaceLifecycle).toBe('unavailable-pending-aikit-61-63')
+    expect(liveDshFixture.spans.flatMap((span) => span.events).some((event) => event.sessionSpaceRef)).toBe(false)
+    expect(liveDshFixture.agentSessionRef).toBe('agent-session/dsh-demo')
     expect(liveDshFixture.surfaceRefs).toContain('surface/aikit/tui')
   })
 })
