@@ -94,7 +94,10 @@ struct CentralProjectSource {
     project_id: String,
 }
 
-fn verify_central_project_link(
+/// Verify a Central project link against its source document. Public because
+/// the configuration plane reuses this exact native validation as the
+/// owner-authoritative answer for the central-project binding setting.
+pub fn verify_central_project_link(
     request: &FactoryCentralProjectLinkRequest,
 ) -> Result<FactoryCentralProjectLink, FactoryDevelopmentalReadError> {
     if request.contract != FACTORY_CENTRAL_PROJECT_LINK_REQUEST
@@ -204,6 +207,22 @@ impl FactoryDevelopmentalState {
             result: "applied".into(),
             link,
         })
+    }
+    /// Remove this project's Central project link: the native unbind behind
+    /// `factory config reset` for the central-project binding setting.
+    /// Returns the removed link, or `None` when the project carries no link.
+    pub fn remove_central_project_link(&mut self) -> Option<FactoryCentralProjectLink> {
+        self.central_project_links
+            .remove(self.build.project().reference())
+    }
+    /// This project's currently bound Central project link, if any.
+    pub fn central_project_link(&self) -> Option<&FactoryCentralProjectLink> {
+        self.central_project_links
+            .get(self.build.project().reference())
+    }
+    /// The one project this developmental state document carries.
+    pub fn project_ref(&self) -> &ProjectRef {
+        self.build.project().reference()
     }
     pub fn central_project_link_reading(
         &self,
@@ -1203,6 +1222,33 @@ impl FactoryDevelopmentalFileProvider {
         Ok(self
             .state
             .central_project_link_reading(central_project_ref)?)
+    }
+
+    /// Remove the state project's Central project link under the provider lock.
+    /// A state that carries no link is left untouched on disk.
+    pub fn remove_central_project_link(
+        &mut self,
+    ) -> Result<Option<FactoryCentralProjectLink>, FactoryDevelopmentalProviderError> {
+        let lock = self.lock()?;
+        let mut candidate = Self::read_state(&self.path)?;
+        let removed = candidate.remove_central_project_link();
+        if removed.is_some() {
+            candidate.validate()?;
+            self.persist_state(&candidate)?;
+        }
+        self.state = candidate;
+        FileExt::unlock(&lock)?;
+        Ok(removed)
+    }
+
+    /// The state project's currently bound Central project link, if any.
+    pub fn central_project_link(&self) -> Option<&FactoryCentralProjectLink> {
+        self.state.central_project_link()
+    }
+
+    /// The one project this developmental state document carries.
+    pub fn project_ref(&self) -> &crate::core::run::ProjectRef {
+        self.state.project_ref()
     }
 
     pub fn project_reading(

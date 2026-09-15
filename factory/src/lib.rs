@@ -21,6 +21,7 @@ pub mod build_cognitive;
 pub mod build_provider;
 pub mod cli;
 pub mod commission;
+pub mod configuration;
 pub mod conformance;
 pub mod core;
 pub mod development_field;
