@@ -10,3 +10,6 @@
 
 # Local recovery receipts for reviewed documentation changes.
 /.central/documentation-transactions/
+
+# Vendored reference trees (never built or published from this repo).
+vendor/
