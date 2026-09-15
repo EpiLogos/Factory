@@ -39,7 +39,7 @@ export function BuildSurface({ view, initialDepth = 'semantic', onAction }: Buil
   const candidateActions = view.actions.filter((action) => action.subjectKinds.includes('candidate'))
   const runActions = view.actions.filter((action) => action.subjectKinds.includes('run'))
 
-  return <main className="fb-build-surface factory-build oi-surface-dark">
+  return <main className="fb-build-surface factory-build">
     <header className="fb-header">
       <div className="fb-eyebrow">Factory / Build</div>
       <div className="fb-title-row">
