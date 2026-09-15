@@ -37,7 +37,9 @@
 
 .fb-build-surface .fb-actions { display: flex; flex-wrap: wrap; gap: 7px; }
 .fb-build-surface .fb-action { padding: 7px 10px; border: 1px solid var(--fb-rule); border-radius: 7px; background: transparent; cursor: pointer; }
-.fb-build-surface .fb-action:hover { border-color: var(--fb-text); }
+.fb-build-surface .fb-action:enabled:hover { border-color: var(--fb-text); }
+.fb-build-surface .fb-action:disabled { color: var(--fb-muted); cursor: default; }
+.fb-build-surface .fb-action-unavailable { margin: 0; padding: 0 24px; font-size: .78rem; }
 .fb-build-surface .fb-run-actions { padding: 18px 24px 0; }
 
 .fb-build-surface .fb-two-col { display: grid; grid-template-columns: minmax(0,1.25fr) minmax(280px,.75fr); gap: 18px; padding: 0 24px; }
