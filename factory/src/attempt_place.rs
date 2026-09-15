@@ -81,11 +81,16 @@ pub struct WorkcellPlaceGrant {
     pub place_ref: String,
     pub provider: PlaceProvider,
     pub session_name: String,
-    #[serde(default)]
+    /// herdr only: the provider-native workspace id backing the place.
+    /// Absent optionals are omitted, never null-padded, so a stored grant is
+    /// byte-faithful to the document Workcell published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane_pid: Option<u32>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process_start_marker: Option<String>,
     pub created_utc: String,
 }
@@ -358,11 +363,29 @@ mod place_contract_laws {
             place_ref: "workcell:place:tmux:/tmp/socket:attempt-room".into(),
             provider: PlaceProvider::Tmux,
             session_name: "attempt-room".into(),
+            workspace_id: None,
             pane_id: Some("%3".into()),
             pane_pid: Some(4242),
             process_start_marker: Some("1747344000.123456-3".into()),
             created_utc: "2026-09-15T09:30:00Z".into(),
         }
+    }
+
+    /// Conformance with the real publisher: this document is the exact shape
+    /// `workcell place request` emits on success (captured live from the
+    /// Workcell build that ships `workcell.place-grant/v1`, values
+    /// genericised). If Workcell and Factory drift apart, this test is the
+    /// tripwire — the fake-binary fixtures elsewhere in this file reuse it.
+    const LIVE_WORKCELL_GRANT_DOCUMENT: &str = r#"{"schema":"workcell.place-grant/v1","place_ref":"workcell:place:tmux:default:attempt-room","provider":"tmux","session_name":"attempt-room","pane_id":"%17","pane_pid":1359,"process_start_marker":"Tue Sep 15 17:43:28 2026","created_utc":"2026-09-15T16:43:28Z"}"#;
+
+    #[test]
+    fn live_workcell_grant_document_parses_under_the_pinned_contract() {
+        let parsed: WorkcellPlaceGrant = serde_json::from_str(LIVE_WORKCELL_GRANT_DOCUMENT)
+            .expect("the real workcell place-grant document must parse under the pinned contract");
+        assert_eq!(parsed.schema, PLACE_GRANT_CONTRACT_REVISION);
+        assert_eq!(parsed.provider, PlaceProvider::Tmux);
+        assert!(parsed.workspace_id.is_none());
+        assert_eq!(validate_grant(&parsed), Ok(()));
     }
 
     #[test]
