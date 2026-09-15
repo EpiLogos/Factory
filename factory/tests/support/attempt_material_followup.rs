@@ -110,6 +110,7 @@ fn another_workcell_with_the_same_world_label_is_not_a_shared_material_user() {
         disposition,
         retry_grant: None,
         tracking: vec![],
+        place_grant: None,
     }));
     world.quiesce();
     assert_eq!(
