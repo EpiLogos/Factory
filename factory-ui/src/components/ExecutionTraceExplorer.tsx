@@ -32,10 +32,12 @@ export function ExecutionTraceExplorer({ traces, initialExecutionRef }: {
     setSelectedSpanRef(trace ? chronologicalSpans(trace)[0]?.spanRef : undefined)
   }
 
-  if (!selected) return <section className="fb-empty-state">no executions available</section>
+  if (!selected) return <section className="fb-build-surface"><p className="fb-empty-state">no executions available</p></section>
   const selectedSpan = selected.spans.find((span) => span.spanRef === selectedSpanRef)
 
-  return <section className="fb-explorer">
+  // The explorer is an exported standalone composition, so its root carries
+  // the scope class the package styles are written under.
+  return <section className="fb-build-surface">
     <header className="fb-section-head">
       <div><span className="fb-eyebrow">execution review</span><h2>Sessions</h2></div>
       <span>{ordered.length} execution{ordered.length === 1 ? '' : 's'}</span>
