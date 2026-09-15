@@ -85,7 +85,7 @@ Likewise:
 
 ## Deterministic comparison evidence
 
-`factory-ui/fixtures/source-parity-expected.json` fixes the upstream revision and key structured expectations. `src/fixtures/sssf-parity.ts` provides a deterministic execution specimen including a failed tool call and queued post-failure phase. The tests prove:
+`factory-ui/fixtures/source-parity-expected.json` fixes the upstream revision and key structured expectations; `src/read-model.test.ts` asserts every field of it against what the read model derives from the specimen, so the file cannot drift from the code. `src/fixtures/sssf-parity.ts` provides that deterministic execution specimen, including a failed tool call and a queued post-failure phase. The tests prove:
 
 - lane and phase ordering;
 - source-derived waterfall geometry, minimum block width, non-overlap and bounds;
