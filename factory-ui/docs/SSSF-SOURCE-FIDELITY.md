@@ -49,7 +49,7 @@ There is **no process event at this pinned revision**. Factory F0 therefore rend
 | SSSF native IDs | retained as provenance, intentionally **not** promoted to Factory identity | `nativeRef` / `nativeSpanRef` | binding fixture + conformance tests |
 | SSSF sessions/phases as the top-level product ontology | intentionally replaced at F1 | Project / Run / RunMap / frontier / Candidate semantic envelope | `BuildSurface.tsx`, `BuildSurface.test.tsx` |
 | SSSF Vue component technology | intentionally replaced, behaviour retained | React 18 package matching current O:I Surface line | package build/typecheck |
-| SSSF dark visual tokens | intentionally restyled *after* behavioural port | O:I semantic token names with local fallbacks | `styles.css`; host owns final token values |
+| SSSF dark visual tokens | intentionally restyled *after* behavioural port | O:I semantic token names with local fallbacks; package-private status hues follow the host colour scheme (`light-dark()`) so the surface inhabits O:I light and dark | `styles.css`; host owns final token values |
 | process/service timeline material | **not present upstream; not fabricated** | absent on SSSF path; optional on richer native trajectory | `trace-conformance.test.ts` proves SSSF absence and DSH presence |
 
 ## Factory F1 envelope

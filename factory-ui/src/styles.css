@@ -1,27 +1,36 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: var(--oi-foreground, #f7f7f4);
-  background: var(--oi-surface, #050505);
+  font-family: var(--oi-font-sans, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  color: var(--oi-foreground, light-dark(#161614, #f7f7f4));
+  background: var(--oi-surface, light-dark(#fbfbf9, #050505));
   font-synthesis: none;
 }
 
 * { box-sizing: border-box; }
 button, input { font: inherit; }
 button { color: inherit; }
-code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+code, pre { font-family: var(--oi-font-mono, "SFMono-Regular", Consolas, "Liberation Mono", monospace); }
 
 .fb-build-surface {
-  --fb-surface: var(--oi-surface, #050505);
-  --fb-panel: color-mix(in srgb, var(--oi-surface, #050505) 92%, var(--oi-foreground, #f7f7f4));
-  --fb-panel-strong: color-mix(in srgb, var(--oi-surface, #050505) 86%, var(--oi-foreground, #f7f7f4));
-  --fb-text: var(--oi-foreground, #f7f7f4);
-  --fb-muted: var(--oi-muted, rgba(247,247,244,.62));
-  --fb-rule: var(--oi-rule, rgba(247,247,244,.22));
-  --fb-focus: var(--oi-focus, #f7f7f4);
-  --fb-ok: #69c489;
-  --fb-error: #ef8179;
-  --fb-running: #79b8f3;
-  --fb-warn: #d7b66a;
+  /* The host owns the theme: every role reads an O:I token first and
+   * inherits the host's colour scheme. Standalone fallbacks follow that
+   * scheme too, so a surface rendered without host tokens agrees with
+   * itself on either ground. */
+  --fb-surface: var(--oi-surface, light-dark(#fbfbf9, #050505));
+  --fb-text: var(--oi-foreground, light-dark(#161614, #f7f7f4));
+  --fb-panel: color-mix(in srgb, var(--fb-surface) 92%, var(--fb-text));
+  --fb-panel-strong: color-mix(in srgb, var(--fb-surface) 86%, var(--fb-text));
+  --fb-muted: var(--oi-muted, light-dark(#6a6a66, rgba(247,247,244,.62)));
+  --fb-rule: var(--oi-rule, light-dark(#dededa, rgba(247,247,244,.22)));
+  --fb-focus: var(--oi-focus, light-dark(#161614, #f7f7f4));
+  /* Status hues are package-private roles: O:I defines no status roles and
+   * gold is not a status colour. Each pair follows the host's colour
+   * scheme; the light values hold >= 4.5:1 against the light surface
+   * (#fbfbf9), panel and panel-strong grounds, the dark values are the
+   * hues already proven on the dark ground. */
+  --fb-ok: light-dark(#256b42, #69c489);
+  --fb-error: light-dark(#a3352b, #ef8179);
+  --fb-running: light-dark(#28619b, #79b8f3);
+  --fb-warn: light-dark(#745814, #d7b66a);
   min-height: 100%;
   background: var(--fb-surface);
   color: var(--fb-text);
@@ -90,7 +99,7 @@ code, pre { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospac
 .fb-tool-tick { display: inline-block; width: 2px; height: 7px; margin: 5px 2px 0 0; background: var(--fb-running); }
 .fb-tool-tick.is-error { background: var(--fb-error); }
 
-.fb-phase-detail { border-top: 1px solid var(--fb-rule); background: color-mix(in srgb, var(--fb-panel) 96%, black); }
+.fb-phase-detail { border-top: 1px solid var(--fb-rule); background: color-mix(in srgb, var(--fb-panel), var(--fb-surface)); }
 .fb-phase-detail > header { gap: 16px; padding: 15px 16px; border-bottom: 1px solid var(--fb-rule); }
 .fb-phase-detail > header > div:first-child { display: flex; align-items: center; gap: 9px; }
 .fb-phase-detail h3 { margin: 0; font-size: 1rem; }
