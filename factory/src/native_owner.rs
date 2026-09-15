@@ -1558,10 +1558,10 @@ mod actuation_gateway_adapter_regressions {
     }
 
     /// Live round-trip against the real Actuation Agency Gateway service on
-    /// the omarchy dev machine. The gateway's policy is exact-grant, so this
-    /// rides the granted agent locus (agent:omarchy-dev-worker on
-    /// stream:omarchy-dev-worker) and namespaces its own return_ref; the
-    /// resident carrier reacts only to its own proof delegations. Run with:
+    /// the omarchy dev machine. The gateway policy carries a dedicated test
+    /// grant (agent:factory-gateway-test on stream:factory-gateway-test), so
+    /// this runs in its own isolated stream and never touches the resident
+    /// carrier's locus. Run with:
     /// cargo test --workspace --all-targets --locked live_actuation_gateway -- --ignored --nocapture
     #[test]
     #[ignore = "requires the live smoke actuation-gateway and its smoke.env token"]
@@ -1585,11 +1585,11 @@ mod actuation_gateway_adapter_regressions {
                 "{home}/.local/state/workcell/smoke/actuation-gateway/gateway.sock"
             )
             .into(),
-            subject: "agent:omarchy-dev-worker".into(),
-            stream_ref: "stream:omarchy-dev-worker".into(),
-            actuation_ref: "actuation:omarchy-dev".into(),
-            agency_ref: "agency:omarchy-dev-worker".into(),
-            agent_session_ref: "session:omarchy-dev-worker".into(),
+            subject: "agent:factory-gateway-test".into(),
+            stream_ref: "stream:factory-gateway-test".into(),
+            actuation_ref: "actuation:factory-gateway-test".into(),
+            agency_ref: "agency:factory-gateway-test".into(),
+            agent_session_ref: "session:factory-gateway-test".into(),
             return_ref: return_ref.clone(),
             contract_revision: ACTUATION_GATEWAY_CONTRACT.into(),
             timeout_ms: 20_000,
@@ -1620,7 +1620,7 @@ mod actuation_gateway_adapter_regressions {
         assert_eq!(receipt.payload["attach"]["role"], "agent");
         assert_eq!(
             receipt.payload["attach"]["locus_granted"],
-            "locus:omarchy-dev-worker"
+            "locus:factory-gateway-test"
         );
         let tool_output = receipt.payload["tool_result_receipt"]["event"]["content"]
             .as_str()
@@ -1655,7 +1655,7 @@ mod actuation_gateway_adapter_regressions {
             .call(
                 &json!({
                     "op": "hello", "protocol": GATEWAY_CONTRACT,
-                    "token": token, "subject": "agent:omarchy-dev-worker",
+                    "token": token, "subject": "agent:factory-gateway-test",
                 }),
                 deadline,
             )
@@ -1665,10 +1665,10 @@ mod actuation_gateway_adapter_regressions {
             .call(
                 &json!({
                     "op": "attach",
-                    "stream_ref": "stream:omarchy-dev-worker",
-                    "actuation_ref": "actuation:omarchy-dev",
-                    "agency_ref": "agency:omarchy-dev-worker",
-                    "agent_session_ref": "session:omarchy-dev-worker",
+                    "stream_ref": "stream:factory-gateway-test",
+                    "actuation_ref": "actuation:factory-gateway-test",
+                    "agency_ref": "agency:factory-gateway-test",
+                    "agent_session_ref": "session:factory-gateway-test",
                 }),
                 deadline,
             )
@@ -1701,9 +1701,9 @@ mod actuation_gateway_adapter_regressions {
             .find(|event| event_kind(event) == Some("return"))
             .expect("durable return event");
         let actor = &return_event["actor"];
-        assert_eq!(actor["agency_ref"], "agency:omarchy-dev-worker");
-        assert_eq!(actor["agent_ref"], "agent:omarchy-dev-worker");
-        assert_eq!(actor["locus_ref"], "locus:omarchy-dev-worker");
+        assert_eq!(actor["agency_ref"], "agency:factory-gateway-test");
+        assert_eq!(actor["agent_ref"], "agent:factory-gateway-test");
+        assert_eq!(actor["locus_ref"], "locus:factory-gateway-test");
         assert!(event_ref(return_event).is_some());
         println!(
             "live durable return event {} at sequence {}",
