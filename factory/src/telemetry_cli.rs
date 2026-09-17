@@ -200,9 +200,42 @@ fn inspect(args: &[String], json: bool) -> Result<String, CliError> {
         .map_err(|error| CliError::new(format!("invalid telemetry-ref: {error}")))?;
     let provider = FactoryDevelopmentalFileProvider::open(&state_path)
         .map_err(|error| CliError::new(error.to_string()))?;
-    let reading = provider
-        .execution_telemetry_reading(&telemetry_ref)
-        .map_err(|error| CliError::new(error.to_string()))?;
+    let reading = match provider.execution_telemetry_reading(&telemetry_ref) {
+        Ok(reading) => reading,
+        Err(error) => {
+            // A recorded correlation whose owner records are not yet
+            // materialised (no admitted Agency / execution in this state) is
+            // genuine missing correlation, not a broken command: say exactly
+            // what is missing and return the recorded correlation.
+            let degraded = provider
+                .state()
+                .execution_correlations
+                .iter()
+                .find(|correlation| correlation.telemetry_ref == telemetry_ref)
+                .map(|correlation| serde_json::to_value(correlation).unwrap_or(Value::Null));
+            let Some(correlation) = degraded else {
+                return Err(CliError::new(error.to_string()));
+            };
+            let document = json!({
+                "contract": FACTORY_TELEMETRY_INSPECT_CONTRACT,
+                "state": state_path.to_string_lossy(),
+                "status": "correlation-recorded-owners-pending",
+                "correlation": correlation,
+                "absences": [error.to_string()],
+            });
+            return render(&document, json, || {
+                format!(
+                    "{}\ncorrelation recorded; owner records pending:\n  {}\nTelemetry: {}\nChild NOW: {}\nDay refs: {}\nGit basis recorded: {}",
+                    FACTORY_TELEMETRY_INSPECT_CONTRACT,
+                    error,
+                    telemetry_ref,
+                    correlation["temporal"]["childNowRef"]["reference"].as_str().unwrap_or("(none)"),
+                    correlation["temporal"]["dayRefs"].as_array().map(|v| v.len()).unwrap_or(0),
+                    !correlation["gitBasis"].is_null(),
+                )
+            });
+        }
+    };
     let mut reading_value =
         serde_json::to_value(&reading).map_err(|e| CliError::new(e.to_string()))?;
 

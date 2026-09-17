@@ -151,6 +151,13 @@ pub enum FactoryDevelopmentalMutation {
         journey_ref: JourneyRef,
         recognition: JourneyRecognitionLink,
     },
+    /// Admit one execution correlation into an existing state. This is the
+    /// producer seam for temporal provenance: without it, correlations could
+    /// only exist when baked in at state creation, so no live state could
+    /// gain a NOW/day/Git basis after commissioning.
+    RecordExecutionCorrelation {
+        correlation: Box<crate::developmental_read::FactoryExecutionCorrelation>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -622,6 +629,29 @@ impl FactoryDevelopmentalState {
                     recognition.basis_refs.clone(),
                 )
                 .map_err(debug)?,
+            FactoryDevelopmentalMutation::RecordExecutionCorrelation { correlation } => {
+                let correlation = correlation.as_ref();
+                // The correlation binds to this state's own run; a foreign run
+                // is refused the same way a foreign workflow source is.
+                if candidate.build.run(&correlation.run_ref).is_none() {
+                    return Err(CommissionError::ForeignReference(
+                        correlation.run_ref.to_string(),
+                    ));
+                }
+                if candidate.execution_correlations.iter().any(|existing| {
+                    existing.correlation_ref == correlation.correlation_ref
+                        || existing.telemetry_ref == correlation.telemetry_ref
+                }) {
+                    return Err(CommissionError::Conflict(
+                        "execution correlation identity already exists".into(),
+                    ));
+                }
+                correlation.validate().map_err(debug)?;
+                candidate.execution_correlations.push(correlation.clone());
+                candidate
+                    .execution_correlations
+                    .sort_by_key(|item| item.correlation_ref.to_string());
+            }
         }
         let record = FactoryDevelopmentalMutationRecord {
             contract: FACTORY_DEVELOPMENTAL_MUTATION_RECORD.into(),
@@ -687,6 +717,11 @@ impl FactoryDevelopmentalMutationRequest {
                 if !recognition.basis_refs.contains(&self.source.reference) =>
             {
                 return Err(CommissionError::Invalid("recognition.source".into()))
+            }
+            FactoryDevelopmentalMutation::RecordExecutionCorrelation { correlation, .. }
+                if self.source.reference != correlation.correlation_ref.to_string() =>
+            {
+                return Err(CommissionError::Invalid("source.reference".into()))
             }
             _ => {}
         }
@@ -763,6 +798,16 @@ impl FactoryDevelopmentalMutationRecord {
                 if !state.journeys.iter().any(|item| {
                     &item.journey_ref == journey_ref && item.recognitions.contains(recognition)
                 }) {
+                    return Err(CommissionError::InvalidStored);
+                }
+            }
+            FactoryDevelopmentalMutation::RecordExecutionCorrelation { correlation } => {
+                let correlation = correlation.as_ref();
+                if !state
+                    .execution_correlations
+                    .iter()
+                    .any(|item| item.correlation_ref == correlation.correlation_ref)
+                {
                     return Err(CommissionError::InvalidStored);
                 }
             }

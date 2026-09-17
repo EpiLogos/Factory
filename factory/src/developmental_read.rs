@@ -1633,7 +1633,7 @@ impl FactoryGitBasis {
 }
 
 impl FactoryExecutionCorrelation {
-    fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
+    pub(crate) fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
         if self.correlation_ref.kind() != "execution-correlation" {
             return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
                 correlation_ref: self.correlation_ref.to_string(),
