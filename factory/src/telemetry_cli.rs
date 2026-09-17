@@ -37,7 +37,9 @@ pub const FACTORY_TELEMETRY_DOCTOR_CONTRACT: &str = "factory.telemetry-doctor/v1
 const SEARCH_DEFAULT_LIMIT: usize = 10;
 const SEARCH_MAX_LIMIT: usize = 100;
 const DOCTOR_NOW_REF_PROBES: usize = 5;
-const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(15);
+/// The AIKit knowledge pipeline rebuilds its runtime per operation when an
+/// owner horizon is present; on a real ground that costs seconds, not millis.
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn execute(args: &[String], json: bool) -> Result<String, CliError> {
     let operation = args.first().ok_or_else(|| {
@@ -360,15 +362,23 @@ fn search(args: &[String], json: bool) -> Result<String, CliError> {
     let aikit = aikit_bin
         .or_else(|| std::env::var("FACTORY_AIKIT_BIN").ok())
         .unwrap_or_else(|| "aikit".into());
-    let mut argv = vec![
-        aikit.clone(),
+    let mut argv = vec![aikit.clone()];
+    // Anchor the delegated search at the ground root when it can be found:
+    // NOW-field search's natural scope is the whole field, and a project
+    // working directory would additionally trigger the per-repo code index,
+    // which is not what a provenance question needs.
+    if let Some(central_root) = central_root_for(&state_path) {
+        argv.push("--cwd".into());
+        argv.push(central_root.to_string_lossy().into_owned());
+    }
+    argv.extend([
         "--json".into(),
         "knowledge".into(),
         "search".into(),
         query.clone(),
         "--limit".into(),
         limit.to_string(),
-    ];
+    ]);
     if regex {
         // AIKit's knowledge contract searches literal by default; the explicit
         // regex path is a deliberate caller decision mirrored flag-for-flag.
@@ -574,42 +584,54 @@ fn run_command(argv: &[String]) -> Result<String, String> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|error| format!("could not run {program}: {error}"))?;
+    // Drain the pipes on threads while waiting: a child that emits more than
+    // the pipe buffer must never block on a parent that waits for exit first.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buffer = String::new();
+        if let Some(pipe) = stdout_pipe.as_mut() {
+            let _ = pipe.read_to_string(&mut buffer);
+        }
+        buffer
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buffer = String::new();
+        if let Some(pipe) = stderr_pipe.as_mut() {
+            let _ = pipe.read_to_string(&mut buffer);
+        }
+        buffer
+    });
     let start = std::time::Instant::now();
-    let timeout = SUBPROCESS_TIMEOUT;
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut stdout = String::new();
-                if let Some(mut pipe) = child.stdout.take() {
-                    let _ = pipe.read_to_string(&mut stdout);
-                }
-                if status.success() {
-                    return Ok(stdout);
-                }
-                let mut stderr = String::new();
-                if let Some(mut pipe) = child.stderr.take() {
-                    let _ = pipe.read_to_string(&mut stderr);
-                }
-                return Err(format!(
-                    "exited with {status}{}",
-                    if stderr.trim().is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", stderr.trim())
-                    }
-                ));
-            }
+            Ok(Some(status)) => break status,
             Ok(None) => {
-                if start.elapsed() > timeout {
+                if start.elapsed() > SUBPROCESS_TIMEOUT {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!("timed out after {timeout:?}"));
+                    let _ = stdout_reader.join();
+                    let _ = stderr_reader.join();
+                    return Err(format!("timed out after {SUBPROCESS_TIMEOUT:?}"));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(error) => return Err(format!("wait failed: {error}")),
         }
+    };
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    if status.success() {
+        return Ok(stdout);
     }
+    Err(format!(
+        "exited with {status}{}",
+        if stderr.trim().is_empty() {
+            String::new()
+        } else {
+            format!(": {}", stderr.trim())
+        }
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -960,7 +982,14 @@ fn ctrl_argv(root: &Path, action: &str, input: &str) -> Vec<String> {
 
 /// Walk upward from the state file for the personal ground marker.
 fn central_root_for(from: &Path) -> Option<PathBuf> {
-    let mut cursor = Some(from.to_path_buf());
+    // Relative state paths must resolve against the process working
+    // directory before an ancestor walk can find the ground.
+    let absolute = if from.is_absolute() {
+        from.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(from)
+    };
+    let mut cursor = Some(absolute);
     while let Some(current) = cursor {
         if current.join("Control").is_dir() && current.join("Work").is_dir() {
             return Some(current);
