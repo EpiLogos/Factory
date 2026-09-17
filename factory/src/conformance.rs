@@ -166,6 +166,11 @@ pub fn create_developmental_conformance_state(
             change_horizon: None,
             source_changes: vec![],
             day_refs: vec![],
+            workcell_ref: None,
+            root_now_ref: None,
+            child_now_ref: None,
+            parent_now_ref: None,
+            source_day_ref: None,
         },
         model_usage: absent(
             FactoryTelemetryOwner::Actuation,
@@ -175,6 +180,7 @@ pub fn create_developmental_conformance_state(
             FactoryTelemetryOwner::Workcell,
             "no Workcell resource-usage observation is supplied by this contract fixture",
         ),
+        git_basis: None,
     };
     let mut state = FactoryDevelopmentalState::new(build, vec![journey])?
         .with_workflow_sources(vec![source])?

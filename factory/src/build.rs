@@ -174,6 +174,11 @@ impl FactoryBuildState {
         &self.project
     }
 
+    /// Number of registered runs; read-only telemetry access.
+    pub fn run_count(&self) -> usize {
+        self.runs.len()
+    }
+
     pub fn run(&self, run_ref: &RunRef) -> Option<&Run> {
         self.runs.get(run_ref)
     }
