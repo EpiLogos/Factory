@@ -1,0 +1,61 @@
+{
+  "contract": "factory.developmental-mutation-request/v1",
+  "mutationRef": "mutation:attach-workflow-vertical-proof-1",
+  "occurrenceRef": "occurrence:attach-workflow-vertical-proof-1",
+  "source": {
+    "owner": "factory",
+    "reference": "workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H",
+    "revision": "r1",
+    "standing": "owner-native-observation"
+  },
+  "observedAt": "2026-09-17T20:09:25Z",
+  "mutation": {
+    "kind": "attach-workflow-source",
+    "runRef": "run:01M2RFJKX048CNT56HB1V10WQ7",
+    "workflowSource": {
+      "schemaVersion": "factory.agent-workflow-source/v1",
+      "coordinationContract": "factory.bounded-coordination/v1",
+      "source": {
+        "ref": "workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H",
+        "revision": "r1",
+        "digest": "78601ca6027b845a0f53c48fb771a08de20d4a81b916a0783d885021b4660312"
+      },
+      "workflowKey": "day-now-telemetry-vertical-proof",
+      "units": [
+        {
+          "key": "prove-joined-traversal",
+          "developmentalConcern": "The Day/NOW foundation must answer one traversal: real task provenance, CLI inspection, NOW-field search, exact Git basis, one source-backed learning",
+          "requiredDifference": "A recorded execution correlation with real NOW/day/Git basis is inspectable, searchable through AIKit, and doctor-verified end to end",
+          "returnContract": "factory telemetry inspect + search + doctor readbacks plus one development observation with evidence refs",
+          "subjectRef": "journey:01M2RFJKX0G8SF6YY3AX6N56JW",
+          "basisRevision": "r1",
+          "agentRequirements": {
+            "agentRefs": [
+              "agent:01M2RFRS1YQPFN54TWBE4NB8DQ"
+            ],
+            "agentSetRefs": [],
+            "agencyRefs": []
+          },
+          "praxisRefs": [
+            "praxis:01M2RFSJAS580Z6R38E4JASB2S"
+          ],
+          "capabilityRefs": [
+            "capability:01M2RFSJASPZX31XZTCVJR6RVB"
+          ],
+          "permittedEffects": [
+            "factory-state-mutation",
+            "development-ledger-observation"
+          ],
+          "verificationObligations": [
+            "factory telemetry doctor reports healthy state, ctrl, aikit, rg, central-day and now-ref checks"
+          ],
+          "returnAddress": "return:01M2RPHQ7Z4K9V2N6T8C3W5X1J",
+          "stopConditions": "Any check failing without a truthful remedy stops the proof; no fabricated successful audit",
+          "escalationConditions": "Concurrency conflict with another writer on the same machine state"
+        }
+      ],
+      "barriers": [],
+      "nesting": []
+    }
+  }
+}

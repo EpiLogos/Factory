@@ -1124,6 +1124,81 @@ mod tests {
     }
 
     #[test]
+    fn record_execution_correlation_admits_replays_and_conflicts() {
+        let (temp, manifest) = conformance_state();
+        // The conformance state carries one correlation with an admitted
+        // agency/execution; admit a second correlation of the same execution
+        // under a new telemetry ref through the real mutation path.
+        let state_text = std::fs::read_to_string(&manifest.provider_state).unwrap();
+        let state_value: Value = serde_json::from_str(&state_text).unwrap();
+        let original = &state_value["state"]["executionCorrelations"][0];
+        let mut correlation = original.clone();
+        correlation["correlationRef"] =
+            serde_json::json!("execution-correlation:01M2RFTZT503G75Y7JRBQHPMFZ");
+        correlation["telemetryRef"] = serde_json::json!("telemetry:01M2RFTZT5M0J1S2A28TQJCF88");
+        let now = "2026-09-17T21:00:00Z";
+        let request = |payload: &Value| {
+            serde_json::json!({
+                "contract": "factory.developmental-mutation-request/v1",
+                "mutationRef": "mutation:record-correlation-test-1",
+                "occurrenceRef": "occurrence:record-correlation-test-1",
+                "source": {
+                    "owner": "factory",
+                    "reference": payload["correlationRef"].as_str().unwrap(),
+                    "revision": "r1",
+                    "standing": "owner-native-observation"
+                },
+                "observedAt": now,
+                "mutation": {"kind": "record-execution-correlation", "correlation": payload}
+            })
+            .to_string()
+        };
+        let provider_path = temp.path().join("state.json");
+        std::fs::copy(&manifest.provider_state, &provider_path).unwrap();
+        let mut provider = FactoryDevelopmentalFileProvider::open(&provider_path).unwrap();
+        let receipt = provider
+            .apply_developmental_mutation(serde_json::from_str(&request(&correlation)).unwrap())
+            .expect("the correlation is admitted through the real mutation path");
+        assert_eq!(
+            receipt.status,
+            crate::commission::FactoryAdmissionStatus::Applied
+        );
+        // Idempotent replay of the identical request.
+        let replay = provider
+            .apply_developmental_mutation(serde_json::from_str(&request(&correlation)).unwrap())
+            .expect("replay reads back");
+        assert_eq!(
+            replay.status,
+            crate::commission::FactoryAdmissionStatus::AlreadyApplied
+        );
+        // Same mutation ref, different payload: a replay conflict, not silent
+        // divergence.
+        let mut divergent = correlation.clone();
+        divergent["telemetryRef"] = serde_json::json!("telemetry:01M2RFTZT5M0J1S2A28TQJCF89");
+        let error = provider
+            .apply_developmental_mutation(serde_json::from_str(&request(&divergent)).unwrap())
+            .expect_err("divergent replay conflicts");
+        assert!(error.to_string().contains("conflict") || error.to_string().contains("Conflict"));
+        // The admitted correlation is visible through the telemetry family.
+        let document = parse(
+            &execute(
+                &telemetry_args(&[
+                    "inspect",
+                    provider_path.to_str().unwrap(),
+                    "telemetry:01M2RFTZT5M0J1S2A28TQJCF88",
+                    "--json",
+                ]),
+                true,
+            )
+            .expect("the admitted correlation inspects"),
+        );
+        assert_eq!(
+            document["reading"]["telemetryRef"],
+            "telemetry:01M2RFTZT5M0J1S2A28TQJCF88"
+        );
+    }
+
+    #[test]
     fn usage_errors_exit_through_the_cli_error_path() {
         let error = execute(
             &telemetry_args(&["status", "/nonexistent/state.json"]),
