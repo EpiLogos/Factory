@@ -375,6 +375,15 @@ pub struct RunRegistry {
 }
 
 impl RunRegistry {
+    /// Number of registered runs; read-only telemetry access.
+    pub fn len(&self) -> usize {
+        self.runs.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.runs.is_empty()
+    }
+
     pub fn insert(&mut self, run: Run) -> Result<(), RunContractError> {
         run.validate()?;
         if self.runs.contains_key(run.reference()) {

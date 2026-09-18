@@ -46,6 +46,7 @@ pub mod project_development_store;
 pub mod routine_continuation;
 pub mod structural_ground;
 pub mod system;
+pub mod telemetry_cli;
 pub mod vak_orchestration;
 pub mod workflow;
 

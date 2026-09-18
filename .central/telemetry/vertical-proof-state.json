@@ -1,0 +1,306 @@
+{
+  "schema": "factory.developmental-local-provider/v1",
+  "state": {
+    "schema": "factory.developmental-state/v1",
+    "build": {
+      "project": {
+        "ref": "project:0000000000H7GAPW8R14DRCW2R",
+        "revision": 1
+      },
+      "runs": {
+        "runs": {
+          "run:01M2RFJKX048CNT56HB1V10WQ7": {
+            "ref": "run:01M2RFJKX048CNT56HB1V10WQ7",
+            "projectRef": "project:0000000000H7GAPW8R14DRCW2R",
+            "revision": 2,
+            "destination": "returns land in the root NOW field and the Factory development ledger on this machine",
+            "lifecycle": "seeded",
+            "writeAuthority": {
+              "owner": "factory",
+              "epoch": 1
+            },
+            "map": {
+              "runRef": "run:01M2RFJKX048CNT56HB1V10WQ7",
+              "topologyRevision": 2,
+              "nodes": {
+                "destination": {
+                  "id": "destination",
+                  "kind": "destination",
+                  "label": "returns land in the root NOW field and the Factory development ledger on this machine",
+                  "state": null,
+                  "semanticRef": null
+                },
+                "work-prove-joined-traversal": {
+                  "id": "work-prove-joined-traversal",
+                  "kind": "work",
+                  "label": "The Day/NOW foundation must answer one traversal: real task provenance, CLI inspection, NOW-field search, exact Git basis, one source-backed learning",
+                  "state": "ready",
+                  "semanticRef": "workflow-unit:0FK0JS8KYY5XHS836WC5NH4N8A"
+                }
+              },
+              "edges": [
+                {
+                  "from": "destination",
+                  "to": "work-prove-joined-traversal",
+                  "relation": "branches_to"
+                }
+              ]
+            },
+            "thoughtField": {
+              "thoughts": {}
+            },
+            "appliedCommandIds": [
+              "compile-workflow:workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H/r1/78601ca6027b845a0f53c48fb771a08de20d4a81b916a0783d885021b4660312"
+            ]
+          }
+        }
+      },
+      "revision": 2,
+      "claims": {},
+      "evidence": {},
+      "candidates": {},
+      "humanRequests": {},
+      "agencies": {},
+      "executions": {},
+      "trajectories": {}
+    },
+    "journeys": [
+      {
+        "schema": "factory.journey/v1",
+        "ref": "journey:01M2RFJKX0G8SF6YY3AX6N56JW",
+        "revision": 6,
+        "project_ref": "project:0000000000H7GAPW8R14DRCW2R",
+        "related_projects": [],
+        "commission": {
+          "purpose": "Join one real task across Factory telemetry, AIKit NOW-field search, exact Git basis and one source-backed learning (O-I #65 foundation condition)",
+          "commission_ref": "commission-request:day-now-telemetry-vertical-proof-2026-09-17",
+          "why_refs": [
+            "Control/agents/agent-sets/agent-set-0234fea7817cebfb.json",
+            "Control/agents/agent-sets/agent-set-7302e4196e3cc837.json",
+            "commission-request:day-now-telemetry-vertical-proof-2026-09-17",
+            "factory-bounded-acceptance-commission",
+            "root-act:day-now-telemetry-vertical-proof-2026-09-17",
+            "world-operators"
+          ]
+        },
+        "knowledge_refs": [],
+        "architecture_refs": [],
+        "design_refs": [],
+        "wayfinder_refs": [],
+        "participants": [
+          {
+            "participant_ref": "factory-bounded-acceptance-commission",
+            "role": "central-composition-evidence-non-authoritative"
+          },
+          {
+            "participant_ref": "world-operators",
+            "role": "central-guardian-membership-evidence-non-authoritative"
+          },
+          {
+            "participant_ref": "agent/factory-bounded-acceptance",
+            "role": "resolved-membership-evidence-non-authoritative"
+          },
+          {
+            "participant_ref": "agent/oh-i",
+            "role": "bounded-root-act-commissioned-not-executed"
+          }
+        ],
+        "flow_refs": [],
+        "runs": [
+          {
+            "run_ref": "run:01M2RFJKX048CNT56HB1V10WQ7",
+            "journey_revision": 5,
+            "basis_refs": [
+              "Control/agents/agent-sets/agent-set-0234fea7817cebfb.json",
+              "Control/agents/agent-sets/agent-set-7302e4196e3cc837.json",
+              "commission-request:day-now-telemetry-vertical-proof-2026-09-17",
+              "factory-bounded-acceptance-commission",
+              "root-act:day-now-telemetry-vertical-proof-2026-09-17",
+              "world-operators"
+            ],
+            "agent_session_refs": []
+          }
+        ],
+        "agent_session_refs": [],
+        "activity_refs": [],
+        "returns": [],
+        "recognitions": [],
+        "material_context_refs": [],
+        "status": "active",
+        "frontier": "The Day/NOW field and Factory telemetry answer one traversal end to end: task provenance, inspection, search, source basis, feedback",
+        "started_at": "2026-09-17T20:05:24Z",
+        "completed_at": null
+      }
+    ],
+    "workflowSources": [
+      {
+        "schemaVersion": "factory.agent-workflow-source/v1",
+        "coordinationContract": "factory.bounded-coordination/v1",
+        "source": {
+          "ref": "workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H",
+          "revision": "r1",
+          "digest": "78601ca6027b845a0f53c48fb771a08de20d4a81b916a0783d885021b4660312"
+        },
+        "workflowKey": "day-now-telemetry-vertical-proof",
+        "units": [
+          {
+            "key": "prove-joined-traversal",
+            "developmentalConcern": "The Day/NOW foundation must answer one traversal: real task provenance, CLI inspection, NOW-field search, exact Git basis, one source-backed learning",
+            "requiredDifference": "A recorded execution correlation with real NOW/day/Git basis is inspectable, searchable through AIKit, and doctor-verified end to end",
+            "returnContract": "factory telemetry inspect + search + doctor readbacks plus one development observation with evidence refs",
+            "subjectRef": "journey:01M2RFJKX0G8SF6YY3AX6N56JW",
+            "basisRevision": "r1",
+            "agentRequirements": {
+              "agentRefs": [
+                "agent:01M2RFRS1YQPFN54TWBE4NB8DQ"
+              ],
+              "agentSetRefs": [],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "praxis:01M2RFSJAS580Z6R38E4JASB2S"
+            ],
+            "capabilityRefs": [
+              "capability:01M2RFSJASPZX31XZTCVJR6RVB"
+            ],
+            "dependencies": [],
+            "independenceFrom": [],
+            "permittedEffects": [
+              "factory-state-mutation",
+              "development-ledger-observation"
+            ],
+            "verificationObligations": [
+              "factory telemetry doctor reports healthy state, ctrl, aikit, rg, central-day and now-ref checks"
+            ],
+            "returnAddress": "return:01M2RPHQ7Z4K9V2N6T8C3W5X1J",
+            "stopConditions": "Any check failing without a truthful remedy stops the proof; no fabricated successful audit",
+            "escalationConditions": "Concurrency conflict with another writer on the same machine state"
+          }
+        ],
+        "barriers": [],
+        "nesting": []
+      }
+    ],
+    "executionCorrelations": [],
+    "routineContinuations": [],
+    "commissions": [
+      {
+        "contract": "factory.commission/v1",
+        "revision": 1,
+        "request": {
+          "contract": "factory.commission-request/v1",
+          "requestRef": "commission-request:day-now-telemetry-vertical-proof-2026-09-17",
+          "projectKey": "day-now-telemetry-vertical-proof",
+          "purpose": "Join one real task across Factory telemetry, AIKit NOW-field search, exact Git basis and one source-backed learning (O-I #65 foundation condition)",
+          "frontier": "The Day/NOW field and Factory telemetry answer one traversal end to end: task provenance, inspection, search, source basis, feedback",
+          "runDestination": "returns land in the root NOW field and the Factory development ledger on this machine",
+          "writeOwner": "factory",
+          "commissionedAt": "2026-09-17T20:05:24Z",
+          "centralComposition": {
+            "owner": "central",
+            "developmentAgentSet": {
+              "ref": "factory-bounded-acceptance-commission",
+              "revision": "r1",
+              "sourcePath": "Control/agents/agent-sets/agent-set-7302e4196e3cc837.json",
+              "sha256": "f72add1c5ad52b4d7def693c8ed8c7cb39bf09ae921fbd3c743f260da0b768e6"
+            },
+            "guardianAgentSet": {
+              "ref": "world-operators",
+              "revision": "r3",
+              "sourcePath": "Control/agents/agent-sets/agent-set-0234fea7817cebfb.json",
+              "sha256": "d058e334dce11156b2e86cf4a0b5760e98a3460ccc28b31c0f11a3936f1ab81c"
+            },
+            "resolvedAgentRefs": [
+              "agent/factory-bounded-acceptance",
+              "agent/oh-i"
+            ],
+            "agentProfileReceipts": [],
+            "authorityStanding": "membership-non-authoritative"
+          },
+          "rootAct": {
+            "actRef": "root-act:day-now-telemetry-vertical-proof-2026-09-17",
+            "agentRef": "agent/oh-i",
+            "purpose": "Demonstrate the joined Day/NOW telemetry foundation before the broad fan-out",
+            "scopeRefs": [
+              "central:now:control:root:16c497e18484506ac622af36188979be906b4258d67a60d7dfe3091f2ecba79e",
+              "central:day:control:root:2026-09-17"
+            ],
+            "standing": "commissioned-not-executed"
+          }
+        },
+        "projectRef": "project:0000000000H7GAPW8R14DRCW2R",
+        "journeyRef": "journey:01M2RFJKX0G8SF6YY3AX6N56JW",
+        "runRef": "run:01M2RFJKX048CNT56HB1V10WQ7"
+      }
+    ],
+    "developmentalMutations": [
+      {
+        "contract": "factory.developmental-mutation/v1",
+        "request": {
+          "contract": "factory.developmental-mutation-request/v1",
+          "mutationRef": "mutation:attach-workflow-vertical-proof-1",
+          "occurrenceRef": "occurrence:attach-workflow-vertical-proof-1",
+          "source": {
+            "owner": "factory",
+            "reference": "workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H",
+            "revision": "r1",
+            "standing": "owner-native-observation"
+          },
+          "observedAt": "2026-09-17T20:09:25Z",
+          "mutation": {
+            "kind": "attach-workflow-source",
+            "runRef": "run:01M2RFJKX048CNT56HB1V10WQ7",
+            "workflowSource": {
+              "schemaVersion": "factory.agent-workflow-source/v1",
+              "coordinationContract": "factory.bounded-coordination/v1",
+              "source": {
+                "ref": "workflow-source:01M2RPGX4Q2N8V7K5T3C9W1Z2H",
+                "revision": "r1",
+                "digest": "78601ca6027b845a0f53c48fb771a08de20d4a81b916a0783d885021b4660312"
+              },
+              "workflowKey": "day-now-telemetry-vertical-proof",
+              "units": [
+                {
+                  "key": "prove-joined-traversal",
+                  "developmentalConcern": "The Day/NOW foundation must answer one traversal: real task provenance, CLI inspection, NOW-field search, exact Git basis, one source-backed learning",
+                  "requiredDifference": "A recorded execution correlation with real NOW/day/Git basis is inspectable, searchable through AIKit, and doctor-verified end to end",
+                  "returnContract": "factory telemetry inspect + search + doctor readbacks plus one development observation with evidence refs",
+                  "subjectRef": "journey:01M2RFJKX0G8SF6YY3AX6N56JW",
+                  "basisRevision": "r1",
+                  "agentRequirements": {
+                    "agentRefs": [
+                      "agent:01M2RFRS1YQPFN54TWBE4NB8DQ"
+                    ],
+                    "agentSetRefs": [],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "praxis:01M2RFSJAS580Z6R38E4JASB2S"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01M2RFSJASPZX31XZTCVJR6RVB"
+                  ],
+                  "dependencies": [],
+                  "independenceFrom": [],
+                  "permittedEffects": [
+                    "factory-state-mutation",
+                    "development-ledger-observation"
+                  ],
+                  "verificationObligations": [
+                    "factory telemetry doctor reports healthy state, ctrl, aikit, rg, central-day and now-ref checks"
+                  ],
+                  "returnAddress": "return:01M2RPHQ7Z4K9V2N6T8C3W5X1J",
+                  "stopConditions": "Any check failing without a truthful remedy stops the proof; no fabricated successful audit",
+                  "escalationConditions": "Concurrency conflict with another writer on the same machine state"
+                }
+              ],
+              "barriers": [],
+              "nesting": []
+            }
+          }
+        }
+      }
+    ],
+    "attemptStates": {}
+  }
+}

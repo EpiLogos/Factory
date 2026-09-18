@@ -1,0 +1,95 @@
+{
+  "contract": "factory.developmental-mutation-request/v1",
+  "mutationRef": "mutation:record-correlation-vertical-proof-1",
+  "occurrenceRef": "occurrence:record-correlation-vertical-proof-1",
+  "source": {
+    "owner": "factory",
+    "reference": "execution-correlation:01M2RFTZT503G75Y7JRBQHPMFY",
+    "revision": "r1",
+    "standing": "owner-native-observation"
+  },
+  "observedAt": "2026-09-17T21:10:20+01:00",
+  "mutation": {
+    "kind": "record-execution-correlation",
+    "correlation": {
+      "correlationRef": "execution-correlation:01M2RFTZT503G75Y7JRBQHPMFY",
+      "telemetryRef": "telemetry:01M2RFTZT5M0J1S2A28TQJCF87",
+      "runRef": "run:01M2RFJKX048CNT56HB1V10WQ7",
+      "workflowUnitRef": "workflow-unit:0FK0JS8KYY5XHS836WC5NH4N8A",
+      "executionRef": "execution:day-now-vertical-proof-session",
+      "agencyRef": "agency:pending-actuation-admission",
+      "carrier": {
+        "mechanism": "native-harness",
+        "carrierRef": "harness:zcode",
+        "determinationRef": "determination:pending-actuation-admission",
+        "source": {
+          "owner": "actuation",
+          "ref": "actuation:stream:zcode-zcode:sess_8a802b3e-6e7d-4574-b320-2ab5213a96d2",
+          "revision": "sha256:c0f60d7f1ac50e3f6406001e5f157a128f8829a8be609bbc8b54c24d122ca3c7",
+          "standing": "observed"
+        }
+      },
+      "temporal": {
+        "started": {
+          "value": "2026-09-17T21:10:20+01:00",
+          "source": {
+            "owner": "central",
+            "ref": "central:now:control:root:16c497e18484506ac622af36188979be906b4258d67a60d7dfe3091f2ecba79e",
+            "revision": "central.content-fnv1a64/v1:888:66bbb0b0c2ccdacf",
+            "standing": "observed"
+          }
+        },
+        "activityRefs": [],
+        "sourceChanges": [
+          {
+            "owner": "central",
+            "ref": "central:source:control:root:Work/ai-kit",
+            "revision": "7c82e72e3a99498ed1ffa881147011ec4521f3eb",
+            "standing": "observed"
+          }
+        ],
+        "dayRefs": [
+          {
+            "owner": "central",
+            "ref": "central:day:control:root:2026-09-17",
+            "revision": "central.content-fnv1a64/v1:12194:aeffb8c7f4400bec",
+            "standing": "observed"
+          }
+        ],
+        "workcellRef": null,
+        "rootNowRef": null,
+        "childNowRef": {
+          "owner": "central",
+          "ref": "central:now:control:root:16c497e18484506ac622af36188979be906b4258d67a60d7dfe3091f2ecba79e",
+          "revision": "central.content-fnv1a64/v1:888:66bbb0b0c2ccdacf",
+          "standing": "observed"
+        },
+        "parentNowRef": null,
+        "sourceDayRef": {
+          "owner": "central",
+          "ref": "central:day:control:root:2026-09-17",
+          "revision": "central.content-fnv1a64/v1:12194:aeffb8c7f4400bec",
+          "standing": "observed"
+        }
+      },
+      "modelUsage": {
+        "owner": "actuation",
+        "availability": "unavailable",
+        "observations": [],
+        "reason": "No Actuation-owned model-usage observation is admitted for this session yet; Actuation owns model-use evidence"
+      },
+      "materialUsage": {
+        "owner": "workcell",
+        "availability": "unavailable",
+        "observations": [],
+        "reason": "No Workcell-owned resource-usage observation is admitted for this session yet; Workcell owns host evidence"
+      },
+      "gitBasis": {
+        "repository": "/Users/admin/Central/Work/ai-kit (github.com/EpiLogos/ai-kit)",
+        "baseHead": "7c82e72e3a99498ed1ffa881147011ec4521f3eb",
+        "branch": "techne/now-field-rg-search",
+        "worktreeClean": false
+      }
+    }
+  }
+}
