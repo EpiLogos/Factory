@@ -380,6 +380,11 @@ impl RunRegistry {
         self.runs.len()
     }
 
+    /// Registered run refs; read-only telemetry access.
+    pub fn refs(&self) -> Vec<RunRef> {
+        self.runs.keys().cloned().collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.runs.is_empty()
     }
