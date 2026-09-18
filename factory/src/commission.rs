@@ -158,6 +158,18 @@ pub enum FactoryDevelopmentalMutation {
     RecordExecutionCorrelation {
         correlation: Box<crate::developmental_read::FactoryExecutionCorrelation>,
     },
+    /// Admit the situated Agency that actually carried an execution (#221's
+    /// real-Agents lane). Without this, agencies existed only in fixture
+    /// states and no live attempt could join one.
+    AdmitSituatedAgency {
+        agency: Box<crate::build::AgencyRecord>,
+    },
+    /// Admit the execution record a dispatch bound to. A reserved or bound
+    /// execution becomes visible to the developmental readings only when its
+    /// owner record exists here.
+    AdmitSituatedExecution {
+        execution: Box<crate::build::ExecutionRecord>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -652,6 +664,35 @@ impl FactoryDevelopmentalState {
                     .execution_correlations
                     .sort_by_key(|item| item.correlation_ref.to_string());
             }
+            FactoryDevelopmentalMutation::AdmitSituatedAgency { agency } => {
+                let agency = agency.as_ref();
+                if candidate.build.run(&agency.run_ref).is_none() {
+                    return Err(CommissionError::ForeignReference(
+                        agency.run_ref.to_string(),
+                    ));
+                }
+                if candidate.build.agency(&agency.agency_ref).is_some() {
+                    return Err(CommissionError::Conflict(
+                        "agency identity already exists".into(),
+                    ));
+                }
+                candidate
+                    .build
+                    .insert_agency(agency.clone())
+                    .map_err(debug)?;
+            }
+            FactoryDevelopmentalMutation::AdmitSituatedExecution { execution } => {
+                let execution = execution.as_ref();
+                if candidate.build.run(&execution.run_ref).is_none() {
+                    return Err(CommissionError::ForeignReference(
+                        execution.run_ref.to_string(),
+                    ));
+                }
+                candidate
+                    .build
+                    .insert_execution(execution.clone())
+                    .map_err(debug)?;
+            }
         }
         let record = FactoryDevelopmentalMutationRecord {
             contract: FACTORY_DEVELOPMENTAL_MUTATION_RECORD.into(),
@@ -720,6 +761,16 @@ impl FactoryDevelopmentalMutationRequest {
             }
             FactoryDevelopmentalMutation::RecordExecutionCorrelation { correlation, .. }
                 if self.source.reference != correlation.correlation_ref.to_string() =>
+            {
+                return Err(CommissionError::Invalid("source.reference".into()))
+            }
+            FactoryDevelopmentalMutation::AdmitSituatedAgency { agency, .. }
+                if self.source.reference != agency.agency_ref =>
+            {
+                return Err(CommissionError::Invalid("source.reference".into()))
+            }
+            FactoryDevelopmentalMutation::AdmitSituatedExecution { execution, .. }
+                if self.source.reference != execution.execution_ref =>
             {
                 return Err(CommissionError::Invalid("source.reference".into()))
             }
@@ -808,6 +859,18 @@ impl FactoryDevelopmentalMutationRecord {
                     .iter()
                     .any(|item| item.correlation_ref == correlation.correlation_ref)
                 {
+                    return Err(CommissionError::InvalidStored);
+                }
+            }
+            FactoryDevelopmentalMutation::AdmitSituatedAgency { agency } => {
+                let agency = agency.as_ref();
+                if state.build.agency(&agency.agency_ref) != Some(agency) {
+                    return Err(CommissionError::InvalidStored);
+                }
+            }
+            FactoryDevelopmentalMutation::AdmitSituatedExecution { execution } => {
+                let execution = execution.as_ref();
+                if state.build.execution(&execution.execution_ref) != Some(execution) {
                     return Err(CommissionError::InvalidStored);
                 }
             }

@@ -32,6 +32,7 @@ pub const FACTORY_TELEMETRY_INSPECT_CONTRACT: &str = "factory.telemetry-inspecti
 pub const FACTORY_TELEMETRY_SEARCH_CONTRACT: &str = "factory.telemetry-search/v1";
 pub const FACTORY_TELEMETRY_STATS_CONTRACT: &str = "factory.telemetry-stats/v1";
 pub const FACTORY_TELEMETRY_DOCTOR_CONTRACT: &str = "factory.telemetry-doctor/v1";
+pub const FACTORY_TELEMETRY_COMPARE_CONTRACT: &str = "factory.telemetry-compare/v1";
 
 /// Hard bounds: a monitoring surface must not become an unbounded scan.
 const SEARCH_DEFAULT_LIMIT: usize = 10;
@@ -53,10 +54,12 @@ pub fn execute(args: &[String], json: bool) -> Result<String, CliError> {
         "inspect" => inspect(rest, json),
         "search" => search(rest, json),
         "stats" => stats(rest, json),
+        "watch" => watch(rest, json),
+        "compare" => compare(rest, json),
         "export" => export(rest, json),
         "doctor" => doctor(rest, json),
         other => Err(CliError::new(format!(
-            "unknown telemetry operation `{other}`; expected status|inspect|search|stats|export|doctor"
+            "unknown telemetry operation `{other}`; expected status|inspect|search|stats|watch|compare|export|doctor"
         ))),
     }
 }
@@ -332,7 +335,7 @@ fn search(args: &[String], json: bool) -> Result<String, CliError> {
     let mut rest = args.to_vec();
     let mut regex = false;
     let mut aikit_bin: Option<String> = None;
-    let mut limit = SEARCH_DEFAULT_LIMIT;
+    let mut limit: Option<usize> = None;
     let mut positional = Vec::new();
     let mut iterator = rest.into_iter();
     while let Some(arg) = iterator.next() {
@@ -340,17 +343,29 @@ fn search(args: &[String], json: bool) -> Result<String, CliError> {
             "--regex" => regex = true,
             "--aikit" => aikit_bin = iterator.next(),
             "--limit" => {
-                limit = iterator
-                    .next()
-                    .and_then(|value| value.parse().ok())
-                    .ok_or_else(|| CliError::new("--limit requires a number"))?;
+                limit = Some(
+                    iterator
+                        .next()
+                        .and_then(|value| value.parse().ok())
+                        .ok_or_else(|| CliError::new("--limit requires a number"))?,
+                );
             }
             other => positional.push(other.to_string()),
         }
     }
     rest = positional;
-    let limit = limit.min(SEARCH_MAX_LIMIT);
     let state_path = require_state_path(&rest)?;
+    // Effective settings from the configuration plane's sidecar are the
+    // defaults; explicit flags always win.
+    let effective = crate::configuration::read_telemetry_effective_all(&state_path);
+    let configured_limit = effective
+        .get(crate::configuration::TELEMETRY_SEARCH_LIMIT_SETTING)
+        .copied()
+        .map(|n| n as usize);
+    let limit = limit
+        .or(configured_limit)
+        .map(|n| n.min(SEARCH_MAX_LIMIT))
+        .unwrap_or(SEARCH_DEFAULT_LIMIT);
     let query = rest
         .get(1)
         .cloned()
@@ -384,7 +399,11 @@ fn search(args: &[String], json: bool) -> Result<String, CliError> {
         // regex path is a deliberate caller decision mirrored flag-for-flag.
         argv.push("--regex".into());
     }
-    let output = run_command(&argv);
+    let timeout_secs = effective
+        .get(crate::configuration::TELEMETRY_SEARCH_TIMEOUT_SETTING)
+        .copied()
+        .unwrap_or(SUBPROCESS_TIMEOUT.as_secs_f64());
+    let output = run_command_with_timeout(&argv, Duration::from_secs_f64(timeout_secs));
     let (hits, absences, provider_status) = match output {
         Ok(stdout) => match parse_knowledge_search(&stdout) {
             Ok(parsed) => parsed,
@@ -573,6 +592,10 @@ fn refs_share_record(owner_reference: &str, hit_resource: &str) -> bool {
 }
 
 fn run_command(argv: &[String]) -> Result<String, String> {
+    run_command_with_timeout(argv, SUBPROCESS_TIMEOUT)
+}
+
+fn run_command_with_timeout(argv: &[String], timeout: Duration) -> Result<String, String> {
     use std::io::Read;
     let Some((program, args)) = argv.split_first() else {
         return Err("empty command".into());
@@ -607,12 +630,12 @@ fn run_command(argv: &[String]) -> Result<String, String> {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
-                if start.elapsed() > SUBPROCESS_TIMEOUT {
+                if start.elapsed() > timeout {
                     let _ = child.kill();
                     let _ = child.wait();
                     let _ = stdout_reader.join();
                     let _ = stderr_reader.join();
-                    return Err(format!("timed out after {SUBPROCESS_TIMEOUT:?}"));
+                    return Err(format!("timed out after {timeout:?}"));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -639,6 +662,10 @@ fn run_command(argv: &[String]) -> Result<String, String> {
 // ---------------------------------------------------------------------------
 
 fn stats(args: &[String], json: bool) -> Result<String, CliError> {
+    stats_inner(args, json)
+}
+
+fn stats_inner(args: &[String], json: bool) -> Result<String, CliError> {
     let state_path = require_state_path(args)?;
     let provider = FactoryDevelopmentalFileProvider::open(&state_path)
         .map_err(|error| CliError::new(error.to_string()))?;
@@ -650,10 +677,12 @@ fn stats(args: &[String], json: bool) -> Result<String, CliError> {
     let mut returned = 0usize;
     for run_attempts in state.attempt_states.values() {
         for record in run_attempts.attempts().values() {
-            let key = serde_json::to_string(&record.disposition)
-                .unwrap_or_else(|_| "unknown".into())
-                .trim_matches('"')
-                .to_string();
+            // A readable grouping key: the situated Agency on its harness,
+            // not the whole serialised disposition.
+            let key = format!(
+                "{} @ {}",
+                record.disposition.participant.agency_ref, record.disposition.body.harness_ref
+            );
             *dispositions.entry(key).or_default() += 1;
             observations += record.observations.len();
             verifications += record.verifications.len();
@@ -664,6 +693,29 @@ fn stats(args: &[String], json: bool) -> Result<String, CliError> {
     }
     let attempt_total: usize = dispositions.values().sum();
     let correlation_total = state.execution_correlations.len();
+
+    // Saved analysis templates (§6): deterministic aggregates over the real
+    // records, each able to name its included occasions. A template that
+    // cannot be answered from these records says so instead of inventing a
+    // denominator.
+    let mut template_name = String::new();
+    let mut drill_down = false;
+    let mut iterator = args.iter().cloned();
+    let mut positional: Vec<String> = Vec::new();
+    while let Some(arg) = iterator.next() {
+        match arg.as_str() {
+            "--template" => template_name = iterator.next().unwrap_or_default(),
+            "--drill-down" => drill_down = true,
+            other => positional.push(other.to_string()),
+        }
+    }
+    if positional.is_empty() && !template_name.is_empty() {
+        // `stats --template X` without a state path is a usage error handled
+        // by require_state_path; keep the positional list as the argument tail.
+    }
+    if !template_name.is_empty() {
+        return stats_template(state, &state_path, &template_name, drill_down, json);
+    }
     let document = json!({
         "contract": FACTORY_TELEMETRY_STATS_CONTRACT,
         "state": state_path.to_string_lossy(),
@@ -698,6 +750,167 @@ fn stats(args: &[String], json: bool) -> Result<String, CliError> {
             document["correlations"]["withGitBasis"],
         ));
         text
+    })
+}
+
+// ---------------------------------------------------------------------------
+// saved analysis templates — deterministic, drillable aggregates
+// ---------------------------------------------------------------------------
+
+fn stats_template(
+    state: &crate::developmental_read::FactoryDevelopmentalState,
+    state_path: &Path,
+    template: &str,
+    drill_down: bool,
+    json: bool,
+) -> Result<String, CliError> {
+    let mut included = 0usize;
+    let document = match template {
+        // §6: attempts by situated Agency and harness. Failure is read from
+        // the record itself: failure evidence or a missing return is not
+        // invented into a rate.
+        "attempts-by-agency" => {
+            let mut groups: BTreeMap<String, Value> = BTreeMap::new();
+            let mut total = 0usize;
+            for run_attempts in state.attempt_states.values() {
+                for (attempt_ref, record) in run_attempts.attempts() {
+                    total += 1;
+                    let key = format!(
+                        "{} @ {}",
+                        record.disposition.participant.agency_ref,
+                        record.disposition.body.harness_ref
+                    );
+                    let group = groups.entry(key.clone()).or_insert_with(|| {
+                        json!({
+                            "attempts": 0,
+                            "verified": 0,
+                            "returned": 0,
+                            "withFailureEvidence": 0,
+                            "occasions": [],
+                        })
+                    });
+                    group["attempts"] = json!(group["attempts"].as_u64().unwrap_or(0) + 1);
+                    if !record.verifications.is_empty() {
+                        group["verified"] = json!(group["verified"].as_u64().unwrap_or(0) + 1);
+                    }
+                    if record.readable_return.is_some() {
+                        group["returned"] = json!(group["returned"].as_u64().unwrap_or(0) + 1);
+                    }
+                    if !record.failure_evidence_refs.is_empty() {
+                        group["withFailureEvidence"] =
+                            json!(group["withFailureEvidence"].as_u64().unwrap_or(0) + 1);
+                    }
+                    if drill_down {
+                        group["occasions"]
+                            .as_array_mut()
+                            .expect("occasions array")
+                            .push(json!(attempt_ref));
+                    }
+                    included += 1;
+                }
+            }
+            json!({
+                "template": template,
+                "denominator": {"attempts": total, "window": "whole provider state"},
+                "groups": groups,
+            })
+        }
+        // §6: missing evidence — correlations whose temporal provenance or
+        // Git basis was never recorded.
+        "correlation-completeness" => {
+            let mut incomplete: Vec<Value> = Vec::new();
+            let total = state.execution_correlations.len();
+            for correlation in &state.execution_correlations {
+                let mut gaps: Vec<&str> = Vec::new();
+                if correlation.temporal.child_now_ref.is_none() {
+                    gaps.push("childNowRef");
+                }
+                if correlation.temporal.day_refs.is_empty() {
+                    gaps.push("dayRefs");
+                }
+                if correlation.git_basis.is_none() {
+                    gaps.push("gitBasis");
+                }
+                if !gaps.is_empty() {
+                    if drill_down {
+                        incomplete.push(json!({
+                            "correlationRef": correlation.correlation_ref.to_string(),
+                            "gaps": gaps,
+                        }));
+                    } else {
+                        incomplete.push(json!(correlation.correlation_ref.to_string()));
+                    }
+                    included += 1;
+                }
+            }
+            json!({
+                "template": template,
+                "denominator": {"correlations": total, "incomplete": incomplete.len()},
+                "incomplete": incomplete,
+            })
+        }
+        // §6: return-to-verification delay. Verification receipts carry the
+        // owner revision they verified against, not a clock, so a duration
+        // cannot be computed from these records today. The template counts
+        // and names that gap instead of inventing a number.
+        "return-to-verification" => {
+            let mut attempts = 0usize;
+            let mut with_verification = 0usize;
+            let mut named: Vec<Value> = Vec::new();
+            for (run_ref, run_attempts) in &state.attempt_states {
+                for (attempt_ref, record) in run_attempts.attempts() {
+                    attempts += 1;
+                    match record.verifications.last() {
+                        Some(verification) => {
+                            with_verification += 1;
+                            if drill_down {
+                                named.push(json!({
+                                    "attemptRef": attempt_ref,
+                                    "runRef": run_ref.to_string(),
+                                    "verificationRef": verification.verification_ref,
+                                    "verifiedOwnerRevision": verification.source_revision,
+                                }));
+                            }
+                        }
+                        None => {
+                            if drill_down {
+                                named.push(json!({
+                                    "attemptRef": attempt_ref,
+                                    "runRef": run_ref.to_string(),
+                                    "verificationRef": null,
+                                }));
+                            }
+                        }
+                    }
+                    included += 1;
+                }
+            }
+            json!({
+                "template": template,
+                "denominator": {
+                    "attempts": attempts,
+                    "withVerification": with_verification,
+                },
+                "verificationTargets": if drill_down { json!(named) } else { json!([]) },
+                "disclosure": "verification receipts record the owner revision they verified, not a time; a true return-to-verification duration needs time-stamped verification facts, which is a named producer gap — not a zero",
+            })
+        }
+        other => {
+            return Err(CliError::new(format!(
+                "unknown stats template `{other}`; available: attempts-by-agency, correlation-completeness, return-to-verification"
+            )))
+        }
+    };
+    let mut full = document;
+    full["contract"] = json!(FACTORY_TELEMETRY_STATS_CONTRACT);
+    full["state"] = json!(state_path.to_string_lossy());
+    full["drillDown"] = json!(drill_down);
+    full["includedOccasions"] = json!(included);
+    render(&full, json, || {
+        format!(
+            "{}\ntemplate {} — {} occasion(s) in scope; drill-down: {}",
+            FACTORY_TELEMETRY_STATS_CONTRACT, template, included, drill_down
+        )
     })
 }
 
@@ -999,6 +1212,245 @@ fn central_root_for(from: &Path) -> Option<PathBuf> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// watch — a resumable bounded stream over the state's own change history
+// ---------------------------------------------------------------------------
+
+/// The state is a single revisioned document with one writer (the locked
+/// owner mutations). A watcher therefore polls the revision and emits the
+/// correlations of every revision past its cursor as JSONL — bounded by
+/// `--max-events`, `--duration` or Ctrl-C — and always ends by naming the
+/// cursor a resume should carry.
+fn watch(args: &[String], _json: bool) -> Result<String, CliError> {
+    let mut interval_secs = 2.0f64;
+    let mut max_events = 100usize;
+    let mut duration_secs = 30.0f64;
+    let mut resume_revision: Option<u64> = None;
+    let mut positional: Vec<String> = Vec::new();
+    let mut iterator = args.iter().cloned();
+    while let Some(arg) = iterator.next() {
+        match arg.as_str() {
+            "--interval" => {
+                interval_secs = iterator
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| CliError::new("--interval requires seconds"))?;
+            }
+            "--max-events" => {
+                max_events = iterator
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| CliError::new("--max-events requires a number"))?;
+            }
+            "--duration" => {
+                duration_secs = iterator
+                    .next()
+                    .and_then(|v| v.parse().ok())
+                    .ok_or_else(|| CliError::new("--duration requires seconds"))?;
+            }
+            "--resume" => {
+                let raw = iterator
+                    .next()
+                    .ok_or_else(|| CliError::new("--resume requires a cursor document"))?;
+                let cursor: Value = serde_json::from_str(&raw).map_err(|error| {
+                    CliError::new(format!("--resume is not a cursor document: {error}"))
+                })?;
+                resume_revision = Some(cursor["stateRevision"].as_u64().ok_or_else(|| {
+                    CliError::new("resume cursor must carry the stateRevision key")
+                })?);
+            }
+            other => positional.push(other.to_string()),
+        }
+    }
+    let state_path = require_state_path(&positional)?;
+    let effective = crate::configuration::read_telemetry_effective_all(&state_path);
+    if interval_secs == 2.0 {
+        if let Some(configured) = effective
+            .get(crate::configuration::TELEMETRY_WATCH_INTERVAL_SETTING)
+            .copied()
+        {
+            interval_secs = configured;
+        }
+    }
+    let mut observed_revision = resume_revision.unwrap_or(0);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs_f64(duration_secs);
+    let mut emitted = 0usize;
+    let mut lines: Vec<String> = Vec::new();
+    while std::time::Instant::now() < deadline && emitted < max_events {
+        // A torn write or a concurrent replacement is one skipped poll, not
+        // a dead stream.
+        if let Ok(provider) = FactoryDevelopmentalFileProvider::open(&state_path) {
+            let state = provider.state();
+            let revision = state.build.revision().get();
+            if revision > observed_revision {
+                for correlation in &state.execution_correlations {
+                    if emitted >= max_events {
+                        break;
+                    }
+                    lines.push(
+                        json!({
+                            "type": "execution-correlation",
+                            "stateRevision": revision,
+                            "correlationRef": correlation.correlation_ref.to_string(),
+                            "telemetryRef": correlation.telemetry_ref.to_string(),
+                            "runRef": correlation.run_ref.to_string(),
+                            "childNowRef": correlation.temporal.child_now_ref.as_ref().map(|r| r.reference.clone()),
+                        })
+                        .to_string(),
+                    );
+                    emitted += 1;
+                }
+                observed_revision = revision;
+            }
+        }
+        if emitted >= max_events || std::time::Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs_f64(interval_secs));
+    }
+    lines.push(
+        json!({
+            "type": "cursor",
+            "cursor": {"stateRevision": observed_revision},
+            "emitted": emitted,
+            "resumeWith": "--resume",
+        })
+        .to_string(),
+    );
+    Ok(lines.join("\n"))
+}
+
+// ---------------------------------------------------------------------------
+// compare — original basis A against changed basis B, with movement named
+// ---------------------------------------------------------------------------
+
+fn compare(args: &[String], json: bool) -> Result<String, CliError> {
+    if args.len() < 2 {
+        return Err(CliError::new(
+            "compare needs two states: factory telemetry compare <original-state> <changed-state>",
+        ));
+    }
+    let path_a = require_state_path(&args[0..1])?;
+    let path_b = require_state_path(&args[1..2])?;
+    let a = FactoryDevelopmentalFileProvider::open(&path_a)
+        .map_err(|e| CliError::new(e.to_string()))?;
+    let b = FactoryDevelopmentalFileProvider::open(&path_b)
+        .map_err(|e| CliError::new(e.to_string()))?;
+
+    let runs_a: Vec<String> = a
+        .state()
+        .build
+        .run_refs()
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+    let runs_b: Vec<String> = b
+        .state()
+        .build
+        .run_refs()
+        .iter()
+        .map(|r| r.to_string())
+        .collect();
+    let shared_runs = runs_a
+        .iter()
+        .filter(|run| runs_b.contains(run))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let refs_a: Vec<String> = a
+        .state()
+        .execution_correlations
+        .iter()
+        .map(|c| c.correlation_ref.to_string())
+        .collect();
+    let refs_b: Vec<String> = b
+        .state()
+        .execution_correlations
+        .iter()
+        .map(|c| c.correlation_ref.to_string())
+        .collect();
+    let added: Vec<String> = refs_b
+        .iter()
+        .filter(|r| !refs_a.contains(r))
+        .cloned()
+        .collect();
+    let removed: Vec<String> = refs_a
+        .iter()
+        .filter(|r| !refs_b.contains(r))
+        .cloned()
+        .collect();
+
+    let moved = b.state().build.revision().get() != a.state().build.revision().get();
+    let mut basis_changes: Vec<Value> = Vec::new();
+    for correlation in &b.state().execution_correlations {
+        let Some(new_basis) = &correlation.git_basis else {
+            continue;
+        };
+        if let Some(old_correlation) = a
+            .state()
+            .execution_correlations
+            .iter()
+            .find(|c| c.correlation_ref == correlation.correlation_ref)
+        {
+            if let Some(old_basis) = &old_correlation.git_basis {
+                if new_basis.base_head != old_basis.base_head {
+                    basis_changes.push(json!({
+                        "correlationRef": correlation.correlation_ref.to_string(),
+                        "from": old_basis.base_head,
+                        "to": new_basis.base_head,
+                    }));
+                }
+            }
+        }
+    }
+
+    let completeness = |provider: &FactoryDevelopmentalFileProvider| -> Value {
+        let correlations = &provider.state().execution_correlations;
+        json!({
+            "total": correlations.len(),
+            "withChildNowRef": correlations.iter().filter(|c| c.temporal.child_now_ref.is_some()).count(),
+            "withDayRefs": correlations.iter().filter(|c| !c.temporal.day_refs.is_empty()).count(),
+            "withGitBasis": correlations.iter().filter(|c| c.git_basis.is_some()).count(),
+        })
+    };
+
+    let verdict = if shared_runs.is_empty() {
+        "unrelated-bases"
+    } else if !added.is_empty() || !removed.is_empty() || moved {
+        "moved"
+    } else {
+        "identical"
+    };
+
+    let document = json!({
+        "contract": FACTORY_TELEMETRY_COMPARE_CONTRACT,
+        "original": path_a.to_string_lossy(),
+        "changed": path_b.to_string_lossy(),
+        "verdict": verdict,
+        "movement": {
+            "stateRevision": {"a": a.state().build.revision().get(), "b": b.state().build.revision().get()},
+            "correlationsAdded": added,
+            "correlationsRemoved": removed,
+            "gitBasisChanges": basis_changes,
+        },
+        "temporalCompleteness": {"a": completeness(&a), "b": completeness(&b)},
+        "disclosure": "A is the original basis, B the changed basis; movement is detected by revision and correlation delta, never by timing",
+    });
+    render(&document, json, || {
+        format!(
+            "{}\nverdict: {} (A rev {}, B rev {})\ncorrelations +{} -{}, git-basis changes {}",
+            FACTORY_TELEMETRY_COMPARE_CONTRACT,
+            verdict,
+            document["movement"]["stateRevision"]["a"],
+            document["movement"]["stateRevision"]["b"],
+            added.len(),
+            removed.len(),
+            basis_changes.len()
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1009,7 +1461,7 @@ mod tests {
     /// tests so parallel cargo test threads cannot race a probe.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn conformance_state() -> (
+    pub(super) fn conformance_state() -> (
         tempfile::TempDir,
         crate::conformance::FactoryDevelopmentalConformanceManifest,
     ) {
@@ -1019,7 +1471,7 @@ mod tests {
         (temp, manifest)
     }
 
-    fn telemetry_args(words: &[&str]) -> Vec<String> {
+    pub(super) fn telemetry_args(words: &[&str]) -> Vec<String> {
         words.iter().map(|word| word.to_string()).collect()
     }
 
@@ -1238,5 +1690,146 @@ mod tests {
         let error = execute(&telemetry_args(&["wat", "x"]), true)
             .expect_err("unknown operation is an error");
         assert!(error.to_string().contains("unknown telemetry operation"));
+    }
+}
+
+#[cfg(test)]
+mod remainder_tests {
+    use super::tests::telemetry_args;
+    use super::*;
+    use crate::conformance::create_developmental_conformance_state;
+
+    fn parse(document: &str) -> Value {
+        serde_json::from_str(document).expect("structured telemetry document")
+    }
+
+    #[test]
+    fn compare_names_movement_between_two_bases_of_one_run() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let original = temp.path().join("a.json");
+        let manifest = create_developmental_conformance_state(&original).unwrap();
+        let changed = temp.path().join("b.json");
+        std::fs::copy(&original, &changed).unwrap();
+        // B gains a correlation through the real mutation path (revision moves).
+        let state_value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&original).unwrap()).unwrap();
+        let mut correlation = state_value["state"]["executionCorrelations"][0].clone();
+        correlation["correlationRef"] =
+            serde_json::json!("execution-correlation:01M2S15SA8Q9CQ2SFN130Z5HSZ");
+        correlation["telemetryRef"] = serde_json::json!("telemetry:01M2S15SA8YGJVA2RCSXWB2MNZ");
+        let mut provider = FactoryDevelopmentalFileProvider::open(&changed).unwrap();
+        let request = serde_json::json!({
+            "contract": "factory.developmental-mutation-request/v1",
+            "mutationRef": "mutation:compare-test-1",
+            "occurrenceRef": "occurrence:compare-test-1",
+            "source": {
+                "owner": "factory",
+                "reference": correlation["correlationRef"],
+                "revision": "r1",
+                "standing": "owner-native-observation"
+            },
+            "observedAt": "2026-09-18T00:00:00Z",
+            "mutation": {"kind": "record-execution-correlation", "correlation": correlation}
+        });
+        provider
+            .apply_developmental_mutation(serde_json::from_value(request).unwrap())
+            .expect("correlation admitted");
+        let document = parse(
+            &execute(
+                &telemetry_args(&[
+                    "compare",
+                    &manifest.provider_state,
+                    changed.to_str().unwrap(),
+                    "--json",
+                ]),
+                true,
+            )
+            .expect("compare runs"),
+        );
+        assert_eq!(document["verdict"], "moved");
+        assert_eq!(
+            document["movement"]["correlationsAdded"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn compare_names_identical_bases_and_names_its_verdict_vocabulary() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let first = temp.path().join("one.json");
+        let second = temp.path().join("two.json");
+        let a = create_developmental_conformance_state(&first).unwrap();
+        // The conformance generator is deterministic, so an independent copy
+        // of the same fixture state is the same basis: identical, not moved.
+        std::fs::copy(&first, &second).unwrap();
+        let document = parse(
+            &execute(
+                &telemetry_args(&[
+                    "compare",
+                    &a.provider_state,
+                    second.to_str().unwrap(),
+                    "--json",
+                ]),
+                true,
+            )
+            .expect("compare runs"),
+        );
+        assert_eq!(document["verdict"], "identical");
+    }
+
+    #[test]
+    fn templates_aggregate_with_explicit_denominators_and_drill_down() {
+        let (_temp, manifest) = super::tests::conformance_state();
+        let document = parse(
+            &execute(
+                &telemetry_args(&[
+                    "stats",
+                    &manifest.provider_state,
+                    "--template",
+                    "correlation-completeness",
+                    "--drill-down",
+                    "--json",
+                ]),
+                true,
+            )
+            .expect("template runs"),
+        );
+        // The conformance fixture carries no temporal provenance: the
+        // template must name that gap, not report completeness.
+        assert_eq!(document["template"], "correlation-completeness");
+        assert_eq!(document["denominator"]["correlations"], 1);
+        assert_eq!(document["denominator"]["incomplete"], 1);
+        assert_eq!(
+            document["incomplete"][0]["gaps"],
+            serde_json::json!(["childNowRef", "dayRefs", "gitBasis"])
+        );
+    }
+
+    #[test]
+    fn watch_emits_a_cursor_a_resume_can_carry() {
+        let (_temp, manifest) = super::tests::conformance_state();
+        let output = execute(
+            &telemetry_args(&[
+                "watch",
+                &manifest.provider_state,
+                "--duration",
+                "0.05",
+                "--interval",
+                "0.01",
+                "--json",
+            ]),
+            true,
+        )
+        .expect("watch runs");
+        let lines: Vec<Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("JSONL line"))
+            .collect();
+        let cursor = lines.last().expect("cursor line");
+        assert_eq!(cursor["type"], "cursor");
+        assert!(cursor["cursor"]["stateRevision"].is_u64());
     }
 }

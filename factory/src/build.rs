@@ -179,6 +179,11 @@ impl FactoryBuildState {
         self.runs.len()
     }
 
+    /// Registered run refs; read-only telemetry access.
+    pub fn run_refs(&self) -> Vec<RunRef> {
+        self.runs.refs()
+    }
+
     pub fn run(&self, run_ref: &RunRef) -> Option<&Run> {
         self.runs.get(run_ref)
     }
@@ -330,6 +335,15 @@ impl FactoryBuildState {
             "human request",
         )?;
         self.bump_revision()
+    }
+
+    /// Read-only lookups for the admission/validation paths.
+    pub fn agency(&self, agency_ref: &str) -> Option<&AgencyRecord> {
+        self.agencies.get(agency_ref)
+    }
+
+    pub fn execution(&self, execution_ref: &str) -> Option<&ExecutionRecord> {
+        self.executions.get(execution_ref)
     }
 
     pub fn insert_agency(&mut self, agency: AgencyRecord) -> Result<(), FactoryBuildError> {
