@@ -49,6 +49,43 @@ export function orderedTraces(traces: ExecutionTraceView[]): ExecutionTraceView[
   })
 }
 
+export interface TraceSelection {
+  execution?: ExecutionTraceView
+  span?: TraceSpan
+  /** The requested execution is absent; a fallback is supplied only for recovery. */
+  executionLost: boolean
+  /** The requested span is absent from the selected execution. */
+  spanLost: boolean
+}
+
+/**
+ * Resolve a person-held selection against a refreshed producer snapshot.
+ * Identities do not migrate across executions: if an execution disappears, its
+ * phase cannot silently become a same-ref phase in an unrelated replacement.
+ */
+export function resolveTraceSelection(
+  traces: ExecutionTraceView[],
+  requestedExecutionRef?: string,
+  requestedSpanRef?: string,
+): TraceSelection {
+  if (!traces.length) return { executionLost: false, spanLost: false }
+
+  const requestedExecution = requestedExecutionRef
+    ? traces.find((trace) => trace.executionRef === requestedExecutionRef)
+    : undefined
+  const execution = requestedExecution ?? orderedTraces(traces)[0]
+  const executionLost = Boolean(requestedExecutionRef && !requestedExecution)
+
+  // Search only the exact selected execution. A matching span ref elsewhere is
+  // a different subject and must remain invisible to the stale selection.
+  const span = requestedSpanRef && requestedExecution
+    ? requestedExecution.spans.find((candidate) => candidate.spanRef === requestedSpanRef)
+    : undefined
+  const spanLost = Boolean(requestedSpanRef && (requestedExecution ? !span : executionLost))
+
+  return { execution, span, executionLost, spanLost }
+}
+
 export function chronologicalSpans(trace: ExecutionTraceView): TraceSpan[] {
   return [...trace.spans].sort((a, b) => {
     const at = timestamp(a.startedAt)

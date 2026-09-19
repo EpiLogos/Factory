@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import parityExpected from '../fixtures/source-parity-expected.json'
 import sourcePin from '../source-integrations/sssf-visualizer.json'
-import { chronologicalSpans, deriveLanes, nextSpanRef, orderedTraces, processEvents, toolEvents, waterfallGeometry } from './read-model'
+import type { ExecutionTraceView } from './types'
+import { chronologicalSpans, deriveLanes, nextSpanRef, orderedTraces, processEvents, resolveTraceSelection, toolEvents, waterfallGeometry } from './read-model'
 import { sssfParityTrace } from './fixtures/sssf-parity'
 
 describe('execution trace read model', () => {
@@ -87,5 +88,50 @@ describe('structured SSSF parity expectation', () => {
   it('emits process material only if the pinned source supports it', () => {
     const processCount = sssfParityTrace.spans.flatMap(processEvents).length
     expect(processCount > 0).toBe(parityExpected.sourceProcessEventSupported)
+  })
+})
+
+describe('execution selection continuity', () => {
+  const executionA: ExecutionTraceView = {
+    executionRef: 'execution:a',
+    projectRef: 'project:test',
+    runRef: 'run:test',
+    status: 'success',
+    spans: [{ spanRef: 'span:shared', name: 'old build', kind: 'agent', status: 'success', events: [] }],
+  }
+  const executionB: ExecutionTraceView = {
+    executionRef: 'execution:b',
+    projectRef: 'project:test',
+    runRef: 'run:test',
+    status: 'success',
+    spans: [{ spanRef: 'span:shared', name: 'different build', kind: 'agent', status: 'success', events: [] }],
+  }
+
+  it('keeps a valid execution and span exactly where the person selected them', () => {
+    const selection = resolveTraceSelection([executionA, executionB], 'execution:a', 'span:shared')
+    expect(selection.execution?.executionRef).toBe('execution:a')
+    expect(selection.span?.spanRef).toBe('span:shared')
+    expect(selection.executionLost).toBe(false)
+    expect(selection.spanLost).toBe(false)
+  })
+
+  it('refuses to reinterpret a stale span on a replacement execution', () => {
+    const selection = resolveTraceSelection([executionB], 'execution:a', 'span:shared')
+    expect(selection.execution?.executionRef).toBe('execution:b')
+    expect(selection.span).toBeUndefined()
+    expect(selection.executionLost).toBe(true)
+    expect(selection.spanLost).toBe(true)
+  })
+
+  it('keeps the selected execution while reporting a removed span', () => {
+    const changedExecution: ExecutionTraceView = {
+      ...executionA,
+      spans: [{ ...executionA.spans[0]!, spanRef: 'span:replacement' }],
+    }
+    const selection = resolveTraceSelection([changedExecution], 'execution:a', 'span:shared')
+    expect(selection.execution?.executionRef).toBe('execution:a')
+    expect(selection.span).toBeUndefined()
+    expect(selection.executionLost).toBe(false)
+    expect(selection.spanLost).toBe(true)
   })
 })
