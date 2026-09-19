@@ -18,6 +18,8 @@ This is the working documentation surface for the QL Software Factory.
 
 The root pre-ticket programme and executable amendments. GitHub Issues are generated as a projection of this material; Issues are not the canonical Run Map or Factory ontology.
 
+- [`NATIVE-WORKFLOW-AUTHORING.md`](program/NATIVE-WORKFLOW-AUTHORING.md) — owner-directed 19 September 2026 continuation of #195/#197/#199/#145: TypeScript authoring and first workflow source basis are native Factory functionality; source → RunMap → actual attempts → SSSF/DSH-native trajectory → Return uses the same public identities. QL/Vāk/Epi are optional interpretations through that technology, not its generic owner or prerequisite. This source specifies remaining joins, not a claim that a TS SDK or live UI path has run.
+
 ## `research/`
 
 Comparative evidence and claim-sets. Location here means **no architectural authority by presence**. Research must be explicitly integrated into canon/programme material before implementation treats it as a determination.
