@@ -12,6 +12,7 @@ mod attempt_material_admission;
 pub mod attempt_native_store;
 pub mod attempt_owner_cli;
 pub mod attempt_owner_dispatch;
+pub mod attempt_place;
 pub mod attempt_receiving;
 pub mod attempt_runtime;
 pub mod attempt_task;
@@ -45,6 +46,7 @@ pub mod project_development_store;
 pub mod routine_continuation;
 pub mod structural_ground;
 pub mod system;
+pub mod telemetry_cli;
 pub mod vak_orchestration;
 pub mod workflow;
 

@@ -172,6 +172,7 @@ impl World {
             disposition: world.disposition.clone(),
             retry_grant: Some(RetryGrant::new("grant:task", 2).unwrap()),
             tracking: vec![],
+            place_grant: None,
         });
         world
     }
@@ -257,6 +258,7 @@ impl World {
             disposition: self.disposition.clone(),
             tracking: vec![],
             reresolution: None,
+            place_grant: None,
         });
     }
 }

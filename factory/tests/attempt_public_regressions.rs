@@ -249,6 +249,7 @@ impl World {
             disposition: self.disposition(key),
             retry_grant: Some(RetryGrant::new(format!("grant:{key}"), 2).unwrap()),
             tracking: vec![],
+            place_grant: None,
         }
     }
 
@@ -306,6 +307,7 @@ impl World {
             disposition: self.disposition("inspect-source"),
             tracking: vec![],
             reresolution: None,
+            place_grant: None,
         }
     }
 
@@ -648,6 +650,7 @@ fn fork(world: &World) -> FactoryAttemptOperation {
                 disposition: world.disposition(key),
                 retry_grant: Some(RetryGrant::new(format!("grant:{key}"), 2).unwrap()),
                 tracking: vec![],
+                place_grant: None,
             })
             .collect(),
     }
