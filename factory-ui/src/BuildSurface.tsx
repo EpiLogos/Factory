@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import type { ActionInvocation, FactoryBuildView, ViewDepth } from './types'
 import { SessionCards } from './components/SessionCards'
 import { SpanDetail } from './components/SpanDetail'
@@ -17,19 +17,21 @@ function Ref({ children }: { children: string }) {
   return <code className="fb-ref" title={children}>{children}</code>
 }
 
-function ActionButton({ actionRef, subjectRef, label, onAction }: {
-  actionRef: string; subjectRef: string; label: string; onAction?: (invocation: ActionInvocation) => void
+function ActionButton({ actionRef, subjectRef, label, onAction, unavailableDescriptionId }: {
+  actionRef: string; subjectRef: string; label: string; onAction?: (invocation: ActionInvocation) => void; unavailableDescriptionId: string
 }) {
   return <button
     type="button"
     className="fb-action"
     disabled={!onAction}
+    aria-describedby={!onAction ? unavailableDescriptionId : undefined}
     title={onAction ? undefined : 'Native Action handler unavailable; this surface is read-only.'}
     onClick={() => onAction?.({ actionRef, subjectRef })}
   >{label}</button>
 }
 
 export function BuildSurface({ view, initialDepth = 'semantic', onAction }: BuildSurfaceProps) {
+  const actionAvailabilityId = useId()
   const [depth, setDepth] = useState<ViewDepth>(initialDepth)
   const [executionRef, setExecutionRef] = useState(view.trajectories[0]?.executionRef)
   const [spanRef, setSpanRef] = useState<string | undefined>(
@@ -69,13 +71,14 @@ export function BuildSurface({ view, initialDepth = 'semantic', onAction }: Buil
         <div className="fb-frontier-meta"><Ref>{view.frontier.subjectRef}</Ref><span>closure {view.frontier.closureState ?? 'open'}</span><span>gate {view.frontier.gateState ?? '—'}</span></div>
       </div>
 
+      {!onAction && (candidateActions.length > 0 || runActions.length > 0) ? <p id={actionAvailabilityId} className="fb-action-unavailable fb-muted">Actions are unavailable in this view.</p> : null}
       <section><div className="fb-section-head"><h3>Candidates</h3><span>{view.candidates.length} possible realities</span></div>
         <div className="fb-candidates">{view.candidates.map((candidate) => <article key={candidate.candidateRef} className="fb-candidate">
           <div className="fb-card-top"><strong>{candidate.label}</strong><span className="fb-status">{candidate.status}</span></div>
           <Ref>{candidate.candidateRef}</Ref>
           <dl><dt>Executions</dt><dd>{candidate.producingExecutionRefs.map((ref) => <Ref key={ref}>{ref}</Ref>)}</dd><dt>Claims</dt><dd>{candidate.claimRefs.length}</dd><dt>Evidence</dt><dd>{candidate.evidenceRefs.length}</dd></dl>
           {candidate.tradeoffs?.length ? <ul>{candidate.tradeoffs.map((item) => <li key={item}>{item}</li>)}</ul> : null}
-          <div className="fb-actions">{candidateActions.map((action) => <ActionButton key={action.actionRef} actionRef={action.actionRef} subjectRef={candidate.candidateRef} label={action.label} onAction={onAction} />)}</div>
+          <div className="fb-actions">{candidateActions.map((action) => <ActionButton key={action.actionRef} actionRef={action.actionRef} subjectRef={candidate.candidateRef} label={action.label} onAction={onAction} unavailableDescriptionId={actionAvailabilityId} />)}</div>
         </article>)}</div>
       </section>
 
@@ -87,7 +90,7 @@ export function BuildSurface({ view, initialDepth = 'semantic', onAction }: Buil
           {view.humanRequests.length ? view.humanRequests.map((request) => <article className="fb-human-request" key={request.humanRequestRef}><strong>{request.question}</strong><p>{request.whyHuman}</p><Ref>{request.decisionRef}</Ref></article>) : <p className="fb-muted">No durable human authorship request is open.</p>}
         </section>
       </div>
-      <div className="fb-actions fb-run-actions">{runActions.map((action) => <ActionButton key={action.actionRef} actionRef={action.actionRef} subjectRef={view.run.runRef} label={action.label} onAction={onAction} />)}</div>
+      <div className="fb-actions fb-run-actions">{runActions.map((action) => <ActionButton key={action.actionRef} actionRef={action.actionRef} subjectRef={view.run.runRef} label={action.label} onAction={onAction} unavailableDescriptionId={actionAvailabilityId} />)}</div>
     </section> : null}
 
     {depth === 'live' ? <section className="fb-depth">

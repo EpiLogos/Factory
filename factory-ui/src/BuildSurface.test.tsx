@@ -1,8 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { factoryBuildFixture } from './fixtures/factory-build'
 import type { ExecutionTraceView } from './types'
 import { BuildSurface } from './BuildSurface'
+import type { ActionInvocation } from './types'
 
 describe('Factory Build semantic envelope', () => {
   it('opens at Factory meaning rather than execution logs', () => {
@@ -67,15 +68,54 @@ describe('Factory Build semantic envelope', () => {
   })
 
   it('dispatches canonical Factory Actions without mutating local business state', () => {
-    const onAction = vi.fn()
+    const invocations: ActionInvocation[] = []
+    const onAction = (invocation: ActionInvocation) => { invocations.push(invocation) }
     render(<BuildSurface view={factoryBuildFixture} onAction={onAction} />)
     const buttons = screen.getAllByRole('button', { name: 'recognise Candidate' })
+    expect((buttons[0] as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(buttons[0]!)
-    expect(onAction).toHaveBeenCalledWith({
+    fireEvent.click(screen.getByRole('button', { name: 're-enter frontier' }))
+    expect(invocations).toEqual([{
       actionRef: 'action:01ARZ3NDEKTSV4RRFFQ69G5FAN',
       subjectRef: 'candidate:01ARZ3NDEKTSV4RRFFQ69G5FAC',
-    })
+    }, {
+      actionRef: 'action:01ARZ3NDEKTSV4RRFFQ69G5FDN',
+      subjectRef: factoryBuildFixture.run.runRef,
+    }])
     expect(screen.getByText('Candidate A · DSH maximal')).toBeTruthy()
+    expect(screen.queryByText('Actions are unavailable in this view.')).toBeNull()
+  })
+
+  it('disables unavailable Actions while preserving depth and span inspection', () => {
+    render(<BuildSurface view={factoryBuildFixture} />)
+    const actionButtons = screen.getAllByRole('button', { description: 'Actions are unavailable in this view.' })
+    expect(actionButtons).toHaveLength(8)
+    for (const button of actionButtons) expect((button as HTMLButtonElement).disabled).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'trajectory' }))
+    const span = factoryBuildFixture.trajectories[0]!.spans[1]!
+    fireEvent.click(screen.getByRole('button', { description: `${span.name} — ${span.status}` }))
+    expect(screen.getByRole('region', { name: `Span detail ${span.name}` })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Close detail' }))
+    expect(screen.queryByRole('region', { name: `Span detail ${span.name}` })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'semantic' }))
+    expect((screen.getByRole('button', { name: 're-enter frontier' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('reflects host Action availability changes without remounting', () => {
+    const invocations: ActionInvocation[] = []
+    const onAction = (invocation: ActionInvocation) => { invocations.push(invocation) }
+    const { rerender } = render(<BuildSurface view={factoryBuildFixture} />)
+    const button = screen.getByRole('button', { name: 're-enter frontier' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    rerender(<BuildSurface view={factoryBuildFixture} onAction={onAction} />)
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(invocations).toHaveLength(1)
+    rerender(<BuildSurface view={factoryBuildFixture} />)
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(invocations).toHaveLength(1)
   })
 
   it('does not present a native Action as available without a native handler', () => {

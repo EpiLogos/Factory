@@ -18,6 +18,8 @@ The deterministic F1 fixture proves a maximal DeepSeek Harness-shaped trajectory
 
 Canonical mutations are emitted as `{ actionRef, subjectRef }` through `onAction`. The GUI does not maintain a duplicate Run/Candidate mutation store.
 
+When the host omits `onAction`, native Action buttons are disabled with a visible, accessible availability explanation. Depth navigation, execution selection and span inspection remain available. Adding or removing the callback updates Action availability without remounting the surface.
+
 ## O:I host fit
 
 The package uses O:I semantic CSS variable names with conservative standalone fallbacks. The O:I host should provide `@epilogos/oi-design-system/tokens.css`; Factory does not copy a second token authority into this repository. Scarce O:I gold is not used as a generic success colour.
