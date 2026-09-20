@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { chronologicalSpans, orderedTraces } from '../read-model'
+import { chronologicalSpans, orderedTraces, resolveTraceSelection } from '../read-model'
 import type { ExecutionTraceView } from '../types'
 import { PhaseDetail } from './PhaseDetail'
 import { SessionCards } from './SessionCards'
@@ -19,12 +19,17 @@ export function ExecutionTraceExplorer({ traces, initialExecutionRef }: {
   initialExecutionRef?: string
 }) {
   const ordered = useMemo(() => orderedTraces(traces), [traces])
-  const firstRef = initialExecutionRef && ordered.some((trace) => trace.executionRef === initialExecutionRef)
-    ? initialExecutionRef
-    : ordered[0]?.executionRef
+  const initialTrace = initialExecutionRef
+    ? ordered.find((trace) => trace.executionRef === initialExecutionRef)
+    : ordered[0]
+  const firstRef = initialTrace?.executionRef
   const [executionRef, setExecutionRef] = useState<string | undefined>(firstRef)
-  const selected = ordered.find((trace) => trace.executionRef === executionRef) ?? ordered[0]
-  const [selectedSpanRef, setSelectedSpanRef] = useState<string | undefined>(() => selected ? chronologicalSpans(selected)[0]?.spanRef : undefined)
+  const [selectedSpanRef, setSelectedSpanRef] = useState<string | undefined>(() => initialTrace ? chronologicalSpans(initialTrace)[0]?.spanRef : undefined)
+  const selection = useMemo(
+    () => resolveTraceSelection(traces, executionRef, selectedSpanRef),
+    [executionRef, selectedSpanRef, traces],
+  )
+  const selected = selection.execution
 
   function selectExecution(ref: string) {
     const trace = ordered.find((item) => item.executionRef === ref)
@@ -33,7 +38,7 @@ export function ExecutionTraceExplorer({ traces, initialExecutionRef }: {
   }
 
   if (!selected) return <section className="fb-build-surface"><p className="fb-empty-state">no executions available</p></section>
-  const selectedSpan = selected.spans.find((span) => span.spanRef === selectedSpanRef)
+  const selectedSpan = selection.span
 
   // The explorer is an exported standalone composition, so its root carries
   // the scope class the package styles are written under.
@@ -42,6 +47,8 @@ export function ExecutionTraceExplorer({ traces, initialExecutionRef }: {
       <div><span className="fb-eyebrow">execution review</span><h2>Sessions</h2></div>
       <span>{ordered.length} execution{ordered.length === 1 ? '' : 's'}</span>
     </header>
+    {selection.executionLost ? <p className="fb-muted" role="status">Selected execution <code>{executionRef}</code> is no longer available. Showing <code>{selected.executionRef}</code>; choose another execution.</p> : null}
+    {selection.spanLost ? <p className="fb-muted" role="status">Selected phase <code>{selectedSpanRef}</code> is no longer present in <code>{selected.executionRef}</code>. Choose another phase.</p> : null}
     <SessionCards traces={ordered} selectedExecutionRef={selected.executionRef} onSelect={selectExecution} />
 
     <section className="fb-trace-shell">
