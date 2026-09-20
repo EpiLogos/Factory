@@ -73,6 +73,7 @@ fn public_cli_restart_readback_rejects_stale_revision_and_retains_tracking_retur
             disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
             retry_grant: None,
             tracking: tracking.clone(),
+            place_grant: None,
         })
         .unwrap();
 
@@ -150,6 +151,7 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
             disposition: disposition.clone(),
             retry_grant: Some(grant.clone()),
             tracking: Vec::new(),
+            place_grant: None,
         })
         .unwrap();
     fixture
@@ -227,6 +229,7 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
                 replacement_material_ref: None,
                 replacement_harness_ref: None,
             }),
+            place_grant: None,
         })
         .unwrap();
     fixture
@@ -246,6 +249,7 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
         disposition,
         tracking: Vec::new(),
         reresolution: None,
+        place_grant: None,
     });
     assert!(third.is_err());
     let reading = fixture.reading();
@@ -270,6 +274,7 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
             disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
             retry_grant: None,
             tracking: Vec::new(),
+            place_grant: None,
         })
         .unwrap();
     complete(
@@ -308,6 +313,7 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
         disposition: disposition(&fixture.run, &workflow, "integrate-return", None),
         retry_grant: None,
         tracking: Vec::new(),
+        place_grant: None,
     });
     assert!(blocked.is_err());
 
@@ -327,6 +333,7 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
             disposition: disposition(&fixture.run, &workflow, "integrate-return", None),
             retry_grant: None,
             tracking: Vec::new(),
+            place_grant: None,
         })
         .is_err());
     complete(
@@ -345,6 +352,7 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
             disposition: disposition(&fixture.run, &workflow, "integrate-return", None),
             retry_grant: None,
             tracking: Vec::new(),
+            place_grant: None,
         })
         .unwrap();
 
@@ -375,6 +383,7 @@ fn public_cli_enforces_fork_barrier_and_shared_writer_rules_atomically() {
             disposition: disposition(&conflict.run, &conflict_workflow, "inspect-source", None),
             retry_grant: None,
             tracking: Vec::new(),
+            place_grant: None,
         })
         .unwrap();
     complete(
@@ -424,6 +433,7 @@ fn provider_return_requires_factory_verification_and_historical_late_return_stay
             disposition: disposition.clone(),
             retry_grant: Some(grant.clone()),
             tracking: Vec::new(),
+            place_grant: None,
         })
         .unwrap();
     fixture
@@ -468,6 +478,7 @@ fn provider_return_requires_factory_verification_and_historical_late_return_stay
             disposition,
             tracking: Vec::new(),
             reresolution: None,
+            place_grant: None,
         })
         .unwrap();
 
@@ -671,6 +682,7 @@ fn start(
         disposition: disposition(&fixture.run, workflow, key, None),
         retry_grant: None,
         tracking: Vec::new(),
+        place_grant: None,
     }
 }
 

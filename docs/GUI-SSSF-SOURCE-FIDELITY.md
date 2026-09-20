@@ -90,3 +90,15 @@ The current O:I desktop line is React-based and exports a shared semantic token 
 `cd factory-ui && npm install && npm run verify`
 
 The package tests cover cursor drain ordering, source-shaped adaptation, failed tool rendering, deep payload inspection, phase ordering/geometry, keyboard selection and the deterministic parity fixture. The GitHub workflow runs the same verification command.
+
+## Native workflow source and richer trajectory — 19 September 2026
+
+**Design/acceptance amendment, not additional F0 execution evidence.** [Native workflow authoring](program/NATIVE-WORKFLOW-AUTHORING.md) is the Factory-owned continuation under #195/#197/#199/#145. TypeScript run/workflow definition, its validation/compilation and first authored Run basis are generic Factory functionality. QL/Vāk/Epi are optional interpretations through it; no QL installation or domain role names are required to author work or inspect this GUI.
+
+The same native public reading must connect an authored workflow revision/source unit to its compiled WorkflowUnit, selected Run/frontier, actual execution attempts, emitted tool/model/process/permission events and returned artifacts/evidence. Source and log navigation work in both directions. Planned roles, dependencies and effects remain distinguishable from actual participants, order, resource use and outcomes; retries and successor source revisions retain their earlier evidence.
+
+DSH is the richer native-trajectory case already required by #145: when used, retain its native SessionEvent/trajectory refs and supplied HarnessComposition provenance alongside the portable Factory trace. Actuation/AIKit retain their native ownership; no copied DSH log store, DSH-shaped Run identity or mandatory DSH dependency is introduced. A thinner or DSH-absent harness remains fully operable, with missing native details disclosed rather than simulated. The historical SSSF event list above is not extended retroactively.
+
+Land through the current O:I Desk/Tasks and Run/Agents/Context arrangement: full SSSF view in Desk detail; actual conversation in Tasks; correlated control/trajectory in Run; participants in Agents; authored source and produced work in Context. Use existing panes/popouts for depth. This defines data/action correspondence, not a new layout or competing application.
+
+The new proof must execute a no-QL typed-source workflow and traverse source → compiled unit → actual attempt/tool result → evidence → source. Include stale source, alternate attempts, held history/reconnect and optional QL projection. Existing F0 component/fixture evidence remains valid at its own scope and does not certify this new end-to-end join.

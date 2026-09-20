@@ -1,0 +1,41 @@
+{
+  "contract": "factory.commission-request/v1",
+  "requestRef": "commission-request:day-now-telemetry-vertical-proof-2026-09-17",
+  "projectKey": "day-now-telemetry-vertical-proof",
+  "purpose": "Join one real task across Factory telemetry, AIKit NOW-field search, exact Git basis and one source-backed learning (O-I #65 foundation condition)",
+  "frontier": "The Day/NOW field and Factory telemetry answer one traversal end to end: task provenance, inspection, search, source basis, feedback",
+  "runDestination": "returns land in the root NOW field and the Factory development ledger on this machine",
+  "writeOwner": "factory",
+  "commissionedAt": "2026-09-17T20:05:24Z",
+  "centralComposition": {
+    "owner": "central",
+    "developmentAgentSet": {
+      "ref": "factory-bounded-acceptance-commission",
+      "revision": "r1",
+      "sourcePath": "Control/agents/agent-sets/agent-set-7302e4196e3cc837.json",
+      "sha256": "f72add1c5ad52b4d7def693c8ed8c7cb39bf09ae921fbd3c743f260da0b768e6"
+    },
+    "guardianAgentSet": {
+      "ref": "world-operators",
+      "revision": "r3",
+      "sourcePath": "Control/agents/agent-sets/agent-set-0234fea7817cebfb.json",
+      "sha256": "d058e334dce11156b2e86cf4a0b5760e98a3460ccc28b31c0f11a3936f1ab81c"
+    },
+    "resolvedAgentRefs": [
+      "agent/factory-bounded-acceptance",
+      "agent/oh-i"
+    ],
+    "agentProfileReceipts": [],
+    "authorityStanding": "membership-non-authoritative"
+  },
+  "rootAct": {
+    "actRef": "root-act:day-now-telemetry-vertical-proof-2026-09-17",
+    "agentRef": "agent/oh-i",
+    "purpose": "Demonstrate the joined Day/NOW telemetry foundation before the broad fan-out",
+    "scopeRefs": [
+      "central:now:control:root:16c497e18484506ac622af36188979be906b4258d67a60d7dfe3091f2ecba79e",
+      "central:day:control:root:2026-09-17"
+    ],
+    "standing": "commissioned-not-executed"
+  }
+}

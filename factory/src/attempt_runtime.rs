@@ -266,6 +266,12 @@ pub struct FactoryAttemptRecord {
     pub failure_evidence_refs: BTreeSet<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readable_return: Option<ReadableReturn>,
+    /// Workcell room grant, recorded as material provenance only. A place is
+    /// a room, not a self: no run/attempt identity is derived from it, and a
+    /// place outliving the attempt is disclosure, never continuation.
+    /// Attempts without a place stay byte-identical to earlier state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place_grant: Option<crate::attempt_place::WorkcellPlaceGrant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -331,6 +337,10 @@ pub enum FactoryAttemptOperation {
         retry_grant: Option<RetryGrant>,
         #[serde(default)]
         tracking: Vec<AttemptTrackingFact>,
+        /// Optional Workcell room grant, authored by the caller and recorded
+        /// as material provenance only. Absent means no place was requested.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place_grant: Option<crate::attempt_place::WorkcellPlaceGrant>,
     },
     StartFork {
         parent_journey_ref: String,
@@ -386,6 +396,10 @@ pub enum FactoryAttemptOperation {
         tracking: Vec<AttemptTrackingFact>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reresolution: Option<ReresolutionRecord>,
+        /// Authored place grant for the retried attempt, provenance only.
+        /// A retry never inherits a room implicitly.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        place_grant: Option<crate::attempt_place::WorkcellPlaceGrant>,
     },
     ReturnArtifact {
         attempt_ref: String,
@@ -425,6 +439,8 @@ pub struct AttemptStart {
     pub retry_grant: Option<RetryGrant>,
     #[serde(default)]
     pub tracking: Vec<AttemptTrackingFact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub place_grant: Option<crate::attempt_place::WorkcellPlaceGrant>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -458,6 +474,7 @@ pub(crate) fn apply_operation(
             disposition,
             retry_grant,
             tracking,
+            place_grant,
         } => {
             let start = AttemptStart {
                 attempt_ref: attempt_ref.clone(),
@@ -466,6 +483,7 @@ pub(crate) fn apply_operation(
                 disposition,
                 retry_grant,
                 tracking,
+                place_grant,
             };
             let (launch, record) = prepare_start(state, &engine, &start, None)?;
             engine.start_serial(parent_journey_ref, &start.workflow_unit_ref, launch)?;
@@ -673,6 +691,7 @@ pub(crate) fn apply_operation(
             disposition,
             tracking,
             reresolution,
+            place_grant,
         } => {
             let prior = current_attempt_for_unit(state, &engine, &workflow_unit_ref)?;
             let grant = engine.retry_grant(&grant_ref).cloned().ok_or_else(|| {
@@ -685,6 +704,7 @@ pub(crate) fn apply_operation(
                 disposition,
                 retry_grant: Some(grant),
                 tracking,
+                place_grant,
             };
             let (launch, mut record) = prepare_start(state, &engine, &start, Some(prior))?;
             if let Some(resolution) = reresolution {
@@ -865,6 +885,14 @@ fn prepare_start(
     if let Some(prior) = prior {
         ensure_retry_protection(prior, &start.disposition)?;
     }
+    // An authored grant is admitted as material provenance only. It is
+    // checked against the pinned Workcell contract; it never names, renames
+    // or derives any run/attempt identity, and a retry never inherits one.
+    if let Some(place_grant) = &start.place_grant {
+        crate::attempt_place::validate_grant(place_grant).map_err(|error| {
+            FactoryAttemptError::InvalidOperation(format!("authored place grant refused: {error}"))
+        })?;
+    }
     let reserved_execution_ref = format!("factory-attempt:{}", start.attempt_ref);
     let launch = ExecutionLaunch {
         execution_ref: reserved_execution_ref.clone(),
@@ -887,6 +915,7 @@ fn prepare_start(
             reresolutions: Vec::new(),
             failure_evidence_refs: BTreeSet::new(),
             readable_return: None,
+            place_grant: start.place_grant.clone(),
         },
     ))
 }

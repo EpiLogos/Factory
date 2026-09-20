@@ -3,7 +3,7 @@ import type { ActionInvocation, FactoryBuildView, ViewDepth } from './types'
 import { SessionCards } from './components/SessionCards'
 import { SpanDetail } from './components/SpanDetail'
 import { TraceWaterfall } from './components/TraceWaterfall'
-import { chronologicalSpans } from './read-model'
+import { chronologicalSpans, resolveTraceSelection } from './read-model'
 import './styles.css'
 import './build-surface.css'
 
@@ -20,16 +20,29 @@ function Ref({ children }: { children: string }) {
 function ActionButton({ actionRef, subjectRef, label, onAction, unavailableDescriptionId }: {
   actionRef: string; subjectRef: string; label: string; onAction?: (invocation: ActionInvocation) => void; unavailableDescriptionId: string
 }) {
-  return <button type="button" className="fb-action" disabled={!onAction} aria-describedby={!onAction ? unavailableDescriptionId : undefined} onClick={() => onAction?.({ actionRef, subjectRef })}>{label}</button>
+  return <button
+    type="button"
+    className="fb-action"
+    disabled={!onAction}
+    aria-describedby={!onAction ? unavailableDescriptionId : undefined}
+    title={onAction ? undefined : 'Native Action handler unavailable; this surface is read-only.'}
+    onClick={() => onAction?.({ actionRef, subjectRef })}
+  >{label}</button>
 }
 
 export function BuildSurface({ view, initialDepth = 'semantic', onAction }: BuildSurfaceProps) {
   const actionAvailabilityId = useId()
   const [depth, setDepth] = useState<ViewDepth>(initialDepth)
   const [executionRef, setExecutionRef] = useState(view.trajectories[0]?.executionRef)
-  const trace = useMemo(() => view.trajectories.find((item) => item.executionRef === executionRef) ?? view.trajectories[0], [executionRef, view.trajectories])
-  const [spanRef, setSpanRef] = useState<string | undefined>(trace ? chronologicalSpans(trace)[0]?.spanRef : undefined)
-  const selectedSpan = trace?.spans.find((span) => span.spanRef === spanRef)
+  const [spanRef, setSpanRef] = useState<string | undefined>(
+    () => view.trajectories[0] ? chronologicalSpans(view.trajectories[0])[0]?.spanRef : undefined,
+  )
+  const selection = useMemo(
+    () => resolveTraceSelection(view.trajectories, executionRef, spanRef),
+    [executionRef, spanRef, view.trajectories],
+  )
+  const trace = selection.execution
+  const selectedSpan = selection.span
 
   function selectExecution(ref: string) {
     setExecutionRef(ref)
@@ -90,6 +103,8 @@ export function BuildSurface({ view, initialDepth = 'semantic', onAction }: Buil
 
     {depth === 'trajectory' ? <section className="fb-depth">
       <div className="fb-section-head"><h2>Trajectory</h2><span>portable trace + native evidence, without flattening</span></div>
+      {selection.executionLost ? <p className="fb-muted" role="status">Selected execution <code>{executionRef}</code> is no longer in this Run. Showing <code>{trace?.executionRef}</code>; choose another execution.</p> : null}
+      {selection.spanLost ? <p className="fb-muted" role="status">Selected phase <code>{spanRef}</code> is no longer present in <code>{trace?.executionRef}</code>. Choose another phase.</p> : null}
       <SessionCards traces={view.trajectories} selectedExecutionRef={trace?.executionRef} onSelect={selectExecution} />
       {trace ? <>
         <div className="fb-trace-provenance"><Ref>{trace.executionRef}</Ref><span>{trace.harnessRef ?? 'harness unavailable'}</span>{trace.harnessCompositionFingerprint ? <span>body {trace.harnessCompositionFingerprint}</span> : null}{trace.nativeTrajectory ? <span>native {trace.nativeTrajectory.kind}: <Ref>{trace.nativeTrajectory.ref}</Ref></span> : <span>native trajectory unavailable</span>}</div>

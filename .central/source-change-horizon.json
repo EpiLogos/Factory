@@ -1,0 +1,96 @@
+{
+  "schema": "central.source-change-horizon/v1",
+  "world_ref": "project:Factory",
+  "cursor": 0,
+  "sources": {
+    "central:source:project:Factory:ProjectCentral/agents/wiki/wiki.json": {
+      "binding": {
+        "ref": "central:source:project:Factory:ProjectCentral/agents/wiki/wiki.json",
+        "path": "ProjectCentral/agents/wiki/wiki.json",
+        "roles": [
+          "agent-wiki-source"
+        ],
+        "provenance": "agent-maintained",
+        "standing": "unspecified",
+        "treatment": "projectcentral-agent-wiki",
+        "agent_retrieval_allowed": true
+      },
+      "revision": {
+        "revision": "central.content-fnv1a64/v1:326:39b1de74e8a01e8c",
+        "byte_len": 326
+      }
+    },
+    "central:source:project:Factory:ProjectCentral/user/capability-matrix.csv": {
+      "binding": {
+        "ref": "central:source:project:Factory:ProjectCentral/user/capability-matrix.csv",
+        "path": "ProjectCentral/user/capability-matrix.csv",
+        "roles": [
+          "project-human-source-aperture"
+        ],
+        "provenance": "unresolved",
+        "standing": "unspecified",
+        "treatment": "projectcentral-user",
+        "agent_retrieval_allowed": true
+      },
+      "revision": {
+        "revision": "central.content-fnv1a64/v1:73853:9cef0b2e9182e7c1",
+        "byte_len": 73853
+      }
+    },
+    "central:source:project:Factory:ProjectCentral/user/capability-matrix.json": {
+      "binding": {
+        "ref": "central:source:project:Factory:ProjectCentral/user/capability-matrix.json",
+        "path": "ProjectCentral/user/capability-matrix.json",
+        "roles": [
+          "project-human-source-aperture"
+        ],
+        "provenance": "unresolved",
+        "standing": "unspecified",
+        "treatment": "projectcentral-user",
+        "agent_retrieval_allowed": true
+      },
+      "revision": {
+        "revision": "central.content-fnv1a64/v1:5435:fbc833abd1c54ba0",
+        "byte_len": 5435
+      }
+    },
+    "central:source:project:Factory:ProjectCentral/user/capability-matrix.md": {
+      "binding": {
+        "ref": "central:source:project:Factory:ProjectCentral/user/capability-matrix.md",
+        "path": "ProjectCentral/user/capability-matrix.md",
+        "roles": [
+          "project-human-source-aperture"
+        ],
+        "provenance": "unresolved",
+        "standing": "unspecified",
+        "treatment": "projectcentral-user",
+        "agent_retrieval_allowed": true
+      },
+      "revision": {
+        "revision": "central.content-fnv1a64/v1:105720:be8c1672612f5e08",
+        "byte_len": 105720
+      }
+    },
+    "central:source:project:Factory:ProjectCentral/user/factory.html": {
+      "binding": {
+        "ref": "central:source:project:Factory:ProjectCentral/user/factory.html",
+        "path": "ProjectCentral/user/factory.html",
+        "roles": [
+          "project-human-source-aperture"
+        ],
+        "provenance": "unresolved",
+        "standing": "unspecified",
+        "treatment": "projectcentral-user",
+        "agent_retrieval_allowed": true
+      },
+      "revision": {
+        "revision": "central.content-fnv1a64/v1:120492:6059c9bab9c26c5e",
+        "byte_len": 120492
+      }
+    }
+  },
+  "changes": [],
+  "consumer_cursors": {},
+  "provider": "central.filesystem-reconcile/v1",
+  "reconciled_at_unix_seconds": 1789662042
+}

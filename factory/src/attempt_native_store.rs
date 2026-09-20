@@ -35,6 +35,12 @@ pub struct FactoryRunAttempts {
 }
 
 impl FactoryRunAttempts {
+    /// Read-only attempt records for telemetry surfaces; mutation stays
+    /// behind the owner operations.
+    pub fn attempts(&self) -> &BTreeMap<String, FactoryAttemptRecord> {
+        &self.attempts
+    }
+
     fn from_view(state: &StoredAttemptState) -> Self {
         Self {
             schema: FACTORY_RUN_ATTEMPTS.into(),

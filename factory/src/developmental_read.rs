@@ -770,6 +770,7 @@ impl FactoryDevelopmentalState {
                 agency_return_state: agency.return_state.clone(),
                 evidence_refs,
             },
+            git_basis: correlation.git_basis.clone(),
         })
     }
 
@@ -1200,6 +1201,12 @@ impl FactoryDevelopmentalFileProvider {
         &self.path
     }
 
+    /// Read-only access for the telemetry surfaces; mutations stay behind the
+    /// owner operations above.
+    pub fn state(&self) -> &FactoryDevelopmentalState {
+        &self.state
+    }
+
     pub fn admit_central_project_link(
         &mut self,
         request: FactoryCentralProjectLinkRequest,
@@ -1589,10 +1596,44 @@ pub struct FactoryExecutionCorrelation {
     pub temporal: FactoryTemporalCorrelation,
     pub model_usage: FactoryOwnerTelemetryLink,
     pub material_usage: FactoryOwnerTelemetryLink,
+    /// Recorded source basis at the execution boundary: where the work stood
+    /// in its repository when this execution ran. Uncommitted files, runtime
+    /// settings and provider state stay in authorised owner records; this is
+    /// the honest minimum a commit hash cannot say about itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_basis: Option<FactoryGitBasis>,
+}
+
+/// The recorded Git basis of one execution. Base revision plus whether the
+/// worktree stood clean — never a substitute for the full candidate/return
+/// world machinery (`factory.git-development-world/v1`), which traces exact
+/// differences; this names where an execution started.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryGitBasis {
+    /// Canonical repository identifier or path, as the owner records it.
+    pub repository: String,
+    /// The exact HEAD the execution started from.
+    pub base_head: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Whether the worktree stood clean at the boundary, observed, not assumed.
+    pub worktree_clean: Option<bool>,
+}
+
+impl FactoryGitBasis {
+    fn validate(&self, correlation_ref: &Ref) -> Result<(), FactoryDevelopmentalReadError> {
+        require_correlation_text(&self.repository, "gitBasis.repository", correlation_ref)?;
+        require_correlation_text(&self.base_head, "gitBasis.baseHead", correlation_ref)?;
+        if let Some(branch) = &self.branch {
+            require_correlation_text(branch, "gitBasis.branch", correlation_ref)?;
+        }
+        Ok(())
+    }
 }
 
 impl FactoryExecutionCorrelation {
-    fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
+    pub(crate) fn validate(&self) -> Result<(), FactoryDevelopmentalReadError> {
         if self.correlation_ref.kind() != "execution-correlation" {
             return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
                 correlation_ref: self.correlation_ref.to_string(),
@@ -1618,6 +1659,9 @@ impl FactoryExecutionCorrelation {
             }
         }
         self.temporal.validate(&self.correlation_ref)?;
+        if let Some(git_basis) = &self.git_basis {
+            git_basis.validate(&self.correlation_ref)?;
+        }
         self.model_usage.validate(
             FactoryTelemetryOwner::Actuation,
             "modelUsage",
@@ -1739,6 +1783,21 @@ pub struct FactoryTemporalCorrelation {
     pub source_changes: Vec<FactoryRevisionedOwnerRef>,
     #[serde(default)]
     pub day_refs: Vec<FactoryRevisionedOwnerRef>,
+    /// Workcell-root scope this execution actually ran in (owner: Workcell).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workcell_ref: Option<FactoryRevisionedOwnerRef>,
+    /// Root NOW of the Workcell horizon (owner: Central).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_now_ref: Option<FactoryRevisionedOwnerRef>,
+    /// Bounded child NOW allocated for this execution (owner: Central).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub child_now_ref: Option<FactoryRevisionedOwnerRef>,
+    /// Parent NOW when the child was allocated under one (owner: Central).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_now_ref: Option<FactoryRevisionedOwnerRef>,
+    /// Day the work belongs to when it crosses a day boundary (owner: Central).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_day_ref: Option<FactoryRevisionedOwnerRef>,
 }
 
 impl FactoryTemporalCorrelation {
@@ -1751,6 +1810,48 @@ impl FactoryTemporalCorrelation {
             if let Some(fact) = fact {
                 require_correlation_text(&fact.value, field, correlation_ref)?;
                 fact.source.validate(field, correlation_ref)?;
+            }
+        }
+        let scalar_temporal_refs: [(
+            &str,
+            Option<&FactoryRevisionedOwnerRef>,
+            FactoryTelemetryOwner,
+        ); 5] = [
+            (
+                "temporal.workcellRef",
+                self.workcell_ref.as_ref(),
+                FactoryTelemetryOwner::Workcell,
+            ),
+            (
+                "temporal.rootNowRef",
+                self.root_now_ref.as_ref(),
+                FactoryTelemetryOwner::Central,
+            ),
+            (
+                "temporal.childNowRef",
+                self.child_now_ref.as_ref(),
+                FactoryTelemetryOwner::Central,
+            ),
+            (
+                "temporal.parentNowRef",
+                self.parent_now_ref.as_ref(),
+                FactoryTelemetryOwner::Central,
+            ),
+            (
+                "temporal.sourceDayRef",
+                self.source_day_ref.as_ref(),
+                FactoryTelemetryOwner::Central,
+            ),
+        ];
+        for (field, reference, expected_owner) in scalar_temporal_refs {
+            if let Some(reference) = reference {
+                if reference.owner != expected_owner {
+                    return Err(FactoryDevelopmentalReadError::InvalidExecutionCorrelation {
+                        correlation_ref: correlation_ref.to_string(),
+                        detail: format!("{field} must carry owner {expected_owner:?}"),
+                    });
+                }
+                reference.validate(field, correlation_ref)?;
             }
         }
         for (field, references, expected_owner) in [
@@ -2785,6 +2886,8 @@ pub struct FactoryExecutionTelemetryReading {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff: Option<FactoryAgencyHandoff>,
     pub return_state: FactoryExecutionReturnState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_basis: Option<FactoryGitBasis>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -3558,9 +3661,15 @@ mod tests {
                             "day-revision:1",
                         ),
                     ],
+                    workcell_ref: None,
+                    root_now_ref: None,
+                    child_now_ref: None,
+                    parent_now_ref: None,
+                    source_day_ref: None,
                 },
                 model_usage: unavailable_model.clone(),
                 material_usage: unavailable_material.clone(),
+                git_basis: None,
             },
             FactoryExecutionCorrelation {
                 correlation_ref: "execution-correlation:01ARZ3NDEKTSV4RRFFQ69G5FA3"
@@ -3604,9 +3713,15 @@ mod tests {
                         "day:2026-09-08",
                         "day-revision:1",
                     )],
+                    workcell_ref: None,
+                    root_now_ref: None,
+                    child_now_ref: None,
+                    parent_now_ref: None,
+                    source_day_ref: None,
                 },
                 model_usage: unavailable_model,
                 material_usage: unavailable_material,
+                git_basis: None,
             },
         ];
         state.with_execution_correlations(correlations).unwrap()

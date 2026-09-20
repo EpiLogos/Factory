@@ -190,40 +190,106 @@ fn config_verb_command(args: &[String], json: bool, stdin: Option<&str>) -> Resu
 fn build_contribution() -> Value {
     let observed = now_ms();
 
-    let sections = vec![json!({
-        "id": "binding",
-        "title": "Project bindings",
+    let telemetry_section = json!({
+        "id": "telemetry",
+        "title": "Telemetry surfaces",
         "settings": [
             {
-                "setting_ref": CENTRAL_PROJECT_SETTING_REF,
-                "section_ref": "binding",
-                "title": "Central project binding",
-                "description": format!(
-                    "Which Central project this Factory project is bound to, verified against the Central project source document by the same native check the admission performs. {}",
-                    SCOPE_NAMESPACE_NOTE
-                ),
-                "value_schema": {
-                    "type": "table",
-                    "columns": [
-                        { "name": "central_project_ref", "type": "scalar" },
-                        { "name": "source_path", "type": "path" }
-                    ]
-                },
+                "setting_ref": TELEMETRY_SEARCH_LIMIT_SETTING,
+                "section_ref": "telemetry",
+                "title": "Search result limit default",
+                "description": "Default --limit for `factory telemetry search` when the flag is absent; delegated AIKit queries stay within this bound. Override per call with --limit.",
+                "value_schema": { "type": "number", "minimum": 1, "maximum": 100 },
                 "allowed_scopes": [{ "scope_kind": "project", "scope_ref": null }],
                 "writable": true,
                 "profileable": false,
                 "sensitive": false,
-                "default_semantics": "none",
+                "default_semantics": "constant",
                 "effect": {
                     "kind": "value-change",
-                    "summary": CENTRAL_PROJECT_EFFECT_SUMMARY,
+                    "summary": "Takes effect on the next telemetry command; no restart, no reindex",
                     "ref": null
                 },
                 "operations": { "validate": true, "plan": true, "apply": true, "reset": true },
-                "native_ref": CENTRAL_PROJECT_NATIVE_REF
+                "native_ref": "software-factory:telemetry-config"
+            },
+            {
+                "setting_ref": TELEMETRY_SEARCH_TIMEOUT_SETTING,
+                "section_ref": "telemetry",
+                "title": "Delegated search subprocess budget (seconds)",
+                "description": "Wall-clock budget for the delegated AIKit knowledge search subprocess. A timed-out search is disclosed as provider-unavailable, never retried silently.",
+                "value_schema": { "type": "number", "minimum": 5, "maximum": 600 },
+                "allowed_scopes": [{ "scope_kind": "project", "scope_ref": null }],
+                "writable": true,
+                "profileable": false,
+                "sensitive": false,
+                "default_semantics": "constant",
+                "effect": {
+                    "kind": "value-change",
+                    "summary": "Takes effect on the next telemetry command; no restart, no reindex",
+                    "ref": null
+                },
+                "operations": { "validate": true, "plan": true, "apply": true, "reset": true },
+                "native_ref": "software-factory:telemetry-config"
+            },
+            {
+                "setting_ref": TELEMETRY_WATCH_INTERVAL_SETTING,
+                "section_ref": "telemetry",
+                "title": "Watch poll interval (seconds)",
+                "description": "Default poll interval for `factory telemetry watch`; the stream stays bounded by --max-events and --duration regardless.",
+                "value_schema": { "type": "number", "minimum": 0.5, "maximum": 60 },
+                "allowed_scopes": [{ "scope_kind": "project", "scope_ref": null }],
+                "writable": true,
+                "profileable": false,
+                "sensitive": false,
+                "default_semantics": "constant",
+                "effect": {
+                    "kind": "value-change",
+                    "summary": "Takes effect on the next telemetry command; no restart, no reindex",
+                    "ref": null
+                },
+                "operations": { "validate": true, "plan": true, "apply": true, "reset": true },
+                "native_ref": "software-factory:telemetry-config"
             }
         ]
-    })];
+    });
+    let sections = vec![
+        json!({
+            "id": "binding",
+            "title": "Project bindings",
+            "settings": [
+                {
+                    "setting_ref": CENTRAL_PROJECT_SETTING_REF,
+                    "section_ref": "binding",
+                    "title": "Central project binding",
+                    "description": format!(
+                        "Which Central project this Factory project is bound to, verified against the Central project source document by the same native check the admission performs. {}",
+                        SCOPE_NAMESPACE_NOTE
+                    ),
+                    "value_schema": {
+                        "type": "table",
+                        "columns": [
+                            { "name": "central_project_ref", "type": "scalar" },
+                            { "name": "source_path", "type": "path" }
+                        ]
+                    },
+                    "allowed_scopes": [{ "scope_kind": "project", "scope_ref": null }],
+                    "writable": true,
+                    "profileable": false,
+                    "sensitive": false,
+                    "default_semantics": "none",
+                    "effect": {
+                        "kind": "value-change",
+                        "summary": CENTRAL_PROJECT_EFFECT_SUMMARY,
+                        "ref": null
+                    },
+                    "operations": { "validate": true, "plan": true, "apply": true, "reset": true },
+                    "native_ref": CENTRAL_PROJECT_NATIVE_REF
+                }
+            ]
+        }),
+        telemetry_section,
+    ];
 
     let body = json!({
         "schema": CONFIGURATION_CONTRIBUTION_SCHEMA,
@@ -553,7 +619,101 @@ const CENTRAL_PROJECT_ENTRY: SettingEntry = SettingEntry {
     },
 };
 
-const SETTING_REGISTRY: &[SettingEntry] = &[CENTRAL_PROJECT_ENTRY];
+pub const TELEMETRY_SEARCH_LIMIT_SETTING: &str = "software-factory:telemetry:search-limit-default";
+pub const TELEMETRY_SEARCH_TIMEOUT_SETTING: &str =
+    "software-factory:telemetry:search-timeout-seconds";
+pub const TELEMETRY_WATCH_INTERVAL_SETTING: &str =
+    "software-factory:telemetry:watch-interval-seconds";
+
+/// Effective telemetry settings live in a sidecar beside the developmental
+/// state; the configuration plane writes them, the telemetry CLI reads them.
+pub fn telemetry_settings_path(state_path: &std::path::Path) -> std::path::PathBuf {
+    let mut name = state_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.push_str(".telemetry-settings.json");
+    state_path.with_file_name(name)
+}
+
+/// The effective value of one telemetry setting, if the plane applied one.
+pub fn read_telemetry_effective(state_path: &std::path::Path, setting_ref: &str) -> Option<String> {
+    let text = std::fs::read_to_string(telemetry_settings_path(state_path)).ok()?;
+    let document: serde_json::Value = serde_json::from_str(&text).ok()?;
+    document[setting_ref]
+        .as_str()
+        .map(str::to_owned)
+        .or_else(|| {
+            document[setting_ref].as_f64().map(|n| {
+                if n.fract() == 0.0 {
+                    format!("{}", n as i64)
+                } else {
+                    format!("{n}")
+                }
+            })
+        })
+}
+
+/// The whole effective telemetry sidecar, for the CLI defaults.
+pub fn read_telemetry_effective_all(
+    state_path: &std::path::Path,
+) -> std::collections::BTreeMap<String, f64> {
+    std::fs::read_to_string(telemetry_settings_path(state_path))
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+pub fn telemetry_setting_bounds(setting_ref: &str) -> Option<(f64, f64)> {
+    match setting_ref {
+        TELEMETRY_SEARCH_LIMIT_SETTING => Some((1.0, 100.0)),
+        TELEMETRY_SEARCH_TIMEOUT_SETTING => Some((5.0, 600.0)),
+        TELEMETRY_WATCH_INTERVAL_SETTING => Some((0.5, 60.0)),
+        _ => None,
+    }
+}
+
+fn is_telemetry_setting(setting_ref: &str) -> bool {
+    setting_ref.starts_with("software-factory:telemetry:")
+}
+
+const TELEMETRY_SEARCH_LIMIT_ENTRY: SettingEntry = SettingEntry {
+    setting_ref: TELEMETRY_SEARCH_LIMIT_SETTING,
+    writable: true,
+    operations: VerbOps {
+        validate: true,
+        plan: true,
+        apply: true,
+        reset: true,
+    },
+};
+const TELEMETRY_SEARCH_TIMEOUT_ENTRY: SettingEntry = SettingEntry {
+    setting_ref: TELEMETRY_SEARCH_TIMEOUT_SETTING,
+    writable: true,
+    operations: VerbOps {
+        validate: true,
+        plan: true,
+        apply: true,
+        reset: true,
+    },
+};
+const TELEMETRY_WATCH_INTERVAL_ENTRY: SettingEntry = SettingEntry {
+    setting_ref: TELEMETRY_WATCH_INTERVAL_SETTING,
+    writable: true,
+    operations: VerbOps {
+        validate: true,
+        plan: true,
+        apply: true,
+        reset: true,
+    },
+};
+
+const SETTING_REGISTRY: &[SettingEntry] = &[
+    CENTRAL_PROJECT_ENTRY,
+    TELEMETRY_SEARCH_LIMIT_ENTRY,
+    TELEMETRY_SEARCH_TIMEOUT_ENTRY,
+    TELEMETRY_WATCH_INTERVAL_ENTRY,
+];
 
 /// The four transport verbs (C0 §6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -612,7 +772,7 @@ fn registry_entry(setting_ref: &str) -> Result<&'static SettingEntry, String> {
             error_document(
                 "unsupported_setting",
                 &format!(
-                    "unknown setting `{setting_ref}`; this owner contributes only `{CENTRAL_PROJECT_SETTING_REF}`, and never another product's settings"
+                    "unknown setting `{setting_ref}`; this owner contributes `{CENTRAL_PROJECT_SETTING_REF}` and the `telemetry.*` settings, and never another product's settings"
                 ),
                 Some(setting_ref),
                 None,
@@ -757,9 +917,13 @@ fn central_project_value(value: &Value) -> Result<(String, String), String> {
 /// source revision — the native comparison is whole-link — is a violation, so
 /// `validate` truthfully previews what `apply` will do).
 fn evaluate_value(
+    setting_ref: &str,
     state: &FactoryDevelopmentalFileProvider,
     value: &Value,
 ) -> Result<(bool, Vec<ConfigViolation>), String> {
+    if is_telemetry_setting(setting_ref) {
+        return evaluate_telemetry_value(setting_ref, value);
+    }
     let (central_project_ref, source_path) = central_project_value(value)?;
     let mut violations = Vec::new();
 
@@ -792,6 +956,37 @@ fn evaluate_value(
                 path: None,
             });
         }
+    }
+    Ok((violations.is_empty(), violations))
+}
+
+/// Telemetry knobs are bounded numbers; their validity needs no state.
+fn evaluate_telemetry_value(
+    setting_ref: &str,
+    value: &Value,
+) -> Result<(bool, Vec<ConfigViolation>), String> {
+    let Some((low, high)) = telemetry_setting_bounds(setting_ref) else {
+        return Err(error_document(
+            "unsupported_setting",
+            &format!("unknown telemetry setting `{setting_ref}`"),
+            Some(setting_ref),
+            None,
+        ));
+    };
+    let mut violations = Vec::new();
+    let number = value.as_f64();
+    match number {
+        None => violations.push(ConfigViolation {
+            code: "invalid_value".into(),
+            message: format!("`{setting_ref}` takes a number in [{low}, {high}]"),
+            path: None,
+        }),
+        Some(n) if !(low..=high).contains(&n) => violations.push(ConfigViolation {
+            code: "invalid_value".into(),
+            message: format!("`{setting_ref}` must be within [{low}, {high}], got {n}"),
+            path: None,
+        }),
+        _ => {}
     }
     Ok((violations.is_empty(), violations))
 }
@@ -859,7 +1054,7 @@ fn validate_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Resul
     let value = requested_value(parsed, setting_ref, stdin)?;
 
     let state = open_state(&scope)?;
-    let (valid, violations) = evaluate_value(&state, &value)?;
+    let (valid, violations) = evaluate_value(setting_ref, &state, &value)?;
 
     let validation = ConfigValidation {
         schema: CONFIG_VALIDATION_SCHEMA.into(),
@@ -895,7 +1090,7 @@ fn plan_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<St
     let value = requested_value(parsed, setting_ref, stdin)?;
 
     let state = open_state(&scope)?;
-    let (valid, violations) = evaluate_value(&state, &value)?;
+    let (valid, violations) = evaluate_value(setting_ref, &state, &value)?;
     if !valid {
         let code = if violations
             .iter()
@@ -910,6 +1105,60 @@ fn plan_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<St
             &violations_detail(&violations),
             Some(setting_ref),
             Some(&scope.scope_kind),
+        ));
+    }
+    if is_telemetry_setting(setting_ref) {
+        let state_path = resolve_setting_scope(&scope)?;
+        let current = read_telemetry_effective(&state_path, setting_ref);
+        let plan = ConfigPlan {
+            schema: CONFIG_PLAN_SCHEMA.into(),
+            plan_id: format!("factory-plan-{}", ulid::Ulid::new()),
+            plan_digest: String::new(),
+            setting_ref: setting_ref.to_owned(),
+            scope: scope.clone(),
+            changes: vec![PlanChange {
+                summary: format!(
+                    "Set `{setting_ref}` to {value} for the telemetry CLI surfaces reading this state's sidecar.",
+                ),
+                native_ref: Some(format!(
+                    "software-factory:telemetry-config:{}",
+                    telemetry_settings_path(&state_path).display()
+                )),
+                before_ref: current.clone(),
+                after_ref: Some(value.to_string()),
+            }],
+            expected_effect: ExpectedEffect {
+                kind: "value-change".into(),
+                summary: Some(format!(
+                    "`{setting_ref}` takes effect on the next telemetry command; no restart, no reindex"
+                )),
+                ..central_project_effect()
+            },
+            expires_at_unix_ms: None,
+            explain_ref: Some("factory telemetry status".into()),
+        };
+        let mut plan = plan;
+        plan.plan_digest = plan_digest(&plan);
+        let stored_scope = scope.clone();
+        let stored_value = value.clone();
+        let stored_setting = setting_ref.to_owned();
+        journal_write(&state_path, |journal| {
+            journal.plans.push(StoredPlan {
+                plan_id: plan.plan_id.clone(),
+                plan_digest: plan.plan_digest.clone(),
+                setting_ref: stored_setting,
+                scope: stored_scope,
+                value: stored_value,
+                minted_at_unix_ms: now_ms(),
+            });
+            Ok(())
+        })?;
+        if json {
+            return serde_json::to_string_pretty(&plan).map_err(internal_error);
+        }
+        return Ok(format!(
+            "plan {} (digest {}) — {}",
+            plan.plan_id, plan.plan_digest, plan.changes[0].summary
         ));
     }
     let (central_project_ref, _source_path) = central_project_value(&value)?;
@@ -1071,7 +1320,7 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
 
     // Re-validate against the current state: the state may have changed since
     // the plan was minted. The owner's validation stays authoritative.
-    let (valid, violations) = evaluate_value(&state, &stored.value)?;
+    let (valid, violations) = evaluate_value(&plan.setting_ref, &state, &stored.value)?;
     if !valid {
         return Err(error_document(
             "validation_failed",
@@ -1082,6 +1331,55 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             Some(&plan.setting_ref),
             Some(&plan.scope.scope_kind),
         ));
+    }
+    if is_telemetry_setting(&plan.setting_ref) {
+        let (valid, _) = evaluate_telemetry_value(&plan.setting_ref, &stored.value)?;
+        if !valid {
+            return Err(error_document(
+                "validation_failed",
+                "the planned telemetry value no longer validates",
+                Some(&plan.setting_ref),
+                Some(&plan.scope.scope_kind),
+            ));
+        }
+        let sidecar = telemetry_settings_path(&state_path);
+        let mut effective: serde_json::Map<String, Value> = std::fs::read_to_string(&sidecar)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        effective.insert(plan.setting_ref.clone(), stored.value.clone());
+        std::fs::write(
+            &sidecar,
+            serde_json::to_string_pretty(&effective).map_err(internal_error)?,
+        )
+        .map_err(|error| {
+            error_document(
+                "internal",
+                &format!("could not write the telemetry settings sidecar: {error}"),
+                Some(&plan.setting_ref),
+                None,
+            )
+        })?;
+        let receipt = ConfigReceipt {
+            schema: CONFIG_RECEIPT_SCHEMA.into(),
+            receipt_id: format!("factory-receipt-{}", ulid::Ulid::new()),
+            owner_ref: CONFIG_OWNER_REF.into(),
+            changeset_id,
+            plan_digest: Some(plan.plan_digest.clone()),
+            setting_ref: plan.setting_ref.clone(),
+            scope: plan.scope.clone(),
+            operation: "apply".into(),
+            outcome: "applied".into(),
+            applied_at_unix_ms: now_ms(),
+            native_ref: Some(format!(
+                "software-factory:telemetry-config:{}",
+                sidecar.display()
+            )),
+            expected_effect: Some(central_project_effect()),
+            original_receipt_id: None,
+            error: None,
+        };
+        return emit_receipt(&state_path, receipt, json);
     }
     let (central_project_ref, source_path) = central_project_value(&stored.value)?;
 
@@ -1182,6 +1480,52 @@ fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
         return emit_receipt(&state_path, replay, json);
     }
 
+    if is_telemetry_setting(setting_ref) {
+        let sidecar = telemetry_settings_path(&state_path);
+        let mut effective: serde_json::Map<String, Value> = std::fs::read_to_string(&sidecar)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default();
+        let removed = effective.remove(setting_ref).is_some();
+        if removed {
+            std::fs::write(
+                &sidecar,
+                serde_json::to_string_pretty(&effective).map_err(internal_error)?,
+            )
+            .map_err(|error| {
+                error_document(
+                    "internal",
+                    &format!("could not write the telemetry settings sidecar: {error}"),
+                    Some(setting_ref),
+                    None,
+                )
+            })?;
+        }
+        let receipt = ConfigReceipt {
+            schema: CONFIG_RECEIPT_SCHEMA.into(),
+            receipt_id: format!("factory-receipt-{}", ulid::Ulid::new()),
+            owner_ref: CONFIG_OWNER_REF.into(),
+            changeset_id,
+            plan_digest: None,
+            setting_ref: setting_ref.to_owned(),
+            scope,
+            operation: "reset".into(),
+            outcome: if removed {
+                "applied".into()
+            } else {
+                "no_op".into()
+            },
+            applied_at_unix_ms: now_ms(),
+            native_ref: Some(format!(
+                "software-factory:telemetry-config:{}",
+                sidecar.display()
+            )),
+            expected_effect: Some(central_project_effect()),
+            original_receipt_id: None,
+            error: None,
+        };
+        return emit_receipt(&state_path, receipt, json);
+    }
     let mut state = open_state(&scope)?;
     let removed = state.remove_central_project_link().map_err(|error| {
         error_document(

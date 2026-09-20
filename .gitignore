@@ -13,3 +13,7 @@
 
 # Vendored reference trees (never built or published from this repo).
 vendor/
+
+# Agent/tool state (AIKit task worktrees, session scratch).
+/.aikit/
+/ProjectCentral/now/tmp/
