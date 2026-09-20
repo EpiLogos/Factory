@@ -29,6 +29,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  source-basis:
+    # Source material is not a successful test receipt. Retain it even when a
+    # native check fails so an independent verifier can reproduce the exact cut.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package exact tested source, without credentials or working state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/source-basis
+          git rev-parse HEAD > dist/source-basis/source-commit.txt
+          git rev-parse 'HEAD^{tree}' > dist/source-basis/source-tree.txt
+          git ls-tree -r HEAD > dist/source-basis/source-manifest.txt
+          git archive --format=tar.gz --output=dist/source-basis/factory-source.tar.gz HEAD
+          (cd dist/source-basis && sha256sum factory-source.tar.gz > factory-source.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-source-basis-${{ github.sha }}
+          path: dist/source-basis/
+          retention-days: 7
+          if-no-files-found: error
+
   factory-rust:
     runs-on: ubuntu-latest
     timeout-minutes: 20
