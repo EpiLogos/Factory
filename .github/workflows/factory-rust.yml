@@ -123,3 +123,39 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.sha256
+
+  # Temporary implementation support for the connected, network-isolated coding
+  # environment. Remove before merge. Exports toolchain/dependency source only,
+  # never Cargo home, credentials, runner environment or owner configuration.
+  authoring-build-support:
+    if: github.head_ref == 'codex/native-workflow-authoring'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Package compiler and locked dependency source for offline tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          kit="$RUNNER_TEMP/factory-build-kit"
+          mkdir -p "$kit"
+          rustc -Vv > "$kit/toolchain.txt"
+          cargo -V >> "$kit/toolchain.txt"
+          git rev-parse HEAD > "$kit/source-commit.txt"
+          cp Cargo.lock "$kit/Cargo.lock"
+          cargo vendor --locked "$kit/vendor" > "$kit/vendor-config.txt"
+          tar -C "$(rustc --print sysroot)" -czf "$kit/toolchain.tar.gz" bin lib
+          tar -C "$kit" -czf "$kit/vendor.tar.gz" vendor
+          rm -rf "$kit/vendor"
+          (cd "$kit" && sha256sum toolchain.tar.gz vendor.tar.gz Cargo.lock > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-authoring-offline-build-kit
+          path: ${{ runner.temp }}/factory-build-kit/
+          retention-days: 1
+          if-no-files-found: error
