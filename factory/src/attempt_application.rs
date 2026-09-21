@@ -310,6 +310,17 @@ fn validate_operation(
                 ));
             }
         }
+        RegisterIndependentReview { attempt_ref, .. } => {
+            current_attempt(reading, attempt_ref)?;
+        }
+        Synthesize {
+            attempt_ref,
+            reviewer_attempt_ref,
+            ..
+        } => {
+            current_attempt(reading, attempt_ref)?;
+            current_attempt(reading, reviewer_attempt_ref)?;
+        }
         RecordTracking { fact, .. } => validate_fact(fact)?,
         RecordObservation { .. }
         | RecordVerification { .. }

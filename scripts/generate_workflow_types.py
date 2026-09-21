@@ -38,7 +38,7 @@ def generate():
     text+='export type WorkflowSource = '+emit(schema)+';\n\n'
     text+='''/** Native exact-edition revision is explicit. Factory computes digest and byte provenance. */
 export type WorkflowDefinition = Omit<WorkflowSource, "schemaVersion" | "coordinationContract" | "source"> & {
-  readonly source: Omit<WorkflowSourceProvenance, "digest" | "authoring">;
+  readonly source: Omit<WorkflowSourceProvenance, "digest" | "authoring"> & { readonly successorOf?: SourcePointer };
   readonly schemaVersion?: WorkflowSource["schemaVersion"];
   readonly coordinationContract?: WorkflowSource["coordinationContract"];
 };
@@ -53,5 +53,8 @@ if __name__=='__main__':
     text=generate()
     if opts.check:
         if not OUTPUT.exists() or OUTPUT.read_text()!=text:raise SystemExit('Factory workflow types drifted; run scripts/generate_workflow_types.py')
-        print('Factory TypeScript types match the owning native schema')
-    else:OUTPUT.write_text(text)
+        if (ROOT/'factory/workflow-sdk/schema.json').read_bytes() != SCHEMA.read_bytes(): raise SystemExit('Installed schema drifted')
+        print('Factory TypeScript types and installed schema match the owning native schema')
+    else:
+        OUTPUT.write_text(text)
+        (ROOT/'factory/workflow-sdk/schema.json').write_bytes(SCHEMA.read_bytes())

@@ -32,6 +32,10 @@ pub struct DelegationContract {
     #[serde(rename = "executionUnitRef")]
     pub execution_unit_ref: WorkflowUnitRef,
     pub concern: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_difference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_contract: Option<String>,
     pub subject_ref: String,
     pub basis_revision: String,
     pub agent_requirements: crate::workflow::CompiledAgentRequirements,
@@ -40,6 +44,10 @@ pub struct DelegationContract {
     pub return_address: String,
     pub stop_conditions: String,
     pub retry_grant: Option<RetryGrant>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution: Option<crate::workflow::WorkflowContribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::CompiledWorkflowInput>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1151,6 +1159,13 @@ impl ExecutableOrchestration {
         }
     }
 
+    pub fn independent_reviewers(&self) -> &BTreeMap<String, IndependentReviewer> {
+        &self.reviewers
+    }
+    pub fn syntheses(&self) -> &BTreeMap<String, SynthesisRecord> {
+        &self.syntheses
+    }
+
     pub fn register_independent_reviewer(
         &mut self,
         execution_ref: impl Into<String>,
@@ -1158,10 +1173,15 @@ impl ExecutableOrchestration {
         review_of: BTreeSet<WorkflowUnitRef>,
     ) -> Result<IndependentReviewer, OrchestrationError> {
         let execution_ref = execution_ref.into();
-        if self.legs.values().any(|leg| {
-            leg.attempts
-                .iter()
-                .any(|attempt| attempt.execution_ref == execution_ref)
+        // A separately executed verifier may itself be a WorkflowUnit in this
+        // Run. Independence is relative to the reviewed producers, not exile
+        // from all native workflow work.
+        if self.legs.iter().any(|(unit, leg)| {
+            review_of.contains(unit)
+                && leg
+                    .attempts
+                    .iter()
+                    .any(|attempt| attempt.execution_ref == execution_ref)
         }) {
             self.self_review_attempts.insert(execution_ref.clone());
             return Err(OrchestrationError::ReviewerAlreadyProducer(execution_ref));
@@ -1187,6 +1207,12 @@ impl ExecutableOrchestration {
             review_of,
             independent_from_execution_refs: producer_execution_refs,
         };
+        if let Some(existing) = self.reviewers.get(&execution_ref) {
+            if existing != &reviewer {
+                return Err(OrchestrationError::ReviewerNotIndependent(execution_ref));
+            }
+            return Ok(existing.clone());
+        }
         self.reviewers.insert(execution_ref, reviewer.clone());
         Ok(reviewer)
     }
@@ -1228,6 +1254,11 @@ impl ExecutableOrchestration {
                 available_evidence.extend(artifact.evidence_refs.clone());
                 available_artifacts.insert(artifact.artifact_ref.clone(), artifact);
             }
+        }
+        if !producer_refs.is_subset(&reviewer.independent_from_execution_refs) {
+            return Err(OrchestrationError::ReviewerNotIndependent(
+                reviewer_execution_ref.into(),
+            ));
         }
         if producer_refs.contains(reviewer_execution_ref) {
             self.self_review_attempts
@@ -1361,6 +1392,8 @@ fn delegation_for(
         parent_run_ref: run.reference().to_string(),
         execution_unit_ref: unit.clone(),
         concern: compiled.developmental_concern.clone(),
+        required_difference: Some(compiled.required_difference.clone()),
+        return_contract: Some(compiled.return_contract.clone()),
         subject_ref: compiled.subject_ref.to_string(),
         basis_revision: compiled.basis_revision.clone(),
         agent_requirements: compiled.agent_requirements.clone(),
@@ -1368,6 +1401,8 @@ fn delegation_for(
         verification_obligations: compiled.verification_obligations.clone(),
         return_address: compiled.return_address.clone(),
         stop_conditions: compiled.stop_conditions.clone(),
+        contribution: compiled.contribution.clone(),
+        inputs: compiled.inputs.clone(),
         retry_grant,
     }
 }

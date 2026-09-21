@@ -7,7 +7,6 @@ on:
     branches: [main]
     paths:
       - 'factory/**'
-      - 'factory-ui/package-lock.json'
       - 'contracts/factory/**'
       - 'skills/**'
       - 'scripts/**'
@@ -69,12 +68,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
-          cache-dependency-path: factory-ui/package-lock.json
       - name: Contract-checked public TypeScript SDK and packaging
         run: |
-          npm ci --prefix factory-ui --ignore-scripts
-          python3 scripts/test_workflow_sdk.py --tsc factory-ui/node_modules/.bin/tsc
+          npm install --prefix factory/workflow-sdk --ignore-scripts --package-lock=false --no-audit --no-fund
+          python3 scripts/test_workflow_sdk.py --tsc factory/workflow-sdk/node_modules/.bin/tsc
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -89,6 +86,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test all native targets
         run: cargo test --workspace --all-targets --locked
+      - name: Installed authoring front door without an ambient companion runtime
+        run: |
+          cargo install --path factory --locked --debug --root "$RUNNER_TEMP/factory-installed"
+          python3 scripts/test_workflow_install.py --binary "$RUNNER_TEMP/factory-installed/bin/factory"
       - name: Documentation tests retained from pre-local verification
         run: cargo test --workspace --doc --locked
       - name: Agent capability intake conformance lane
@@ -119,7 +120,7 @@ jobs:
           short_sha="${GITHUB_SHA::12}"
           name="software-factory-0.1.0-${short_sha}-component"
           mkdir -p "dist/$name"
-          cp -R factory contracts scripts docs .github factory-ui .oi "dist/$name/"
+          cp -R factory contracts scripts docs .github factory-ui skills agents .oi "dist/$name/"
           cp Cargo.toml Cargo.lock README.md "dist/$name/"
           printf '%s\n' "$GITHUB_SHA" > "dist/$name/source-commit.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"

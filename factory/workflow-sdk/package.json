@@ -3,10 +3,27 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Factory-native restricted TypeScript workflow authoring types and data builders",
-  "exports": { ".": { "types": "./index.d.ts", "import": "./index.mjs" } },
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs"
+    }
+  },
   "types": "./index.d.ts",
-  "files": ["index.d.ts", "index.mjs", "examples"],
+  "files": [
+    "index.d.ts",
+    "index.mjs",
+    "examples",
+    "schema.json",
+    "README.md",
+    "test.mjs"
+  ],
   "sideEffects": false,
-  "scripts": {"test": "node --test test.mjs"},
-  "license": "UNLICENSED"
+  "scripts": {
+    "test": "node --test test.mjs"
+  },
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
 }

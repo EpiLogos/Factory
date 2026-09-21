@@ -41,6 +41,11 @@ impl FactoryRunAttempts {
         &self.attempts
     }
 
+    /// The exact admitted source, not a current file or a guessed display name.
+    pub fn workflow_source(&self) -> &WorkflowSource {
+        &self.workflow_source
+    }
+
     fn from_view(state: &StoredAttemptState) -> Self {
         Self {
             schema: FACTORY_RUN_ATTEMPTS.into(),
@@ -197,6 +202,39 @@ impl FileAttemptStore {
         Ok(reading)
     }
 
+    pub fn workflow_inputs(
+        &self,
+        selector: &str,
+        expected_revision: Option<u64>,
+    ) -> Result<serde_json::Value, FactoryAttemptError> {
+        let native = read_developmental_state(&self.path).map_err(native_error)?;
+        let view = view_for(&native, &self.run_ref)?;
+        if let Some(expected) = expected_revision {
+            if expected != view.revision {
+                return Err(FactoryAttemptError::RevisionConflict {
+                    expected,
+                    actual: view.revision,
+                });
+            }
+        }
+        let workflow = crate::workflow::compile_workflow(view.workflow_source.clone())?;
+        let engine = view.snapshot.restore(workflow, view.run.clone())?;
+        let unit = engine
+            .workflow()
+            .units
+            .values()
+            .find(|u| u.key == selector || u.reference.to_string() == selector)
+            .ok_or_else(|| invalid("selected workflow unit is unavailable"))?;
+        let value = serde_json::json!({"contract":"factory.workflow-input-candidates/v1",
+            "revision":view.revision,"runRef":self.run_ref,"sourceRef":view.workflow_source.source.reference,
+            "sourceRevision":view.workflow_source.source.revision,"sourceDigest":view.workflow_source.source.digest,
+            "sourceCurrent":source_is_current(&native,&view),"inputs":crate::workflow_inputs::candidates(&engine,unit)});
+        if serde_json::to_vec(&value)?.len() > 2 * 1024 * 1024 {
+            return Err(invalid("input candidates exceed 2 MiB; use the native attempt/artifact read for selected legs"));
+        }
+        Ok(value)
+    }
+
     pub fn apply(
         &mut self,
         request: FactoryAttemptActionRequest,
@@ -305,6 +343,8 @@ fn requires_current_source(operation: &FactoryAttemptOperation) -> bool {
             | FactoryAttemptOperation::BindDispatch { .. }
             | FactoryAttemptOperation::Retry { .. }
             | FactoryAttemptOperation::ReturnArtifact { .. }
+            | FactoryAttemptOperation::RegisterIndependentReview { .. }
+            | FactoryAttemptOperation::Synthesize { .. }
             | FactoryAttemptOperation::IncorporateLateResult { .. }
     )
 }

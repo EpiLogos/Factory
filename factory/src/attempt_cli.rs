@@ -50,6 +50,10 @@ const CONTRACTS: &[&str] = &[
 ];
 
 pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    if args.first().map(String::as_str) == Some("workflow") {
+        let value = crate::workflow_authoring::cli::execute(args).map_err(|e| e.to_string())?;
+        return serde_json::to_string_pretty(&value).map_err(|e| e.to_string());
+    }
     if args.first().map(String::as_str) == Some("owner") {
         return crate::native_owner::execute_native_owner_cli(&args[1..], stdin)
             .map_err(|error| error.to_string());
@@ -90,12 +94,20 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
                 .map_err(|error| error.to_string()),
         };
     }
-    let base = match crate::development_field_cli::execute_extension(args, stdin)
+    let mut base = match crate::development_field_cli::execute_extension(args, stdin)
         .map_err(|error| error.to_string())?
     {
         Some(output) => output,
         None => crate::cli::execute_cli(args, stdin).map_err(|error| error.to_string())?,
     };
+    if args.is_empty()
+        || args
+            .first()
+            .is_some_and(|s| matches!(s.as_str(), "help" | "--help" | "-h"))
+    {
+        base.push('\n');
+        base.push_str(crate::workflow_authoring::cli::HELP);
+    }
     match args.first().map(String::as_str) {
         Some("capabilities") if args.iter().any(|argument| argument == "--json") => {
             let mut value: Value = serde_json::from_str(&base).map_err(|error| error.to_string())?;
@@ -105,9 +117,13 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
                     if !values.iter().any(|value| value.as_str() == Some(*addition)) { values.push(Value::String((*addition).into())); }
                 }
             }
+            for (field, additions) in [("commands",crate::workflow_authoring::cli::COMMANDS), ("nativeContracts",crate::workflow_authoring::cli::CONTRACTS)] {
+                let values = value[field].as_array_mut().ok_or("invalid capabilities")?;
+                for name in additions { values.push(Value::String((*name).into())); }
+            }
             serde_json::to_string_pretty(&value).map_err(|error| error.to_string())
         }
-        Some("capabilities") => Ok(format!("{base}\nattempt commands: {}\nattempt contracts: {}",COMMANDS.join(", "),CONTRACTS.join(", "))),
+        Some("capabilities") => Ok(format!("{base}\nattempt commands: {}\nattempt contracts: {}\nworkflow commands: {}\nworkflow contracts: {}",COMMANDS.join(", "),CONTRACTS.join(", "),crate::workflow_authoring::cli::COMMANDS.join(", "),crate::workflow_authoring::cli::CONTRACTS.join(", "))),
         None | Some("help" | "--help" | "-h") => Ok(format!("{base}\n\nNative attempts:\n  factory attempt help\n  factory development attempt help\n{}",task_help())),
         _ => Ok(base),
     }

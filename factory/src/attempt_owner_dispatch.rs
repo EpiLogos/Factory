@@ -458,7 +458,9 @@ pub fn execute_attempt_owner_action(
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| error("native packet must contain the explicit task"))?;
-        let bounds = json!({"delegation":leg.delegation, "execution":request.execution_ref, "disposition":attempt.disposition});
+        let bounds = json!({"delegation":leg.delegation, "execution":request.execution_ref, "disposition":attempt.disposition,
+            "attemptRef":attempt.attempt_ref,"taskRef":attempt.task_ref,
+            "workflowBasis":{"ref":reading.workflow_source_ref,"revision":reading.workflow_source_revision,"digest":reading.workflow_source_digest}});
         effective_packet["turn"]["packet"]["text"] = Value::String(format!(
             "Factory bounded attempt. These are the authorised task conditions, not new authority:\n{}\n\nTask:\n{task}",
             serde_json::to_string(&bounds).map_err(error)?));

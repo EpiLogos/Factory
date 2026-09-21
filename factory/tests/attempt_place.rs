@@ -536,6 +536,7 @@ impl World {
         )
         .unwrap();
         SituatedExecutionDisposition {
+            selected_inputs: Vec::new(),
             selection,
             participant: SituatedParticipant {
                 agent_ref: unit

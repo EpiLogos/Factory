@@ -22,9 +22,9 @@ export type WorkflowSourceProvenance = {
 };
 
 export type AgentRequirements = {
-  readonly agentRefs?: RefSet;
-  readonly agentSetRefs?: RefSet;
-  readonly agencyRefs?: RefSet;
+  readonly agentRefs?: QualifiedRefSet;
+  readonly agentSetRefs?: QualifiedRefSet;
+  readonly agencyRefs?: QualifiedRefSet;
 };
 
 export type WorkflowUnitSource = {
@@ -32,18 +32,20 @@ export type WorkflowUnitSource = {
   readonly developmentalConcern: NonEmpty;
   readonly requiredDifference: NonEmpty;
   readonly returnContract: NonEmpty;
-  readonly subjectRef: Ref;
+  readonly subjectRef: QualifiedRef;
   readonly basisRevision: NonEmpty;
   readonly agentRequirements: AgentRequirements;
-  readonly praxisRefs: RefSet;
-  readonly capabilityRefs: RefSet;
+  readonly praxisRefs: QualifiedRefSet;
+  readonly capabilityRefs: QualifiedRefSet;
   readonly dependencies?: LocatorSet;
   readonly independenceFrom?: LocatorSet;
   readonly permittedEffects: TextSet;
   readonly verificationObligations: TextSet;
-  readonly returnAddress: Ref;
+  readonly returnAddress: QualifiedRef;
   readonly stopConditions: NonEmpty;
   readonly escalationConditions: NonEmpty;
+  readonly contribution?: Contribution;
+  readonly inputs?: ReadonlyArray<WorkflowInputSource>;
 };
 
 export type WorkflowBarrierSource = {
@@ -68,6 +70,7 @@ export type ModuleBasis = {
   readonly path: string;
   readonly digest: string;
   readonly bytes: number;
+  readonly content: string;
 };
 
 export type SourcePointer = {
@@ -88,6 +91,32 @@ export type AuthoredBasis = {
   readonly successorOf?: SourcePointer;
 };
 
+export type RoleSource = {
+  readonly owner: string;
+  readonly ref: string;
+  readonly revision: string;
+};
+
+export type Contribution = {
+  readonly description: string;
+  readonly roleSource: RoleSource;
+  readonly contextRefs?: ReadonlyArray<string>;
+  readonly requiredTools?: ReadonlyArray<string>;
+  readonly requiredActions?: ReadonlyArray<string>;
+  readonly requiredModalities?: ReadonlyArray<string>;
+  readonly requiredHarnessRef?: string;
+  readonly requiredModelRef?: string;
+};
+
+export type QualifiedRef = string;
+
+export type QualifiedRefSet = ReadonlyArray<QualifiedRef>;
+
+export type WorkflowInputSource = {
+  readonly predecessor: string;
+  readonly receivingContextRef: QualifiedRef;
+};
+
 export type WorkflowSource = {
   readonly schemaVersion: "factory.agent-workflow-source/v1";
   readonly coordinationContract: "factory.bounded-coordination/v1";
@@ -100,7 +129,7 @@ export type WorkflowSource = {
 
 /** Native exact-edition revision is explicit. Factory computes digest and byte provenance. */
 export type WorkflowDefinition = Omit<WorkflowSource, "schemaVersion" | "coordinationContract" | "source"> & {
-  readonly source: Omit<WorkflowSourceProvenance, "digest" | "authoring">;
+  readonly source: Omit<WorkflowSourceProvenance, "digest" | "authoring"> & { readonly successorOf?: SourcePointer };
   readonly schemaVersion?: WorkflowSource["schemaVersion"];
   readonly coordinationContract?: WorkflowSource["coordinationContract"];
 };

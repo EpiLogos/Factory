@@ -60,6 +60,21 @@ pub struct BoundedRootAct {
     pub standing: String,
 }
 
+/// One directly authored participant requirement. This is the alternative
+/// commission basis for requests that carry no Central composition evidence:
+/// the required participant is named with its own source attribution, and it
+/// never grants authority beyond the commissioned run.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryParticipantRequirement {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub description: String,
+    pub source_owner: String,
+    pub source_ref: String,
+    pub source_revision: String,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactoryCommissionRequest {
@@ -71,8 +86,11 @@ pub struct FactoryCommissionRequest {
     pub run_destination: String,
     pub write_owner: String,
     pub commissioned_at: String,
-    pub central_composition: CentralAgentCompositionEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub central_composition: Option<CentralAgentCompositionEvidence>,
     pub root_act: BoundedRootAct,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participant_requirements: Vec<FactoryParticipantRequirement>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -217,68 +235,120 @@ impl FactoryCommissionRequest {
         }
         let moment = timestamp(&self.commissioned_at, "commissionedAt")?;
         timestamp_ms(moment)?;
-        let composition = &self.central_composition;
-        if composition.owner != "central"
-            || composition.authority_standing != "membership-non-authoritative"
-        {
-            return Err(CommissionError::Invalid("centralComposition".into()));
-        }
-        if composition.development_agent_set.record_ref == composition.guardian_agent_set.record_ref
-        {
-            return Err(CommissionError::Invalid(
-                "centralComposition.agentSetReceipt".into(),
-            ));
-        }
-        for receipt in [
-            &composition.development_agent_set,
-            &composition.guardian_agent_set,
-        ] {
-            stable_ref(&receipt.record_ref, "agentSetReceipt.ref")?;
-            stable_ref(&receipt.revision, "agentSetReceipt.revision")?;
-            if !receipt.source_path.starts_with("Control/")
-                || receipt.source_path.contains("..")
-                || receipt.source_path.chars().any(char::is_whitespace)
-                || !lower_hex_digest(&receipt.sha256)
-            {
-                return Err(CommissionError::Invalid(
-                    "centralComposition.agentSetReceipt".into(),
-                ));
+        match (
+            &self.central_composition,
+            self.participant_requirements.is_empty(),
+        ) {
+            (Some(composition), true) => {
+                if composition.owner != "central"
+                    || composition.authority_standing != "membership-non-authoritative"
+                {
+                    return Err(CommissionError::Invalid("centralComposition".into()));
+                }
+                if composition.development_agent_set.record_ref
+                    == composition.guardian_agent_set.record_ref
+                {
+                    return Err(CommissionError::Invalid(
+                        "centralComposition.agentSetReceipt".into(),
+                    ));
+                }
+                for receipt in [
+                    &composition.development_agent_set,
+                    &composition.guardian_agent_set,
+                ] {
+                    stable_ref(&receipt.record_ref, "agentSetReceipt.ref")?;
+                    stable_ref(&receipt.revision, "agentSetReceipt.revision")?;
+                    if !receipt.source_path.starts_with("Control/")
+                        || receipt.source_path.contains("..")
+                        || receipt.source_path.chars().any(char::is_whitespace)
+                        || !lower_hex_digest(&receipt.sha256)
+                    {
+                        return Err(CommissionError::Invalid(
+                            "centralComposition.agentSetReceipt".into(),
+                        ));
+                    }
+                }
+                unique_required(
+                    &composition.resolved_agent_refs,
+                    "centralComposition.resolvedAgentRefs",
+                )?;
+                if composition
+                    .resolved_agent_refs
+                    .iter()
+                    .any(|value| !(value.starts_with("agent/") || value.starts_with("agent:")))
+                {
+                    return Err(CommissionError::Invalid(
+                        "centralComposition.resolvedAgentRefs".into(),
+                    ));
+                }
+                if !composition
+                    .resolved_agent_refs
+                    .contains(&self.root_act.agent_ref)
+                    || self.root_act.standing != "commissioned-not-executed"
+                {
+                    return Err(CommissionError::Invalid("rootAct".into()));
+                }
+                let mut profiles = BTreeSet::new();
+                for receipt in &composition.agent_profile_receipts {
+                    stable_ref(&receipt.record_ref, "agentProfileReceipt.ref")?;
+                    stable_ref(&receipt.revision, "agentProfileReceipt.revision")?;
+                    if !receipt.record_ref.starts_with("profile/")
+                        || !receipt.source_path.starts_with("Control/agents/profiles/")
+                        || receipt.source_path.contains("..")
+                        || !lower_hex_digest(&receipt.sha256)
+                        || !profiles.insert(&receipt.record_ref)
+                    {
+                        return Err(CommissionError::Invalid(
+                            "centralComposition.agentProfileReceipts".into(),
+                        ));
+                    }
+                }
             }
-        }
-        unique_required(
-            &composition.resolved_agent_refs,
-            "centralComposition.resolvedAgentRefs",
-        )?;
-        if composition
-            .resolved_agent_refs
-            .iter()
-            .any(|value| !(value.starts_with("agent/") || value.starts_with("agent:")))
-        {
-            return Err(CommissionError::Invalid(
-                "centralComposition.resolvedAgentRefs".into(),
-            ));
-        }
-        if !composition
-            .resolved_agent_refs
-            .contains(&self.root_act.agent_ref)
-            || self.root_act.standing != "commissioned-not-executed"
-        {
-            return Err(CommissionError::Invalid("rootAct".into()));
-        }
-        let mut profiles = BTreeSet::new();
-        for receipt in &composition.agent_profile_receipts {
-            stable_ref(&receipt.record_ref, "agentProfileReceipt.ref")?;
-            stable_ref(&receipt.revision, "agentProfileReceipt.revision")?;
-            if !receipt.record_ref.starts_with("profile/")
-                || !receipt.source_path.starts_with("Control/agents/profiles/")
-                || receipt.source_path.contains("..")
-                || !lower_hex_digest(&receipt.sha256)
-                || !profiles.insert(&receipt.record_ref)
-            {
-                return Err(CommissionError::Invalid(
-                    "centralComposition.agentProfileReceipts".into(),
-                ));
+            (None, false) => {
+                // A directly authored participant basis: the required
+                // participants are named here with their own source
+                // attribution instead of Central composition evidence.
+                if self.participant_requirements.len() > 128 {
+                    return Err(CommissionError::Invalid("participantRequirements".into()));
+                }
+                let mut required_refs = BTreeSet::new();
+                for requirement in &self.participant_requirements {
+                    stable_ref(&requirement.reference, "participantRequirements.ref")?;
+                    if !["agent", "agent-set", "agency"].iter().any(|kind| {
+                        requirement.reference.starts_with(&format!("{kind}:"))
+                            || requirement.reference.starts_with(&format!("{kind}/"))
+                    }) {
+                        return Err(CommissionError::Invalid(
+                            "participantRequirements.ref".into(),
+                        ));
+                    }
+                    required(
+                        &requirement.description,
+                        "participantRequirements.description",
+                    )?;
+                    stable_ref(
+                        &requirement.source_owner,
+                        "participantRequirements.sourceOwner",
+                    )?;
+                    stable_ref(&requirement.source_ref, "participantRequirements.sourceRef")?;
+                    stable_ref(
+                        &requirement.source_revision,
+                        "participantRequirements.sourceRevision",
+                    )?;
+                    if !required_refs.insert(&requirement.reference) {
+                        return Err(CommissionError::Invalid("participantRequirements".into()));
+                    }
+                }
+                if !required_refs.contains(&self.root_act.agent_ref)
+                    || self.root_act.standing != "commissioned-not-executed"
+                {
+                    return Err(CommissionError::Invalid("rootAct".into()));
+                }
             }
+            _ => return Err(CommissionError::Invalid(
+                "commission carries exactly one of centralComposition and participantRequirements"
+                    .into(),
+            )),
         }
         stable_ref(&self.root_act.act_ref, "rootAct.actRef")?;
         stable_ref(&self.root_act.agent_ref, "rootAct.agentRef")?;
@@ -332,31 +402,41 @@ impl FactoryCommission {
                 &self.run_ref.to_string(),
                 "factory",
             ),
-            edge(
+        ];
+        if let Some(central) = central {
+            traversal.push(edge(
                 &central.development_agent_set.record_ref,
                 "composition-evidence-for",
                 &self.journey_ref.to_string(),
                 "central",
-            ),
-            edge(
+            ));
+            traversal.push(edge(
                 &central.guardian_agent_set.record_ref,
                 "composition-evidence-for",
                 &self.journey_ref.to_string(),
                 "central",
-            ),
-        ];
-        traversal.extend(
-            [&central.development_agent_set, &central.guardian_agent_set]
-                .into_iter()
-                .map(|source| {
-                    edge(
-                        &source.source_path,
-                        "supports-membership-reading",
-                        &self.request.request_ref,
-                        "central",
-                    )
-                }),
-        );
+            ));
+            traversal.extend(
+                [&central.development_agent_set, &central.guardian_agent_set]
+                    .into_iter()
+                    .map(|source| {
+                        edge(
+                            &source.source_path,
+                            "supports-membership-reading",
+                            &self.request.request_ref,
+                            "central",
+                        )
+                    }),
+            );
+        }
+        for requirement in &self.request.participant_requirements {
+            traversal.push(edge(
+                &requirement.reference,
+                "required-participant-for",
+                &self.journey_ref.to_string(),
+                requirement.source_owner.as_str(),
+            ));
+        }
         FactoryCommissionReading {
             contract: FACTORY_COMMISSION_READING.into(),
             commission: self.clone(),
@@ -399,25 +479,20 @@ impl FactoryCommission {
             .iter()
             .map(|item| item.participant_ref.as_str())
             .collect::<BTreeSet<_>>();
-        if !participants.contains(
+        let basis_satisfied = if let Some(composition) = &self.request.central_composition {
+            participants.contains(composition.development_agent_set.record_ref.as_str())
+                && participants.contains(composition.guardian_agent_set.record_ref.as_str())
+                && composition
+                    .resolved_agent_refs
+                    .iter()
+                    .all(|item| participants.contains(item.as_str()))
+        } else {
             self.request
-                .central_composition
-                .development_agent_set
-                .record_ref
-                .as_str(),
-        ) || !participants.contains(
-            self.request
-                .central_composition
-                .guardian_agent_set
-                .record_ref
-                .as_str(),
-        ) || self
-            .request
-            .central_composition
-            .resolved_agent_refs
-            .iter()
-            .any(|item| !participants.contains(item.as_str()))
-        {
+                .participant_requirements
+                .iter()
+                .all(|requirement| participants.contains(requirement.reference.as_str()))
+        };
+        if !basis_satisfied {
             return Err(CommissionError::InvalidStored);
         }
         Ok(())
@@ -883,34 +958,41 @@ fn add_composition_participants(
     journey: &mut Journey,
     request: &FactoryCommissionRequest,
 ) -> Result<(), CommissionError> {
-    journey
-        .add_participant(JourneyParticipant {
-            participant_ref: request
-                .central_composition
-                .development_agent_set
-                .record_ref
-                .clone(),
-            role: Some("central-composition-evidence-non-authoritative".into()),
-        })
-        .map_err(debug)?;
-    journey
-        .add_participant(JourneyParticipant {
-            participant_ref: request
-                .central_composition
-                .guardian_agent_set
-                .record_ref
-                .clone(),
-            role: Some("central-guardian-membership-evidence-non-authoritative".into()),
-        })
-        .map_err(debug)?;
-    for agent in &request.central_composition.resolved_agent_refs {
+    if let Some(composition) = &request.central_composition {
         journey
             .add_participant(JourneyParticipant {
-                participant_ref: agent.clone(),
-                role: Some(if agent == &request.root_act.agent_ref {
+                participant_ref: composition.development_agent_set.record_ref.clone(),
+                role: Some("central-composition-evidence-non-authoritative".into()),
+            })
+            .map_err(debug)?;
+        journey
+            .add_participant(JourneyParticipant {
+                participant_ref: composition.guardian_agent_set.record_ref.clone(),
+                role: Some("central-guardian-membership-evidence-non-authoritative".into()),
+            })
+            .map_err(debug)?;
+        for agent in &composition.resolved_agent_refs {
+            journey
+                .add_participant(JourneyParticipant {
+                    participant_ref: agent.clone(),
+                    role: Some(if agent == &request.root_act.agent_ref {
+                        "bounded-root-act-commissioned-not-executed".into()
+                    } else {
+                        "resolved-membership-evidence-non-authoritative".into()
+                    }),
+                })
+                .map_err(debug)?;
+        }
+        return Ok(());
+    }
+    for requirement in &request.participant_requirements {
+        journey
+            .add_participant(JourneyParticipant {
+                participant_ref: requirement.reference.clone(),
+                role: Some(if requirement.reference == request.root_act.agent_ref {
                     "bounded-root-act-commissioned-not-executed".into()
                 } else {
-                    "resolved-membership-evidence-non-authoritative".into()
+                    "commissioned-participant-requirement-non-authoritative".into()
                 }),
             })
             .map_err(debug)?;
@@ -960,27 +1042,19 @@ fn commission_basis(request: &FactoryCommissionRequest) -> Vec<String> {
     let mut values = vec![
         request.request_ref.clone(),
         request.root_act.act_ref.clone(),
-        request
-            .central_composition
-            .development_agent_set
-            .record_ref
-            .clone(),
-        request
-            .central_composition
-            .guardian_agent_set
-            .record_ref
-            .clone(),
-        request
-            .central_composition
-            .development_agent_set
-            .source_path
-            .clone(),
-        request
-            .central_composition
-            .guardian_agent_set
-            .source_path
-            .clone(),
     ];
+    if let Some(composition) = &request.central_composition {
+        values.push(composition.development_agent_set.record_ref.clone());
+        values.push(composition.guardian_agent_set.record_ref.clone());
+        values.push(composition.development_agent_set.source_path.clone());
+        values.push(composition.guardian_agent_set.source_path.clone());
+    }
+    values.extend(
+        request
+            .participant_requirements
+            .iter()
+            .map(|requirement| requirement.reference.clone()),
+    );
     values.sort();
     values.dedup();
     values
@@ -1085,7 +1159,7 @@ mod tests {
             run_destination: "factory-programme/remaining-oi-aikit-and-snapshot-work".into(),
             write_owner: "factory".into(),
             commissioned_at: "2026-09-09T12:00:00Z".into(),
-            central_composition: CentralAgentCompositionEvidence {
+            central_composition: Some(CentralAgentCompositionEvidence {
                 owner: "central".into(),
                 development_agent_set: CentralSourceRecordReceipt {
                     record_ref: "oi-development-agency".into(),
@@ -1108,7 +1182,7 @@ mod tests {
                 ],
                 agent_profile_receipts: Vec::new(),
                 authority_standing: "membership-non-authoritative".into(),
-            },
+            }),
             root_act: BoundedRootAct {
                 act_ref: "act:factory-201-root".into(),
                 agent_ref: "agent:hermes".into(),
@@ -1116,6 +1190,7 @@ mod tests {
                 scope_refs: vec!["issue:201".into(), "issue:188".into()],
                 standing: "commissioned-not-executed".into(),
             },
+            participant_requirements: Vec::new(),
         }
     }
 
@@ -1140,6 +1215,49 @@ mod tests {
                 .commission,
             applied.commission
         );
+    }
+
+    #[test]
+    fn participant_requirements_are_an_alternative_commission_basis() {
+        let mut direct = request();
+        direct.central_composition = None;
+        direct.participant_requirements = vec![FactoryParticipantRequirement {
+            reference: "agent:hermes".into(),
+            description: "Inspect the controlled source under the selected role".into(),
+            source_owner: "central".into(),
+            source_ref: "source:specimen-agent".into(),
+            source_revision: "specimen-v1".into(),
+        }];
+        direct.validate().unwrap();
+        // The commission basis is recorded: the required participant is a
+        // journey participant and the reading names it as required.
+        let (state, _) = FactoryDevelopmentalState::from_commission(direct.clone()).unwrap();
+        state.validate().unwrap();
+        let journey = &state
+            .journeys
+            .iter()
+            .find(|journey| {
+                journey.commission.commission_ref.as_deref() == Some(direct.request_ref.as_str())
+            })
+            .unwrap();
+        assert!(journey
+            .participants
+            .iter()
+            .any(|participant| participant.participant_ref == "agent:hermes"));
+        let receipt = serde_json::to_value(&direct).unwrap();
+        assert!(receipt.get("centralComposition").is_none());
+
+        // Both bases at once is a contract violation, and so is neither.
+        let mut both = request();
+        both.participant_requirements = direct.participant_requirements.clone();
+        assert!(both.validate().is_err());
+        let mut neither = request();
+        neither.central_composition = None;
+        assert!(neither.validate().is_err());
+        // The root act must still be bounded by a required participant.
+        let mut unbounded = direct.clone();
+        unbounded.root_act.agent_ref = "agent:someone-else".into();
+        assert!(unbounded.validate().is_err());
     }
 
     #[test]
@@ -1348,10 +1466,19 @@ mod tests {
             Err(CommissionError::TimestampOutOfRange)
         ));
         let mut invalid = request();
-        invalid.central_composition.development_agent_set.sha256 = "A".repeat(64);
+        invalid
+            .central_composition
+            .as_mut()
+            .unwrap()
+            .development_agent_set
+            .sha256 = "A".repeat(64);
         assert!(invalid.validate().is_err());
         let mut invalid = request();
-        invalid.central_composition.resolved_agent_refs[0] = "agent/bad ref".into();
+        invalid
+            .central_composition
+            .as_mut()
+            .unwrap()
+            .resolved_agent_refs[0] = "agent/bad ref".into();
         assert!(invalid.validate().is_err());
         let mut invalid = request();
         invalid.root_act.scope_refs[0] = "issue:201 bad".into();

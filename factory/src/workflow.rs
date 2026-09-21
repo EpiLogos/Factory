@@ -10,6 +10,7 @@ use crate::core::run::{
     TopologyNode, WorkflowUnitRef,
 };
 use crate::execution_intelligence::ExecutionDemand;
+pub use crate::workflow_reference::WorkflowSubjectRef;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -32,6 +33,8 @@ pub struct WorkflowSourceProvenance {
     pub temporal_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flow_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authoring: Option<Box<crate::workflow_authoring::AuthoredBasis>>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -45,6 +48,99 @@ pub struct AgentRequirements {
     pub agency_refs: Vec<String>,
 }
 
+/// Optional explicit delivery requirements for a contribution. These are authored
+/// requirements, never grants or assertions that a child has loaded them.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowContribution {
+    pub description: String,
+    pub role_source: WorkflowRoleSource,
+    #[serde(default, deserialize_with = "unique_contribution_refs")]
+    pub context_refs: BTreeSet<String>,
+    #[serde(default, deserialize_with = "unique_contribution_refs")]
+    pub required_tools: BTreeSet<String>,
+    #[serde(default, deserialize_with = "unique_contribution_refs")]
+    pub required_actions: BTreeSet<String>,
+    #[serde(default, deserialize_with = "unique_contribution_refs")]
+    pub required_modalities: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_harness_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_model_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkflowRoleSource {
+    pub owner: String,
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub revision: String,
+}
+fn unique_contribution_refs<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeSet<String>, D::Error> {
+    let values = Vec::<String>::deserialize(deserializer)?;
+    let set = values.iter().cloned().collect::<BTreeSet<_>>();
+    if set.len() != values.len() || values.len() > 128 {
+        return Err(serde::de::Error::custom(
+            "contribution references must be unique and limited to 128",
+        ));
+    }
+    Ok(set)
+}
+// Foreign owners retain their own qualified identifiers; a role/ContextSource
+// does not acquire a Factory ULID merely because a workflow names it.
+fn validate_contribution_ref(field: &'static str, value: &str) -> Result<(), WorkflowError> {
+    if value.is_empty()
+        || value.len() > 2048
+        || value.chars().any(char::is_whitespace)
+        || value.chars().any(char::is_control)
+        || !(value.contains(':') || value.contains('/'))
+    {
+        return Err(WorkflowError::InvalidReference {
+            field,
+            value: value.into(),
+        });
+    }
+    Ok(())
+}
+impl WorkflowContribution {
+    fn validate(&self) -> Result<(), WorkflowError> {
+        required("contribution.description", &self.description)?;
+        required("contribution.roleSource.owner", &self.role_source.owner)?;
+        validate_contribution_ref("contribution.roleSource.ref", &self.role_source.reference)?;
+        required(
+            "contribution.roleSource.revision",
+            &self.role_source.revision,
+        )?;
+        for (field, refs) in [
+            ("contribution.contextRefs", &self.context_refs),
+            ("contribution.requiredTools", &self.required_tools),
+            ("contribution.requiredActions", &self.required_actions),
+        ] {
+            for reference in refs {
+                validate_contribution_ref(field, reference)?;
+            }
+        }
+        for modality in &self.required_modalities {
+            required("contribution.requiredModalities", modality)?;
+        }
+        for (field, value) in [
+            (
+                "contribution.requiredHarnessRef",
+                &self.required_harness_ref,
+            ),
+            ("contribution.requiredModelRef", &self.required_model_ref),
+        ] {
+            if let Some(value) = value {
+                validate_contribution_ref(field, value)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkflowUnitSource {
@@ -53,7 +149,7 @@ pub struct WorkflowUnitSource {
     pub developmental_concern: String,
     pub required_difference: String,
     pub return_contract: String,
-    pub subject_ref: Ref,
+    pub subject_ref: WorkflowSubjectRef,
     pub basis_revision: String,
     pub agent_requirements: AgentRequirements,
     pub praxis_refs: Vec<String>,
@@ -67,6 +163,10 @@ pub struct WorkflowUnitSource {
     pub return_address: String,
     pub stop_conditions: String,
     pub escalation_conditions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution: Option<WorkflowContribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::WorkflowInputSource>,
 }
 
 /// A named join. Runtime fork/join lifecycle remains owned by #198; this is
@@ -109,7 +209,7 @@ pub struct CompiledWorkflowUnit {
     pub developmental_concern: String,
     pub required_difference: String,
     pub return_contract: String,
-    pub subject_ref: Ref,
+    pub subject_ref: WorkflowSubjectRef,
     pub basis_revision: String,
     pub agent_requirements: CompiledAgentRequirements,
     pub praxis_refs: BTreeSet<String>,
@@ -121,6 +221,10 @@ pub struct CompiledWorkflowUnit {
     pub return_address: String,
     pub stop_conditions: String,
     pub escalation_conditions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contribution: Option<WorkflowContribution>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inputs: Vec<crate::workflow_inputs::CompiledWorkflowInput>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -218,6 +322,11 @@ pub fn compile_workflow(source: WorkflowSource) -> Result<CompiledWorkflow, Work
     let source_revision = required("source.revision", &source.source.revision)?;
     validate_digest(&source.source.digest)?;
 
+    if let Some(basis) = &source.source.authoring {
+        basis
+            .validate_source(&source)
+            .map_err(|e| WorkflowError::Serialization(e.to_string()))?;
+    }
     let computed_digest = workflow_source_digest(&source)?;
     let declared_digest = source.source.digest.to_ascii_lowercase();
     if declared_digest != computed_digest {
@@ -281,6 +390,15 @@ pub fn compile_workflow(source: WorkflowSource) -> Result<CompiledWorkflow, Work
                 return_address: unit.return_address,
                 stop_conditions: unit.stop_conditions,
                 escalation_conditions: unit.escalation_conditions,
+                contribution: unit.contribution,
+                inputs: unit
+                    .inputs
+                    .iter()
+                    .map(|input| crate::workflow_inputs::CompiledWorkflowInput {
+                        predecessor: unit_refs[&input.predecessor].clone(),
+                        receiving_context_ref: input.receiving_context_ref.clone(),
+                    })
+                    .collect(),
             },
         );
     }
@@ -294,6 +412,7 @@ pub fn compile_workflow(source: WorkflowSource) -> Result<CompiledWorkflow, Work
             digest: declared_digest,
             temporal_ref: normalize_optional(source.source.temporal_ref),
             flow_ref: normalize_optional(source.source.flow_ref),
+            authoring: source.source.authoring,
         },
         workflow_key,
         units,
@@ -428,6 +547,17 @@ impl CompiledWorkflowUnit {
     /// demand is accepted into an `ExecutionDisposition`.
     pub fn bind_execution_demand(&self, mut demand: ExecutionDemand) -> ExecutionDemand {
         demand.workflow_unit_ref = Some(self.reference.to_string());
+        if let Some(contribution) = &self.contribution {
+            demand
+                .required_tools
+                .extend(contribution.required_tools.clone());
+            demand
+                .required_actions
+                .extend(contribution.required_actions.clone());
+            demand
+                .required_modalities
+                .extend(contribution.required_modalities.clone());
+        }
         demand
             .required_capabilities
             .extend(self.capability_refs.iter().cloned());
@@ -455,7 +585,7 @@ struct CanonicalUnit {
     developmental_concern: String,
     required_difference: String,
     return_contract: String,
-    subject_ref: Ref,
+    subject_ref: WorkflowSubjectRef,
     basis_revision: String,
     agent_requirements: CompiledAgentRequirements,
     praxis_refs: BTreeSet<String>,
@@ -467,6 +597,10 @@ struct CanonicalUnit {
     return_address: String,
     stop_conditions: String,
     escalation_conditions: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    contribution: Option<WorkflowContribution>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    inputs: Vec<crate::workflow_inputs::WorkflowInputSource>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -541,7 +675,45 @@ fn canonical_source_content(
     })
 }
 
+/// Validate one source unit for source-editor diagnostics. Whole-graph validation
+/// remains in compile_workflow; this does not approve dependencies in isolation.
+pub fn validate_workflow_unit(unit: &WorkflowUnitSource) -> Result<(), WorkflowError> {
+    canonical_unit(unit).map(|_| ())
+}
+
+fn canonical_inputs(
+    unit: &WorkflowUnitSource,
+) -> Result<Vec<crate::workflow_inputs::WorkflowInputSource>, WorkflowError> {
+    if unit.inputs.len() > 128 {
+        return Err(WorkflowError::InvalidBarrier(
+            "inputs are limited to 128 routes".into(),
+        ));
+    }
+    let mut result = unit.inputs.clone();
+    for input in &result {
+        locator("inputs.predecessor", &input.predecessor)?;
+        validate_ref_string("inputs.receivingContextRef", &input.receiving_context_ref)?;
+        if !unit.dependencies.contains(&input.predecessor) {
+            return Err(WorkflowError::DanglingUnit {
+                field: "inputs.predecessor (must be a declared dependency)",
+                key: input.predecessor.clone(),
+            });
+        }
+    }
+    result.sort();
+    if result.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(WorkflowError::DuplicateValue {
+            field: "inputs",
+            value: unit.key.clone(),
+        });
+    }
+    Ok(result)
+}
+
 fn canonical_unit(unit: &WorkflowUnitSource) -> Result<CanonicalUnit, WorkflowError> {
+    if let Some(contribution) = &unit.contribution {
+        contribution.validate()?;
+    }
     let agent_requirements = CompiledAgentRequirements {
         agent_refs: normalized_refs(
             "agentRequirements.agentRefs",
@@ -597,6 +769,8 @@ fn canonical_unit(unit: &WorkflowUnitSource) -> Result<CanonicalUnit, WorkflowEr
         return_address: validate_ref_string("returnAddress", &unit.return_address)?,
         stop_conditions: required("units.stopConditions", &unit.stop_conditions)?,
         escalation_conditions: required("units.escalationConditions", &unit.escalation_conditions)?,
+        contribution: unit.contribution.clone(),
+        inputs: canonical_inputs(unit)?,
     })
 }
 
@@ -874,14 +1048,13 @@ fn normalized_refs(
 }
 
 fn validate_ref_string(field: &'static str, value: &str) -> Result<String, WorkflowError> {
-    let normalized = normalize(value);
-    normalized
-        .parse::<Ref>()
-        .map_err(|_| WorkflowError::InvalidReference {
+    crate::workflow_reference::validate_qualified_reference(value).map_err(|_| {
+        WorkflowError::InvalidReference {
             field,
-            value: normalized.clone(),
-        })?;
-    Ok(normalized)
+            value: value.to_owned(),
+        }
+    })?;
+    Ok(value.to_owned())
 }
 
 fn collect_unique(

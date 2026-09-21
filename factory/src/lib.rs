@@ -49,9 +49,16 @@ pub mod system;
 pub mod telemetry_cli;
 pub mod vak_orchestration;
 pub mod workflow;
+pub mod workflow_authoring;
 
 impl AsRef<core::identity::Ref> for journey::JourneyRef {
     fn as_ref(&self) -> &core::identity::Ref {
         journey::JourneyRef::as_ref(self)
     }
 }
+
+pub mod workflow_reference;
+
+pub mod workflow_inputs;
+
+pub mod attempt_review;

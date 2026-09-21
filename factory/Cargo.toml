@@ -19,3 +19,6 @@ tempfile = "3"
 # Conformance only: validates emitted documents against the vendored frozen
 # C0 schemas. Default features off keeps the dev tree small.
 jsonschema = { version = "0.28", default-features = false }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

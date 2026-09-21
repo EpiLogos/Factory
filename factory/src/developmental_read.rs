@@ -16,8 +16,9 @@ use crate::build::{
 };
 use crate::commission::{
     CommissionError, FactoryCommission, FactoryCommissionReading, FactoryCommissionReceipt,
-    FactoryCommissionRequest, FactoryDevelopmentalMutationReceipt,
-    FactoryDevelopmentalMutationRecord, FactoryDevelopmentalMutationRequest,
+    FactoryCommissionRequest, FactoryDevelopmentalMutation, FactoryDevelopmentalMutationReceipt,
+    FactoryDevelopmentalMutationRecord, FactoryDevelopmentalMutationRequest, FactoryMutationSource,
+    FACTORY_DEVELOPMENTAL_MUTATION_REQUEST,
 };
 use crate::core::identity::{Ref, Revision};
 use crate::core::run::{ProjectRef, RunLifecycle, RunMap, RunMapAddress, RunRef, WorkflowUnitRef};
@@ -34,6 +35,7 @@ use crate::workflow::{
     compile_workflow, CompiledAgentRequirements, CompiledWorkflow, CompiledWorkflowUnit,
     WorkflowSource,
 };
+use crate::workflow_reference::WorkflowSubjectRef;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -1099,6 +1101,17 @@ struct StoredFactoryDevelopmentalState {
     state: FactoryDevelopmentalState,
 }
 
+/// Combined outcome of one commission-workflow act: the admitted Commission
+/// and the durable AttachWorkflowSource record that retains the authored
+/// source. Replay returns the same pair with `already-applied` status.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryWorkflowCommissionReceipt {
+    pub status: crate::commission::FactoryAdmissionStatus,
+    pub commission: FactoryCommission,
+    pub attachment: FactoryDevelopmentalMutationReceipt,
+}
+
 /// First-party local application boundary for public developmental reads and
 /// canonical Factory Action invocation. The file is provider state, never a
 /// consumer-owned Journey or Run store.
@@ -1134,6 +1147,61 @@ impl FactoryDevelopmentalFileProvider {
         Self::create_new(&path, state)?;
         FileExt::unlock(&lock)?;
         Ok(receipt)
+    }
+
+    /// Commission the Run and retain its authored workflow source as one
+    /// replay-safe act. The commission receipt and the AttachWorkflowSource
+    /// record share one durable state file, so the source history a later
+    /// attempt cites is the source commissioned here.
+    pub fn commission_workflow(
+        path: impl Into<PathBuf>,
+        request: FactoryCommissionRequest,
+        workflow_source: WorkflowSource,
+    ) -> Result<FactoryWorkflowCommissionReceipt, FactoryDevelopmentalProviderError> {
+        let path = path.into();
+        let lock = Self::lock_path(&path)?;
+        let request_ref = request.request_ref.clone();
+        let commissioned_at = request.commissioned_at.clone();
+        let (mut provider, commission) = if path.exists() {
+            let mut provider = Self {
+                state: Self::read_state(&path)?,
+                path,
+            };
+            let commission = provider.state.admit_commission(request)?;
+            (provider, commission)
+        } else {
+            let (state, commission) = FactoryDevelopmentalState::from_commission(request)?;
+            (Self { state, path }, commission)
+        };
+        let attachment = FactoryDevelopmentalMutationRequest {
+            contract: FACTORY_DEVELOPMENTAL_MUTATION_REQUEST.into(),
+            mutation_ref: format!("mutation:{request_ref}"),
+            occurrence_ref: format!("occurrence:{request_ref}"),
+            source: FactoryMutationSource {
+                owner: FACTORY_NATIVE_OWNER.into(),
+                reference: workflow_source.source.reference.to_string(),
+                revision: workflow_source.source.revision.clone(),
+                standing: "owner-native-observation".into(),
+            },
+            observed_at: commissioned_at,
+            mutation: FactoryDevelopmentalMutation::AttachWorkflowSource {
+                run_ref: commission.commission.run_ref.clone(),
+                workflow_source,
+            },
+        };
+        let attachment = provider.state.apply_developmental_mutation(attachment)?;
+        provider.state.validate()?;
+        if commission.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied
+            || attachment.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied
+        {
+            provider.persist()?;
+        }
+        FileExt::unlock(&lock)?;
+        Ok(FactoryWorkflowCommissionReceipt {
+            status: commission.status,
+            commission: commission.commission,
+            attachment,
+        })
     }
 
     pub fn create(
@@ -2998,7 +3066,7 @@ pub struct FactoryWorkflowUnitSummary {
     pub source_ref: Ref,
     pub source_revision: String,
     pub source_digest: String,
-    pub subject_ref: Ref,
+    pub subject_ref: WorkflowSubjectRef,
     pub basis_revision: String,
     pub current_correlation: FactoryWorkflowUnitCurrentCorrelation,
 }
@@ -3014,7 +3082,7 @@ pub struct FactoryWorkflowUnitReading {
     pub key: String,
     pub workflow_key: String,
     pub developmental_concern: String,
-    pub subject_ref: Ref,
+    pub subject_ref: WorkflowSubjectRef,
     pub basis_revision: String,
     pub required_difference: String,
     pub required_return: FactoryWorkflowUnitReturnRequirement,

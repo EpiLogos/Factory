@@ -17,3 +17,6 @@ vendor/
 # Agent/tool state (AIKit task worktrees, session scratch).
 /.aikit/
 /ProjectCentral/now/tmp/
+
+# SDK local installs stay local; CI installs them fresh
+node_modules/
