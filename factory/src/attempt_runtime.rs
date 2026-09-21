@@ -118,6 +118,8 @@ pub struct ExecutionBudget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SituatedExecutionDisposition {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_inputs: Vec<crate::workflow_inputs::SelectedWorkflowInput>,
     pub selection: ExecutionDisposition,
     pub participant: SituatedParticipant,
     #[serde(default)]
@@ -310,6 +312,10 @@ pub struct FactoryAttemptReading {
     pub source_current: bool,
     pub legs: BTreeMap<WorkflowUnitRef, LegRecord>,
     pub attempts: Vec<FactoryAttemptRecord>,
+    #[serde(default)]
+    pub independent_reviewers: BTreeMap<String, crate::orchestration::IndependentReviewer>,
+    #[serde(default)]
+    pub syntheses: BTreeMap<String, crate::orchestration::SynthesisRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -405,6 +411,21 @@ pub enum FactoryAttemptOperation {
         attempt_ref: String,
         artifact: ReturnedArtifact,
         readable_return: ReadableReturn,
+    },
+    /// Admit independent judgement only from an actually returned native attempt.
+    RegisterIndependentReview {
+        attempt_ref: String,
+        review_of: BTreeSet<WorkflowUnitRef>,
+    },
+    /// Record the existing barrier synthesis from a returned result and its
+    /// exact selected predecessor artifacts, not caller-authored success prose.
+    Synthesize {
+        attempt_ref: String,
+        reviewer_attempt_ref: String,
+        synthesis_ref: String,
+        barrier_key: String,
+        result_artifact_ref: String,
+        artifact_refs: BTreeSet<String>,
     },
     IncorporateLateResult {
         attempt_ref: String,
@@ -574,6 +595,27 @@ pub(crate) fn apply_operation(
         } => {
             validate_owner_receipt(&receipt)?;
             let record = attempt_mut(state, &attempt_ref)?;
+            if receipt.owner_ref == "factory"
+                && receipt.contract == "factory.attempt-owner-transport/v1"
+                && receipt.phase == OwnerOperationPhase::Dispatching
+                && receipt.payload["action"] == "send"
+            {
+                let unit = engine
+                    .workflow()
+                    .units
+                    .values()
+                    .find(|u| u.reference == record.workflow_unit_ref)
+                    .ok_or_else(|| {
+                        FactoryAttemptError::InvalidDisposition("unknown native input unit".into())
+                    })?;
+                crate::workflow_inputs::validate_selected_inputs(
+                    &engine,
+                    unit,
+                    &record.disposition.selected_inputs,
+                    &record.disposition.context_refs,
+                )
+                .map_err(FactoryAttemptError::InvalidDisposition)?;
+            }
             ensure_no_duplicate_receipt(record, &receipt.receipt_ref)?;
             record.observations.push(receipt);
             attempt_refs.push(attempt_ref);
@@ -751,6 +793,39 @@ pub(crate) fn apply_operation(
             attempt_refs.push(attempt_ref);
             "return-artifact"
         }
+        FactoryAttemptOperation::RegisterIndependentReview {
+            attempt_ref,
+            review_of,
+        } => {
+            crate::attempt_review::register(state, &mut engine, &attempt_ref, review_of)?;
+            attempt_refs.push(attempt_ref);
+            "register-independent-review"
+        }
+        FactoryAttemptOperation::Synthesize {
+            attempt_ref,
+            reviewer_attempt_ref,
+            synthesis_ref,
+            barrier_key,
+            result_artifact_ref,
+            artifact_refs,
+        } => {
+            crate::attempt_review::synthesize(
+                state,
+                &mut engine,
+                &attempt_ref,
+                &reviewer_attempt_ref,
+                crate::attempt_review::SynthesisSelection {
+                    synthesis_ref,
+                    barrier_key,
+                    result_artifact_ref,
+                    artifact_refs,
+                },
+            )?;
+            attempt_refs.extend([attempt_ref, reviewer_attempt_ref]);
+            attempt_refs.sort();
+            attempt_refs.dedup();
+            "synthesize"
+        }
         FactoryAttemptOperation::IncorporateLateResult { attempt_ref } => {
             let unit = attempt_unit(state, &attempt_ref)?;
             let record = attempt_mut(state, &attempt_ref)?;
@@ -878,6 +953,14 @@ fn prepare_start(
         unit,
         start.retry_grant.as_ref(),
     )?;
+    validate_participant_requirements(&start.disposition, unit)?;
+    crate::workflow_inputs::validate_selected_inputs(
+        engine,
+        unit,
+        &start.disposition.selected_inputs,
+        &start.disposition.context_refs,
+    )
+    .map_err(FactoryAttemptError::InvalidDisposition)?;
     for fact in &start.tracking {
         validate_tracking(fact)?;
     }
@@ -918,6 +1001,30 @@ fn prepare_start(
             place_grant: start.place_grant.clone(),
         },
     ))
+}
+
+/// New admission checks do not retroactively erase historical executions whose
+/// older compiler lacked this rule. Current native owner dispatch still verifies
+/// identity, scope and authority independently of these declared requirements.
+fn validate_participant_requirements(
+    disposition: &SituatedExecutionDisposition,
+    unit: &CompiledWorkflowUnit,
+) -> Result<(), FactoryAttemptError> {
+    let requirements = &unit.agent_requirements;
+    if (!requirements.agent_refs.is_empty()
+        && !requirements
+            .agent_refs
+            .contains(&disposition.participant.agent_ref))
+        || (!requirements.agency_refs.is_empty()
+            && !requirements
+                .agency_refs
+                .contains(&disposition.participant.agency_ref))
+    {
+        return Err(FactoryAttemptError::InvalidDisposition(
+            "selected Agent/Agency does not satisfy the authored participant requirements".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_disposition(
@@ -975,7 +1082,16 @@ fn validate_disposition(
     ] {
         required_text(value, field)?;
     }
-    if !disposition.participant.source_digest.starts_with("blake3:") {
+    if !disposition
+        .participant
+        .source_digest
+        .strip_prefix("blake3:")
+        .is_some_and(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+    {
         return Err(FactoryAttemptError::InvalidDisposition(
             "participant source digest must retain an exact blake3 basis".into(),
         ));
@@ -1000,6 +1116,31 @@ fn validate_disposition(
         return Err(FactoryAttemptError::InvalidDisposition(
             "situated arrangement weakens or changes compiled workflow law".into(),
         ));
+    }
+    if let Some(contribution) = &unit.contribution {
+        if !disposition
+            .context_refs
+            .is_superset(&contribution.context_refs)
+            || !demand
+                .required_tools
+                .is_superset(&contribution.required_tools)
+            || !demand
+                .required_actions
+                .is_superset(&contribution.required_actions)
+            || !demand
+                .required_modalities
+                .is_superset(&contribution.required_modalities)
+            || contribution
+                .required_harness_ref
+                .as_ref()
+                .is_some_and(|r| r != &disposition.body.harness_ref)
+            || contribution
+                .required_model_ref
+                .as_ref()
+                .is_some_and(|r| r != &disposition.body.model_ref)
+        {
+            return Err(FactoryAttemptError::InvalidDisposition("child arrangement omits the source-defined contribution context, tools, actions, modalities or body requirement; resolve and deliver them explicitly".into()));
+        }
     }
     if disposition.budget.cost_ceiling_usd != demand.cost_ceiling_usd
         || disposition.budget.latency_preference_ms != demand.latency_preference_ms
@@ -1377,6 +1518,8 @@ pub(crate) fn reading_for(
         source_current: true,
         legs: engine.legs().clone(),
         attempts: state.attempts.values().cloned().collect(),
+        independent_reviewers: engine.independent_reviewers().clone(),
+        syntheses: engine.syntheses().clone(),
     })
 }
 

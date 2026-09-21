@@ -261,7 +261,13 @@ impl OrchestrationSnapshot {
         }
         for (key, reviewer) in &restored.reviewers {
             if key != &reviewer.execution_ref
-                || executions.contains(key)
+                || restored.legs.iter().any(|(unit, leg)| {
+                    reviewer.review_of.contains(unit)
+                        && leg
+                            .attempts
+                            .iter()
+                            .any(|attempt| &attempt.execution_ref == key)
+                })
                 || reviewer.disposition_run_ref != self.run_ref.to_string()
                 || reviewer.review_of.is_empty()
                 || reviewer

@@ -693,12 +693,18 @@ fn disposition(
     retry: Option<&RetryGrant>,
 ) -> SituatedExecutionDisposition {
     let unit = workflow.unit(key).unwrap();
-    let agency_ref = "agency:controlled-test";
+    let agency_ref = unit
+        .agent_requirements
+        .agency_refs
+        .iter()
+        .next()
+        .cloned()
+        .unwrap_or_else(|| "agency:controlled-test".into());
     let demand = ExecutionDemand {
         project_ref: run.project_ref().to_string(),
         run_ref: run.reference().to_string(),
         workflow_unit_ref: Some(unit.reference.to_string()),
-        agency_ref: Some(agency_ref.into()),
+        agency_ref: Some(agency_ref.clone()),
         profile_ref: None,
         use_type: "controlled-native-test".into(),
         required_capabilities: unit.capability_refs.clone(),
@@ -741,6 +747,7 @@ fn disposition(
         material_receipt_ref: Some("workcell-world:controlled".into()),
     };
     SituatedExecutionDisposition {
+        selected_inputs: Vec::new(),
         selection,
         participant: SituatedParticipant {
             agent_ref: unit
@@ -750,7 +757,7 @@ fn disposition(
                 .next()
                 .cloned()
                 .unwrap_or_else(|| "agent:controlled-test".into()),
-            agency_ref: agency_ref.into(),
+            agency_ref,
             world_binding_ref: "world-binding:controlled".into(),
             profile_ref: None,
             source_ref: workflow.source.reference.to_string(),

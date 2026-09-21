@@ -25,7 +25,7 @@ pub struct TaskCursor {
 
 /// The provider publishes by atomic replacement. Comparing before/after owner
 /// state prevents a read from combining attempts and telemetry from two cuts.
-fn coherent_read(
+pub(crate) fn coherent_read(
     path: &Path,
     run: &RunRef,
 ) -> Result<(FactoryDevelopmentalState, FactoryAttemptReading), String> {

@@ -1,0 +1,28 @@
+{
+  "contract": "factory.commission-request/v1",
+  "requestRef": "commission-request:source-inspection-example",
+  "projectKey": "source-inspection-example",
+  "purpose": "Inspect the selected source and return its exact evidence",
+  "frontier": "Declared source; no execution has been requested",
+  "runDestination": "source-inspection/first-edition",
+  "writeOwner": "factory",
+  "commissionedAt": "2026-09-21T00:00:00Z",
+  "participantRequirements": [
+    {
+      "ref": "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+      "description": "Inspect the source under the selected role and return attributable evidence",
+      "sourceOwner": "central",
+      "sourceRef": "source:specimen-agent",
+      "sourceRevision": "specimen-v1"
+    }
+  ],
+  "rootAct": {
+    "actRef": "act:source-inspection-example",
+    "agentRef": "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    "purpose": "Commission a bounded source inspection",
+    "scopeRefs": [
+      "project:01ARZ3NDEKTSV4RRFFQ69G5FAW"
+    ],
+    "standing": "commissioned-not-executed"
+  }
+}

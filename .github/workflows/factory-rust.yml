@@ -29,6 +29,32 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  source-basis:
+    # Source material is not a successful test receipt. Retain it even when a
+    # native check fails so an independent verifier can reproduce the exact cut.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package exact tested source, without credentials or working state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/source-basis
+          git rev-parse HEAD > dist/source-basis/source-commit.txt
+          git rev-parse 'HEAD^{tree}' > dist/source-basis/source-tree.txt
+          git ls-tree -r HEAD > dist/source-basis/source-manifest.txt
+          git archive --format=tar.gz --output=dist/source-basis/factory-source.tar.gz HEAD
+          (cd dist/source-basis && sha256sum factory-source.tar.gz > factory-source.tar.gz.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: factory-source-basis-${{ github.sha }}
+          path: dist/source-basis/
+          retention-days: 7
+          if-no-files-found: error
+
   factory-rust:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -39,6 +65,13 @@ jobs:
           python3 -m pip install --disable-pip-version-check 'jsonschema>=4.18,<5' 'PyYAML==6.0.2'
           python3 -m unittest discover -s scripts/tests -p test_ci_workflows.py -v
           python3 scripts/validate_factory_skills.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Contract-checked public TypeScript SDK and packaging
+        run: |
+          npm install --prefix factory/workflow-sdk --ignore-scripts --package-lock=false --no-audit --no-fund
+          python3 scripts/test_workflow_sdk.py --tsc factory/workflow-sdk/node_modules/.bin/tsc
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -53,6 +86,10 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test all native targets
         run: cargo test --workspace --all-targets --locked
+      - name: Installed authoring front door without an ambient companion runtime
+        run: |
+          cargo install --path factory --locked --debug --root "$RUNNER_TEMP/factory-installed"
+          python3 scripts/test_workflow_install.py --binary "$RUNNER_TEMP/factory-installed/bin/factory"
       - name: Documentation tests retained from pre-local verification
         run: cargo test --workspace --doc --locked
       - name: Agent capability intake conformance lane
@@ -83,7 +120,7 @@ jobs:
           short_sha="${GITHUB_SHA::12}"
           name="software-factory-0.1.0-${short_sha}-component"
           mkdir -p "dist/$name"
-          cp -R factory .oi "dist/$name/"
+          cp -R factory contracts scripts docs .github factory-ui skills agents .oi "dist/$name/"
           cp Cargo.toml Cargo.lock README.md "dist/$name/"
           printf '%s\n' "$GITHUB_SHA" > "dist/$name/source-commit.txt"
           tar -C dist -czf "dist/$name.tar.gz" "$name"
