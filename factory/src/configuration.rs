@@ -636,6 +636,25 @@ pub fn telemetry_settings_path(state_path: &std::path::Path) -> std::path::PathB
     state_path.with_file_name(name)
 }
 
+/// Sidecar writes are atomic. Every reader of this sidecar recovers with
+/// `unwrap_or_default()`, so a torn write would not error anywhere — the
+/// applied settings would quietly fall back to built-in defaults. The body
+/// therefore lands in a `.<name>.tmp` sibling first and a same-directory
+/// rename (atomic within one filesystem) puts it in place, the write
+/// discipline the configuration journal in this file already keeps.
+fn write_telemetry_settings_atomic(
+    sidecar: &std::path::Path,
+    effective: &serde_json::Map<String, Value>,
+) -> std::io::Result<()> {
+    let file_name = sidecar
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = sidecar.with_file_name(format!(".{file_name}.tmp"));
+    std::fs::write(&tmp, serde_json::to_string_pretty(effective)?)?;
+    std::fs::rename(&tmp, sidecar)
+}
+
 /// The effective value of one telemetry setting, if the plane applied one.
 pub fn read_telemetry_effective(state_path: &std::path::Path, setting_ref: &str) -> Option<String> {
     let text = std::fs::read_to_string(telemetry_settings_path(state_path)).ok()?;
@@ -1348,11 +1367,7 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         effective.insert(plan.setting_ref.clone(), stored.value.clone());
-        std::fs::write(
-            &sidecar,
-            serde_json::to_string_pretty(&effective).map_err(internal_error)?,
-        )
-        .map_err(|error| {
+        write_telemetry_settings_atomic(&sidecar, &effective).map_err(|error| {
             error_document(
                 "internal",
                 &format!("could not write the telemetry settings sidecar: {error}"),
@@ -1488,11 +1503,7 @@ fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
             .unwrap_or_default();
         let removed = effective.remove(setting_ref).is_some();
         if removed {
-            std::fs::write(
-                &sidecar,
-                serde_json::to_string_pretty(&effective).map_err(internal_error)?,
-            )
-            .map_err(|error| {
+            write_telemetry_settings_atomic(&sidecar, &effective).map_err(|error| {
                 error_document(
                     "internal",
                     &format!("could not write the telemetry settings sidecar: {error}"),
@@ -2013,5 +2024,39 @@ mod tests {
             let error = central_project_value(&invalid).unwrap_err();
             assert!(error.contains("invalid_value"), "{error}");
         }
+    }
+
+    #[test]
+    fn telemetry_sidecar_writes_are_atomic_and_leave_no_tmp_behind() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let state_path = dir.path().join("state.json");
+        let sidecar = telemetry_settings_path(&state_path);
+
+        let mut effective = serde_json::Map::new();
+        effective.insert(TELEMETRY_WATCH_INTERVAL_SETTING.into(), json!(30.0f64));
+        write_telemetry_settings_atomic(&sidecar, &effective).expect("first write");
+
+        // The settings are live under their own name and no `.<name>.tmp`
+        // sibling survives the rename — a leftover tmp would be the torn
+        // write this discipline exists to prevent.
+        let written = std::fs::read_to_string(&sidecar).expect("sidecar exists");
+        let parsed: serde_json::Map<String, Value> =
+            serde_json::from_str(&written).expect("sidecar parses");
+        assert_eq!(parsed[TELEMETRY_WATCH_INTERVAL_SETTING], json!(30.0));
+        let tmp = sidecar.with_file_name(format!(
+            ".{}.tmp",
+            sidecar.file_name().unwrap().to_string_lossy()
+        ));
+        assert!(!tmp.exists(), "no tmp sibling may survive the write");
+
+        // A second write replaces the document whole (rename-over), never
+        // merges or appends.
+        effective.remove(TELEMETRY_WATCH_INTERVAL_SETTING);
+        write_telemetry_settings_atomic(&sidecar, &effective).expect("second write");
+        let written = std::fs::read_to_string(&sidecar).expect("sidecar exists");
+        let parsed: serde_json::Map<String, Value> =
+            serde_json::from_str(&written).expect("sidecar parses");
+        assert!(parsed.is_empty(), "reset leaves an empty sidecar");
+        assert!(!tmp.exists(), "no tmp sibling after the second write");
     }
 }

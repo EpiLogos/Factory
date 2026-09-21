@@ -187,6 +187,7 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             crate::telemetry_cli::FACTORY_TELEMETRY_INSPECT_CONTRACT,
             crate::telemetry_cli::FACTORY_TELEMETRY_SEARCH_CONTRACT,
             crate::telemetry_cli::FACTORY_TELEMETRY_STATS_CONTRACT,
+            crate::telemetry_cli::FACTORY_TELEMETRY_COMPARE_CONTRACT,
             crate::telemetry_cli::FACTORY_TELEMETRY_DOCTOR_CONTRACT,
         ],
     }
