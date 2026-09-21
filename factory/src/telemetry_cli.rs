@@ -1216,13 +1216,22 @@ fn central_root_for(from: &Path) -> Option<PathBuf> {
 // watch — a resumable bounded stream over the state's own change history
 // ---------------------------------------------------------------------------
 
+/// Watch interval resolution: an explicit `--interval` always wins; the
+/// applied `software-factory:telemetry:watch-interval-seconds` setting
+/// replaces only the built-in default. The configured value is never compared
+/// against a sentinel, so `--interval 2` stays 2 even when a setting is
+/// applied — the same "flags win" law the search face states.
+fn resolve_watch_interval(explicit: Option<f64>, configured: Option<f64>) -> f64 {
+    explicit.or(configured).unwrap_or(2.0)
+}
+
 /// The state is a single revisioned document with one writer (the locked
 /// owner mutations). A watcher therefore polls the revision and emits the
 /// correlations of every revision past its cursor as JSONL — bounded by
 /// `--max-events`, `--duration` or Ctrl-C — and always ends by naming the
 /// cursor a resume should carry.
 fn watch(args: &[String], _json: bool) -> Result<String, CliError> {
-    let mut interval_secs = 2.0f64;
+    let mut interval_secs: Option<f64> = None;
     let mut max_events = 100usize;
     let mut duration_secs = 30.0f64;
     let mut resume_revision: Option<u64> = None;
@@ -1231,10 +1240,12 @@ fn watch(args: &[String], _json: bool) -> Result<String, CliError> {
     while let Some(arg) = iterator.next() {
         match arg.as_str() {
             "--interval" => {
-                interval_secs = iterator
-                    .next()
-                    .and_then(|v| v.parse().ok())
-                    .ok_or_else(|| CliError::new("--interval requires seconds"))?;
+                interval_secs = Some(
+                    iterator
+                        .next()
+                        .and_then(|v| v.parse().ok())
+                        .ok_or_else(|| CliError::new("--interval requires seconds"))?,
+                );
             }
             "--max-events" => {
                 max_events = iterator
@@ -1264,14 +1275,12 @@ fn watch(args: &[String], _json: bool) -> Result<String, CliError> {
     }
     let state_path = require_state_path(&positional)?;
     let effective = crate::configuration::read_telemetry_effective_all(&state_path);
-    if interval_secs == 2.0 {
-        if let Some(configured) = effective
+    let interval_secs = resolve_watch_interval(
+        interval_secs,
+        effective
             .get(crate::configuration::TELEMETRY_WATCH_INTERVAL_SETTING)
-            .copied()
-        {
-            interval_secs = configured;
-        }
-    }
+            .copied(),
+    );
     let mut observed_revision = resume_revision.unwrap_or(0);
 
     let deadline = std::time::Instant::now() + Duration::from_secs_f64(duration_secs);
@@ -1806,6 +1815,15 @@ mod remainder_tests {
             document["incomplete"][0]["gaps"],
             serde_json::json!(["childNowRef", "dayRefs", "gitBasis"])
         );
+    }
+
+    #[test]
+    fn explicit_watch_interval_beats_the_configured_default() {
+        // The sentinel-free law: the flag wins, the setting is only a default.
+        assert_eq!(resolve_watch_interval(Some(2.0), Some(30.0)), 2.0);
+        assert_eq!(resolve_watch_interval(None, Some(30.0)), 30.0);
+        assert_eq!(resolve_watch_interval(Some(5.0), None), 5.0);
+        assert_eq!(resolve_watch_interval(None, None), 2.0);
     }
 
     #[test]
