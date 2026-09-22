@@ -1,6 +1,6 @@
 use crate::core::identity::Revision;
 use crate::core::run::{
-    CommandOutcome, NodeKind, NodeState, Project, ProjectRef, Run, RunContractError,
+    CommandOutcome, EdgeKind, NodeKind, NodeState, Project, ProjectRef, Run, RunContractError,
     RunMutationAuthority, RunRef, RunRegistry, RunThoughtCommand, RunThoughtOutcome,
     RunTopologyCommand,
 };
@@ -646,8 +646,15 @@ pub struct FrontierView {
     pub title: String,
     pub mode: String,
     pub summary: String,
+    /// The Run's closure standing, read from its lifecycle alone:
+    /// `open` | `closing` | `closed` | `aborted`. This is lifecycle standing,
+    /// never a verification Closure (no closure envelope is implied).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closure_state: Option<String>,
+    /// Standing of the Run Map gates the frontier node requires: `held` when
+    /// any such gate still waits on unsatisfied work, `passed` when every one
+    /// is satisfied. Absent when the frontier requires no gate or the map
+    /// does not determine the gate's standing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_state: Option<String>,
 }
@@ -796,6 +803,120 @@ fn run_status(run: &Run) -> String {
     .into()
 }
 
+/// The Run's closure standing from its lifecycle. See
+/// [`FrontierView::closure_state`].
+fn closure_state(run: &Run) -> &'static str {
+    use crate::core::run::RunLifecycle;
+
+    match run.lifecycle() {
+        RunLifecycle::Seeded
+        | RunLifecycle::Active
+        | RunLifecycle::WaitingHuman
+        | RunLifecycle::Suspended => "open",
+        RunLifecycle::Finishing => "closing",
+        RunLifecycle::Finished | RunLifecycle::Archived => "closed",
+        RunLifecycle::Aborted => "aborted",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateStanding {
+    Held,
+    Passed,
+}
+
+/// The standing of the gates `node` requires. Gates carry no stored state in
+/// the Run Map, so a gate's standing is derived from what it requires: passed
+/// only when every prerequisite is satisfied, held while any prerequisite is
+/// still planned, ready, running, blocked, waiting or returned. Anything the
+/// map does not determine (superseded or abandoned prerequisites, stateless
+/// decision/candidate/authority/nested-run prerequisites) yields no claim.
+fn frontier_gate_state(run: &Run, node: &crate::core::run::NodeId) -> Option<&'static str> {
+    let map = run.map();
+    let gates = required_nodes(run, node)
+        .filter(|id| map.nodes().get(*id).map(|n| n.kind) == Some(NodeKind::Gate))
+        .collect::<Vec<_>>();
+    if gates.is_empty() {
+        return None;
+    }
+    let mut visiting = std::collections::BTreeSet::new();
+    let standings = gates
+        .into_iter()
+        .map(|gate| gate_standing(run, gate, &mut visiting))
+        .collect::<Vec<_>>();
+    if standings.contains(&Some(GateStanding::Held)) {
+        Some("held")
+    } else if standings.iter().all(|s| *s == Some(GateStanding::Passed)) {
+        Some("passed")
+    } else {
+        None
+    }
+}
+
+fn required_nodes<'a>(
+    run: &'a Run,
+    node: &'a crate::core::run::NodeId,
+) -> impl Iterator<Item = &'a crate::core::run::NodeId> + 'a {
+    run.map()
+        .edges()
+        .iter()
+        .filter(move |edge| edge.relation == EdgeKind::Requires && &edge.from == node)
+        .map(|edge| &edge.to)
+}
+
+fn gate_standing<'a>(
+    run: &'a Run,
+    gate: &'a crate::core::run::NodeId,
+    visiting: &mut std::collections::BTreeSet<&'a crate::core::run::NodeId>,
+) -> Option<GateStanding> {
+    if !visiting.insert(gate) {
+        return None;
+    }
+    let mut standing = GateStanding::Passed;
+    let mut undetermined = false;
+    for prerequisite in required_nodes(run, gate) {
+        let Some(node) = run.map().nodes().get(prerequisite) else {
+            undetermined = true;
+            continue;
+        };
+        let held = match (node.kind, node.state) {
+            (NodeKind::Gate, _) => match gate_standing(run, prerequisite, visiting) {
+                Some(GateStanding::Held) => true,
+                Some(GateStanding::Passed) => false,
+                None => {
+                    undetermined = true;
+                    false
+                }
+            },
+            (_, Some(NodeState::Satisfied)) => false,
+            (
+                _,
+                Some(
+                    NodeState::Planned
+                    | NodeState::Ready
+                    | NodeState::Active
+                    | NodeState::Blocked
+                    | NodeState::Waiting
+                    | NodeState::Returned,
+                ),
+            ) => true,
+            _ => {
+                undetermined = true;
+                false
+            }
+        };
+        if held {
+            standing = GateStanding::Held;
+        }
+    }
+    visiting.remove(gate);
+    match standing {
+        GateStanding::Held => Some(GateStanding::Held),
+        GateStanding::Passed if undetermined => None,
+        GateStanding::Passed => Some(GateStanding::Passed),
+    }
+}
+
 /// One plain sentence for the frontier node's state, or nothing when the
 /// node carries no state of its own.
 fn frontier_summary(state: Option<NodeState>) -> &'static str {
@@ -846,15 +967,15 @@ fn materialise_frontier(run: &Run) -> FrontierView {
             }
             .into(),
             summary: frontier_summary(node.state).into(),
-            closure_state: None,
-            gate_state: None,
+            closure_state: Some(closure_state(run).into()),
+            gate_state: frontier_gate_state(run, &node.id).map(Into::into),
         },
         None => FrontierView {
             subject_ref: run.reference().to_string(),
             title: run.destination().to_owned(),
             mode: "work".into(),
             summary: "Nothing is ready, running, blocked, waiting or returned.".into(),
-            closure_state: None,
+            closure_state: Some(closure_state(run).into()),
             gate_state: None,
         },
     }
@@ -1023,7 +1144,7 @@ mod project_name_tests {
 mod frontier_tests {
     use super::*;
     use crate::core::run::{
-        EdgeKind, NodeId, RunTopologyCommand, TopologyEdge, TopologyMutation, TopologyNode,
+        NodeId, RunTopologyCommand, TopologyEdge, TopologyMutation, TopologyNode,
     };
 
     const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAA";
@@ -1036,6 +1157,24 @@ mod frontier_tests {
             label: format!("Work {id}"),
             state: Some(state),
             semantic_ref: None,
+        }
+    }
+
+    fn gate(id: &str) -> TopologyNode {
+        TopologyNode {
+            id: NodeId::new(id).unwrap(),
+            kind: NodeKind::Gate,
+            label: format!("Gate {id}"),
+            state: None,
+            semantic_ref: None,
+        }
+    }
+
+    fn requires(from: &str, to: &str) -> TopologyEdge {
+        TopologyEdge {
+            from: NodeId::new(from).unwrap(),
+            to: NodeId::new(to).unwrap(),
+            relation: EdgeKind::Requires,
         }
     }
 
@@ -1122,5 +1261,82 @@ mod frontier_tests {
             idle.view.frontier.summary,
             "Nothing is ready, running, blocked, waiting or returned."
         );
+    }
+
+    #[test]
+    fn closure_state_reads_the_run_lifecycle() {
+        let snapshot = snapshot_of(vec![work("unit", NodeState::Ready)], vec![]);
+        // A freshly seeded Run is open.
+        assert_eq!(
+            snapshot.view.frontier.closure_state.as_deref(),
+            Some("open")
+        );
+        let idle = snapshot_of(vec![work("unit", NodeState::Satisfied)], vec![]);
+        assert_eq!(idle.view.frontier.closure_state.as_deref(), Some("open"));
+        // Every lifecycle maps to exactly one closure standing.
+        let run = Run::new(
+            RUN.parse().unwrap(),
+            PROJECT.parse().unwrap(),
+            "Closure fixture",
+            "factory",
+        )
+        .unwrap();
+        for (lifecycle, closure) in [
+            ("seeded", "open"),
+            ("active", "open"),
+            ("waiting_human", "open"),
+            ("suspended", "open"),
+            ("finishing", "closing"),
+            ("finished", "closed"),
+            ("archived", "closed"),
+            ("aborted", "aborted"),
+        ] {
+            let mut value = serde_json::to_value(&run).unwrap();
+            value["lifecycle"] = lifecycle.into();
+            let run: Run = serde_json::from_value(value).unwrap();
+            assert_eq!(closure_state(&run), closure, "lifecycle {lifecycle}");
+        }
+    }
+
+    #[test]
+    fn gate_state_is_derived_from_what_the_frontier_gate_requires() {
+        // The barrier waits for `left`; `next` is released by it. The
+        // frontier picks the blocked `next` before the waiting `left`.
+        let held = snapshot_of(
+            vec![
+                work("left", NodeState::Waiting),
+                work("next", NodeState::Blocked),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(held.view.frontier.title, "Work next");
+        assert_eq!(held.view.frontier.gate_state.as_deref(), Some("held"));
+
+        let passed = snapshot_of(
+            vec![
+                work("left", NodeState::Satisfied),
+                work("next", NodeState::Ready),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(passed.view.frontier.title, "Work next");
+        assert_eq!(passed.view.frontier.gate_state.as_deref(), Some("passed"));
+
+        // No gate in front of the frontier: no claim.
+        let ungated = snapshot_of(vec![work("unit", NodeState::Ready)], vec![]);
+        assert_eq!(ungated.view.frontier.gate_state, None);
+
+        // A superseded prerequisite leaves the gate undetermined: no claim.
+        let undetermined = snapshot_of(
+            vec![
+                work("left", NodeState::Superseded),
+                work("next", NodeState::Ready),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(undetermined.view.frontier.gate_state, None);
     }
 }
