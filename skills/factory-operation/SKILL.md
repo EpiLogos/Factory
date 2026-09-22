@@ -140,3 +140,12 @@ python3 scripts/validate_factory_skills.py
 ```
 
 Acceptance must include fail-closed Action cases for missing capability grant and missing Action authority, not only a successful request. Rich project-development acceptance must additionally preserve owner attribution, surface stale reflection rather than accepting/overwriting it, and keep the generic no-ProjectCentral/no-Method/no-QL case valid. Verification acceptance must reject a high-confidence or plausible completion Claim when one materially required obligation is unsupported, and must preserve partial/unresolved standing rather than silently closing the whole.
+
+
+## NOW-context operation
+
+Before an admitted execution's first relevant model turn, a configured AIKit provider may deliver a Redis-backed prepared NOW context. Inspect it as a versioned participant reading over Central source identity, AIKit Knowledge/Wiki, Factory Run/WorkflowUnit relations and applicable practice. Record the prepared version actually delivered; a Redis write or generated request that never crossed the harness boundary is not delivery evidence.
+
+Use Factory's exact Run, Agency, WorkflowUnit, dependency and Return identities for known cooperation. Semantic relevance from Jev can expand what deserves attention but never expands writer authority. A missing participant update, stale source basis, unavailable Redis/Jev selection or disclosure revocation must remain visible; do not substitute an older cached view and call it current.
+
+On Return, keep the durable Factory record authoritative and publish a participant-scoped change/delta through the AIKit NOW path for affected consumers. Independent participants keep independent cursors. Replayed notifications and fresh sessions must not duplicate developmental effects, and a verifier's private expectation never becomes worker context merely because both belong to one Run.
