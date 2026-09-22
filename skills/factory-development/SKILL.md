@@ -134,3 +134,12 @@ relation observation -> possible Claim / investigation / no-change
 ```
 
 Use a disclosed relational/capability field as an accounting surface when it is the actual Whole relevant to the development question: missing, unresolved and contradictory positions remain part of the account. Do not convert field completeness into automatic truth, or make every address an automatic backlog item. QL/MEF whole-shapes can supply a canonical morphology of disclosure where the Project uses them; Factory still owns the developmental Claim/Evidence/Closure relation and native owners still own their meanings and Actions.
+
+
+## Prepared NOW and Jev-assisted development
+
+When AIKit supplies a participant-specific prepared NOW view for a commissioned Run, treat it as an operative reading of existing owners, not a Factory-owned memory record. Preserve the Run/WorkflowUnit revisions, participant/dependency relations, exact Central SourceRefs/revisions, Wiki routes, preparation basis and the delivered prepared version. The same undertaking may legitimately prepare different worker, related-worker and verifier views; verifier expectations and sibling-private material are not developmental context for another participant.
+
+Use exact Factory task/dependency/Agency/Return relations first. Jev may classify additional semantic relevance across documented capabilities or decide whether a result should remain task-local, inform Wiki/practice, or pressure a matrix/account relation. That does not grant a write, recognise a Candidate, close a Run or replace the Factory verification ledger.
+
+After a consequential Return, publish the native Factory mutation/evidence first. Then let affected participant contexts receive the returned ref/revision through their normal continuation boundary. Reconnect/restart must de-duplicate the same Return identity and preserve uncertain prior effects rather than manufacturing a second completed contribution. Warm prepared-context reuse is valid only while its source/dependency/disclosure basis remains current.
