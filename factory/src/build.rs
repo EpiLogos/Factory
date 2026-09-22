@@ -796,6 +796,23 @@ fn run_status(run: &Run) -> String {
     .into()
 }
 
+/// One plain sentence for the frontier node's state, or nothing when the
+/// node carries no state of its own.
+fn frontier_summary(state: Option<NodeState>) -> &'static str {
+    match state {
+        Some(NodeState::Planned) => "Planned.",
+        Some(NodeState::Ready) => "Ready to start.",
+        Some(NodeState::Active) => "Running.",
+        Some(NodeState::Blocked) => "Blocked.",
+        Some(NodeState::Waiting) => "Waiting.",
+        Some(NodeState::Satisfied) => "Done.",
+        Some(NodeState::Returned) => "Returned — awaiting recognition.",
+        Some(NodeState::Superseded) => "Superseded.",
+        Some(NodeState::Abandoned) => "Abandoned.",
+        None => "",
+    }
+}
+
 fn materialise_frontier(run: &Run) -> FrontierView {
     let nodes = run.map().nodes().values().collect::<Vec<_>>();
     let selected = [
@@ -828,7 +845,7 @@ fn materialise_frontier(run: &Run) -> FrontierView {
                 _ => "work",
             }
             .into(),
-            summary: format!("RunMap frontier: {:?}", node.state),
+            summary: frontier_summary(node.state).into(),
             closure_state: None,
             gate_state: None,
         },
@@ -836,7 +853,7 @@ fn materialise_frontier(run: &Run) -> FrontierView {
             subject_ref: run.reference().to_string(),
             title: run.destination().to_owned(),
             mode: "work".into(),
-            summary: "RunMap has no active/ready/blocked/waiting frontier node.".into(),
+            summary: "Nothing is ready, running, blocked, waiting or returned.".into(),
             closure_state: None,
             gate_state: None,
         },
@@ -998,6 +1015,112 @@ mod project_name_tests {
                 label: "Factory".into(),
                 project_key: None
             })
+        );
+    }
+}
+
+#[cfg(test)]
+mod frontier_tests {
+    use super::*;
+    use crate::core::run::{
+        EdgeKind, NodeId, RunTopologyCommand, TopologyEdge, TopologyMutation, TopologyNode,
+    };
+
+    const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAA";
+    const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FAB";
+
+    fn work(id: &str, state: NodeState) -> TopologyNode {
+        TopologyNode {
+            id: NodeId::new(id).unwrap(),
+            kind: NodeKind::Work,
+            label: format!("Work {id}"),
+            state: Some(state),
+            semantic_ref: None,
+        }
+    }
+
+    /// A Build state whose single Run carries exactly these nodes and edges.
+    fn snapshot_of(nodes: Vec<TopologyNode>, edges: Vec<TopologyEdge>) -> FactoryBuildSnapshot {
+        let project_ref: ProjectRef = PROJECT.parse().unwrap();
+        let run_ref: RunRef = RUN.parse().unwrap();
+        let run = Run::new(
+            run_ref.clone(),
+            project_ref.clone(),
+            "Frontier fixture",
+            "factory",
+        )
+        .unwrap();
+        let mut state = FactoryBuildState::new(Project::new(project_ref.clone()), run).unwrap();
+        let authority = state.run_mutation_authority(&run_ref).unwrap();
+        // Every node hangs from the destination unless an edge already
+        // reaches it, so the fixture is a valid, reachable Run Map.
+        let reached = edges
+            .iter()
+            .map(|edge| edge.to.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut edges = edges;
+        for node in &nodes {
+            if !reached.contains(&node.id) {
+                edges.push(TopologyEdge {
+                    from: NodeId::new("destination").unwrap(),
+                    to: node.id.clone(),
+                    relation: EdgeKind::Requires,
+                });
+            }
+        }
+        let mut mutations = nodes
+            .into_iter()
+            .map(|node| TopologyMutation::AddNode { node })
+            .collect::<Vec<_>>();
+        mutations.extend(
+            edges
+                .into_iter()
+                .map(|edge| TopologyMutation::AddEdge { edge }),
+        );
+        state
+            .apply_run_topology_command(
+                &run_ref,
+                &authority,
+                RunTopologyCommand {
+                    command_id: "frontier-fixture".into(),
+                    expected_revision: state.run(&run_ref).unwrap().revision(),
+                    mutation: TopologyMutation::Batch { mutations },
+                },
+            )
+            .unwrap();
+        FactoryBuildViewProvider
+            .snapshot(
+                &state,
+                &FactoryBuildSelection {
+                    project_ref,
+                    run_ref,
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn frontier_summary_is_a_plain_sentence_never_debug_text() {
+        for (state, sentence) in [
+            (NodeState::Ready, "Ready to start."),
+            (NodeState::Active, "Running."),
+            (NodeState::Blocked, "Blocked."),
+            (NodeState::Waiting, "Waiting."),
+            (NodeState::Returned, "Returned — awaiting recognition."),
+        ] {
+            let snapshot = snapshot_of(vec![work("unit", state)], vec![]);
+            assert_eq!(snapshot.view.frontier.summary, sentence);
+            let json = snapshot.to_json().unwrap();
+            assert!(!json.contains("Some("), "Debug text leaked: {json}");
+            assert!(!json.contains("RunMap frontier"));
+        }
+        // Stateless nodes say nothing rather than print an Option.
+        assert_eq!(frontier_summary(None), "");
+        // No frontier node at all: one plain sentence.
+        let idle = snapshot_of(vec![work("unit", NodeState::Satisfied)], vec![]);
+        assert_eq!(
+            idle.view.frontier.summary,
+            "Nothing is ready, running, blocked, waiting or returned."
         );
     }
 }
