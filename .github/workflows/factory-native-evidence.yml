@@ -41,10 +41,10 @@ jobs:
           git archive HEAD | gzip > native-evidence/source.tar.gz
           git -C "$RUNNER_TEMP/factory-central-owner" init
           git -C "$RUNNER_TEMP/factory-central-owner" remote add origin https://github.com/EpiLogos/Central.git
-          git -C "$RUNNER_TEMP/factory-central-owner" fetch --depth=1 origin e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+          git -C "$RUNNER_TEMP/factory-central-owner" fetch --depth=1 origin 9ab77a22fb69fa8fbcd4b23d04b00e5d3b2c725f
           git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/factory-central-owner" rev-parse HEAD > native-evidence/central-source-sha.txt
-          test "$(cat native-evidence/central-source-sha.txt)" = e7e8479f1502732821bd3e7d3d5ceda38fd4279f
+          test "$(cat native-evidence/central-source-sha.txt)" = 9ab77a22fb69fa8fbcd4b23d04b00e5d3b2c725f
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: factory-native-attempt-integration
