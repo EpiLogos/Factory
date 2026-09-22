@@ -53,7 +53,7 @@ jobs:
             . -> target
             ${{ runner.temp }}/factory-central-owner -> target
       # Format, Clippy and all-target/doctests remain in required factory-rust.
-      # This lane supplies the seven normally-ignored native integration cases.
+      # This lane supplies the nine native integration cases selected below.
       - name: Build exact native binaries
         run: |
           cargo build --locked --package epilogos-factory --bin factory
@@ -67,7 +67,7 @@ jobs:
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
           cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
-          test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 7
+          test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 9
           cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
       - name: Preserve integration-tested native binary
         if: ${{ !cancelled() && steps.integration.outcome == 'success' }}
