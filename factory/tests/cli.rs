@@ -180,6 +180,193 @@ fn snapshot_refresh_and_action_listing_are_native_provider_projections() {
 }
 
 #[test]
+fn conformance_developmental_state_drives_build_refresh_and_action_listing() {
+    // The document `factory conformance developmental-state` writes is the
+    // documented provider state for exercising the real binary. `action list`
+    // and `build snapshot`/`refresh` must serve it through its owning
+    // developmental provider instead of failing as a JSON schema error
+    // (`missing field 'project'`).
+    let path = temp_state_path("conformance-read");
+    let _ = fs::remove_file(&path);
+    let state_path = path.to_string_lossy().into_owned();
+
+    let generated = factory(
+        &[
+            "conformance".into(),
+            "developmental-state".into(),
+            state_path.clone(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert!(
+        generated.status.success(),
+        "conformance generation failed: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(&generated.stdout).unwrap();
+    let project = manifest["projectRef"].as_str().unwrap().to_string();
+    let run = manifest["runRef"].as_str().unwrap().to_string();
+
+    let snapshot_output = factory(
+        &[
+            "build".into(),
+            "snapshot".into(),
+            state_path.clone(),
+            project.clone(),
+            run.clone(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert!(
+        snapshot_output.status.success(),
+        "build snapshot failed against the conformance state: {}",
+        String::from_utf8_lossy(&snapshot_output.stderr)
+    );
+    let snapshot: FactoryBuildSnapshot = serde_json::from_slice(&snapshot_output.stdout).unwrap();
+    assert_eq!(snapshot.view.run.run_ref, run);
+    assert!(!snapshot.view.actions.is_empty());
+
+    let refresh_output = factory(
+        &[
+            "build".into(),
+            "refresh".into(),
+            state_path.clone(),
+            project.clone(),
+            run.clone(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert!(
+        refresh_output.status.success(),
+        "build refresh failed against the conformance state: {}",
+        String::from_utf8_lossy(&refresh_output.stderr)
+    );
+
+    let actions_output = factory(
+        &[
+            "action".into(),
+            "list".into(),
+            state_path.clone(),
+            project,
+            run,
+            "--json".into(),
+        ],
+        None,
+    );
+    assert!(
+        actions_output.status.success(),
+        "action list failed against the conformance state: {}",
+        String::from_utf8_lossy(&actions_output.stderr)
+    );
+    let actions: serde_json::Value = serde_json::from_slice(&actions_output.stdout).unwrap();
+    assert_eq!(
+        actions,
+        serde_json::to_value(&snapshot.view.actions).unwrap(),
+        "Action listing against the developmental state must be the selected Build snapshot inventory"
+    );
+    assert!(actions
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action["actionRef"] == REQUEST_MORE_EVIDENCE_ACTION_REF));
+
+    // The document on disk must still be the developmental provider state:
+    // serving it through the Build/Action commands must not have converted it.
+    let persisted: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        persisted["schema"],
+        epilogos_factory::developmental_read::FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER
+    );
+
+    let _ = fs::remove_file(path);
+}
+
+#[test]
+fn wrong_state_document_kinds_are_refused_by_name() {
+    // The conformance manifest (the command's stdout) is a locator document,
+    // not a provider state: feeding it back must be refused by naming the
+    // manifest, never as a bare serde field error.
+    let state_path = temp_state_path("refusal-provider");
+    let _ = fs::remove_file(&state_path);
+    let generated = factory(
+        &[
+            "conformance".into(),
+            "developmental-state".into(),
+            state_path.to_string_lossy().into_owned(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert!(generated.status.success());
+
+    let manifest_path = temp_state_path("refusal-manifest");
+    fs::write(&manifest_path, &generated.stdout).unwrap();
+    let refused = factory(
+        &[
+            "action".into(),
+            "list".into(),
+            manifest_path.to_string_lossy().into_owned(),
+            PROJECT.into(),
+            RUN.into(),
+        ],
+        None,
+    );
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("developmental-conformance-manifest")
+            && stderr.contains("not a provider state"),
+        "manifest refusal must name the document kind: {stderr}"
+    );
+
+    let unknown_path = temp_state_path("refusal-unknown-schema");
+    fs::write(&unknown_path, r#"{"schema":"example.other-document/v1"}"#).unwrap();
+    let refused = factory(
+        &[
+            "action".into(),
+            "list".into(),
+            unknown_path.to_string_lossy().into_owned(),
+            PROJECT.into(),
+            RUN.into(),
+        ],
+        None,
+    );
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("example.other-document/v1"),
+        "unknown-schema refusal must name the found schema: {stderr}"
+    );
+
+    let bare_path = temp_state_path("refusal-no-schema");
+    fs::write(&bare_path, r#"{"contract":"example.bare/v1"}"#).unwrap();
+    let refused = factory(
+        &[
+            "action".into(),
+            "list".into(),
+            bare_path.to_string_lossy().into_owned(),
+            PROJECT.into(),
+            RUN.into(),
+        ],
+        None,
+    );
+    assert!(!refused.status.success());
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.contains("no top-level `schema`"),
+        "schema-less refusal must say the document carries no schema: {stderr}"
+    );
+
+    let _ = fs::remove_file(state_path);
+    let _ = fs::remove_file(manifest_path);
+    let _ = fs::remove_file(unknown_path);
+    let _ = fs::remove_file(bare_path);
+}
+
+#[test]
 fn native_factory_action_matches_legacy_headless_and_persists_caller_lineage() {
     let (native_path, native_selection) = create_state("native-action");
     let (legacy_path, _) = create_state("legacy-action");

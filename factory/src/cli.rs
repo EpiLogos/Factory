@@ -1,10 +1,10 @@
 use crate::action_projection::{
-    execute_projected_factory_action, FactoryActionProjectionRequest,
-    FACTORY_ACTION_PROJECTION_CONTRACT,
+    execute_projected_factory_action, FactoryActionProjectionError, FactoryActionProjectionRequest,
+    FactoryProjectedActionProvider, FACTORY_ACTION_PROJECTION_CONTRACT,
 };
 use crate::build::{
-    FactoryBuildSelection, FACTORY_BUILD_PROVIDER_CONTRACT, FACTORY_BUILD_VIEW_CONTRACT,
-    FACTORY_NATIVE_OWNER,
+    FactoryActionAuthority, FactoryActionInvocation, FactoryBuildSelection, FactoryBuildSnapshot,
+    FACTORY_BUILD_PROVIDER_CONTRACT, FACTORY_BUILD_VIEW_CONTRACT, FACTORY_NATIVE_OWNER,
 };
 use crate::build_provider::{FactoryBuildFileProvider, FACTORY_BUILD_LOCAL_PROVIDER_STATE};
 use crate::commission::{
@@ -120,6 +120,7 @@ Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build sn
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development build   <state> <run-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Telemetry (operator and Agent reads over the real developmental services):\n  factory telemetry status  <state> [--json]\n  factory telemetry inspect <state> <telemetry-ref> [--json]\n  factory telemetry search  <state> <query> [--regex] [--limit N] [--aikit <bin>] [--json]\n  factory telemetry stats   <state> [--template <name>] [--drill-down] [--json]\n  factory telemetry watch   <state> [--interval S] [--max-events N] [--duration S] [--resume <cursor>]\n  factory telemetry compare <original-state> <changed-state> [--json]\n  factory telemetry export  <state> [--json]\n  factory telemetry doctor  <state> [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
+<state> in build/action/verify accepts a `factory.build-local-provider-state/v1` document or a `factory.developmental-local-provider/v1` developmental state, such as the document `factory conformance developmental-state` writes.\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
         env!("CARGO_PKG_VERSION")
     )
@@ -243,7 +244,7 @@ fn build_command(args: &[String], json: bool) -> Result<String, CliError> {
         .first()
         .ok_or_else(|| CliError("missing build operation".into()))?;
     let (state_path, selection) = selection_from_args(&args[1..])?;
-    let mut provider = FactoryBuildFileProvider::open(state_path, selection)?;
+    let mut provider = BuildStateDocument::open(&state_path, selection)?;
     let snapshot = match operation.as_str() {
         "snapshot" => provider.snapshot()?,
         "refresh" => provider.refresh()?,
@@ -836,7 +837,7 @@ fn action_command(
         .first()
         .ok_or_else(|| CliError("missing action operation".into()))?;
     let (state_path, selection) = selection_from_args(&args[1..])?;
-    let mut provider = FactoryBuildFileProvider::open(state_path, selection)?;
+    let mut provider = BuildStateDocument::open(&state_path, selection)?;
 
     match operation.as_str() {
         "list" => {
@@ -889,7 +890,7 @@ fn verify_command(args: &[String], json: bool) -> Result<String, CliError> {
         false
     } else {
         let (state_path, selection) = selection_from_args(args)?;
-        FactoryBuildFileProvider::open(state_path, selection)?.snapshot()?;
+        BuildStateDocument::open(&state_path, selection)?.snapshot()?;
         true
     };
     let result = FactoryCliVerification {
@@ -924,6 +925,137 @@ fn selection_from_args(args: &[String]) -> Result<(String, FactoryBuildSelection
             run_ref,
         },
     ))
+}
+
+/// The state document behind the `build`, `action` and `verify` commands.
+///
+/// Two Factory-owned document kinds carry a Build projection: the Build
+/// provider's own `factory.build-local-provider-state/v1` store, and the
+/// developmental provider state `factory.developmental-local-provider/v1` —
+/// the document `factory conformance developmental-state` writes — which
+/// embeds the Build state of its single Project. Each kind is served through
+/// its owning provider, so a developmental state is never rewritten as a
+/// Build store and never loses its Journeys or correlations; any other
+/// document kind is refused by name instead of surfacing as a deep serde
+/// field error.
+enum BuildStateDocument {
+    Build(Box<FactoryBuildFileProvider>),
+    Developmental {
+        provider: Box<FactoryDevelopmentalFileProvider>,
+        selection: FactoryBuildSelection,
+    },
+}
+
+impl BuildStateDocument {
+    fn open(path: &str, selection: FactoryBuildSelection) -> Result<Self, CliError> {
+        let schema = document_schema(path)?;
+        match schema.as_str() {
+            FACTORY_BUILD_LOCAL_PROVIDER_STATE => Ok(Self::Build(Box::new(
+                FactoryBuildFileProvider::open(path, selection)?,
+            ))),
+            FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER => {
+                let provider = FactoryDevelopmentalFileProvider::open(path)
+                    .map_err(|error| CliError(error.to_string()))?;
+                if provider.project_ref() != &selection.project_ref {
+                    return Err(CliError(format!(
+                        "developmental state {} carries Project {}; the selection names {}",
+                        path,
+                        provider.project_ref(),
+                        selection.project_ref
+                    )));
+                }
+                Ok(Self::Developmental {
+                    provider: Box::new(provider),
+                    selection,
+                })
+            }
+            other => Err(CliError(format!(
+                "state document {path} declares schema `{other}`; expected `{FACTORY_BUILD_LOCAL_PROVIDER_STATE}` or `{FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER}`"
+            ))),
+        }
+    }
+
+    fn snapshot(&self) -> Result<FactoryBuildSnapshot, CliError> {
+        match self {
+            Self::Build(provider) => Ok(provider.snapshot()?),
+            Self::Developmental {
+                provider,
+                selection,
+            } => Ok(provider.build_snapshot(&selection.run_ref)?),
+        }
+    }
+
+    fn refresh(&mut self) -> Result<FactoryBuildSnapshot, CliError> {
+        match self {
+            Self::Build(provider) => provider.refresh().map_err(CliError::from),
+            Self::Developmental {
+                provider,
+                selection,
+            } => {
+                let path = provider.path().to_string_lossy().into_owned();
+                let selection = selection.clone();
+                let reloaded = Self::open(&path, selection)?;
+                let snapshot = reloaded.snapshot()?;
+                *self = reloaded;
+                Ok(snapshot)
+            }
+        }
+    }
+}
+
+impl FactoryProjectedActionProvider for BuildStateDocument {
+    type Error = FactoryActionProjectionError;
+
+    fn execute_projected_action(
+        &mut self,
+        invocation: &FactoryActionInvocation,
+        authority: &FactoryActionAuthority,
+    ) -> Result<crate::build::FactoryActionReceipt, Self::Error> {
+        match self {
+            Self::Build(provider) => provider
+                .execute_projected_action(invocation, authority)
+                .map_err(|error| FactoryActionProjectionError::Provider(error.to_string())),
+            Self::Developmental {
+                provider,
+                selection,
+            } => {
+                // Parity with the Build provider: an invoked Action must land
+                // on the Run named in the command's selection.
+                if invocation.run_ref != selection.run_ref {
+                    Err(FactoryActionProjectionError::Provider(format!(
+                        "Action Run {} does not match provider-selected Run {}",
+                        invocation.run_ref, selection.run_ref
+                    )))
+                } else {
+                    provider
+                        .execute_projected_action(invocation, authority)
+                        .map_err(|error| FactoryActionProjectionError::Provider(error.to_string()))
+                }
+            }
+        }
+    }
+}
+
+/// Read only the top-level `schema` tag of a candidate state document, so a
+/// wrong document kind is reported as itself rather than as a deep serde
+/// field error (`missing field 'project'`) that names nothing.
+fn document_schema(path: &str) -> Result<String, CliError> {
+    let bytes = fs::read(path)?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|error| CliError(format!("state document {path} is not valid JSON: {error}")))?;
+    if let Some(schema) = value.get("schema").and_then(|schema| schema.as_str()) {
+        return Ok(schema.to_owned());
+    }
+    if value.get("contract").and_then(|contract| contract.as_str())
+        == Some(FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST)
+    {
+        return Err(CliError(format!(
+            "state document {path} is a `{FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST}` locator (the stdout of `factory conformance developmental-state`), not a provider state document"
+        )));
+    }
+    Err(CliError(format!(
+        "state document {path} carries no top-level `schema`; it is not a Factory provider state document"
+    )))
 }
 
 fn read_input(path: &str, stdin_override: Option<&str>) -> Result<String, CliError> {
@@ -978,6 +1110,12 @@ impl From<serde_json::Error> for CliError {
 
 impl From<crate::build_provider::FactoryBuildProviderError> for CliError {
     fn from(error: crate::build_provider::FactoryBuildProviderError) -> Self {
+        Self(error.to_string())
+    }
+}
+
+impl From<crate::developmental_read::FactoryDevelopmentalProviderError> for CliError {
+    fn from(error: crate::developmental_read::FactoryDevelopmentalProviderError) -> Self {
         Self(error.to_string())
     }
 }
