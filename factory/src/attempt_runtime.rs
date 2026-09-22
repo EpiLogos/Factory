@@ -1103,6 +1103,20 @@ fn validate_disposition(
             "realised body model/provider differs from selected model/provider".into(),
         ));
     }
+    if let Some(explicit) =
+        crate::execution_intelligence::explicit_selection_refs(&disposition.selection.selection)
+            .map_err(|error| {
+                FactoryAttemptError::InvalidDisposition(format!(
+                    "explicit AIKit selection receipt is invalid: {error:?}"
+                ))
+            })?
+    {
+        validate_explicit_selection_binding(
+            &explicit,
+            &disposition.participant,
+            &disposition.body,
+        )?;
+    }
     if !disposition.praxis_refs.is_superset(&unit.praxis_refs)
         || !disposition
             .capability_refs
@@ -1185,6 +1199,30 @@ fn validate_disposition(
                 "effective protection does not satisfy required coverage".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_explicit_selection_binding(
+    explicit: &crate::execution_intelligence::ExplicitSelectionRefs,
+    participant: &SituatedParticipant,
+    body: &ExecutionBody,
+) -> Result<(), FactoryAttemptError> {
+    if body.route_ref != explicit.route_ref
+        || body.harness_ref != explicit.harness_ref
+        || body.harness_composition_ref != explicit.harness_composition_ref
+        || body.agent_session_ref != explicit.agent_session_ref
+        || body.session_space_ref != explicit.session_space_ref
+        || participant.agent_ref != explicit.agent_ref
+        || participant.agency_ref != explicit.agency_ref
+        || participant.world_binding_ref != explicit.world_binding_ref
+        || participant.source_ref != explicit.source_ref
+        || participant.source_revision != explicit.source_revision
+        || participant.source_digest != explicit.source_digest
+    {
+        return Err(FactoryAttemptError::InvalidDisposition(
+            "realised participant/body differs from the explicit AIKit resident, Agency, source or harness receipt".into(),
+        ));
     }
     Ok(())
 }
@@ -1706,6 +1744,74 @@ impl From<serde_json::Error> for FactoryAttemptError {
 impl From<crate::workflow::WorkflowError> for FactoryAttemptError {
     fn from(error: crate::workflow::WorkflowError) -> Self {
         Self::Workflow(error)
+    }
+}
+
+#[cfg(test)]
+mod explicit_selection_binding_tests {
+    use super::*;
+    use crate::execution_intelligence::ExplicitSelectionRefs;
+
+    fn refs() -> ExplicitSelectionRefs {
+        ExplicitSelectionRefs {
+            route_ref: "model-route/exact".into(),
+            harness_ref: "harness/pi".into(),
+            harness_composition_ref: "harness-composition/exact".into(),
+            agent_ref: "agent:oh-i".into(),
+            agency_ref: "agency:oh-i".into(),
+            world_binding_ref: "binding:oh-i".into(),
+            source_ref: "source/agency".into(),
+            source_revision: "rev/1".into(),
+            source_digest: format!("blake3:{}", "a".repeat(64)),
+            agent_session_ref: "agent-session/oh-i".into(),
+            session_space_ref: "session-space/oh-i".into(),
+        }
+    }
+
+    fn participant() -> SituatedParticipant {
+        let receipt = refs();
+        SituatedParticipant {
+            agent_ref: receipt.agent_ref,
+            agency_ref: receipt.agency_ref,
+            world_binding_ref: receipt.world_binding_ref,
+            profile_ref: None,
+            source_ref: receipt.source_ref,
+            source_revision: receipt.source_revision,
+            source_digest: receipt.source_digest,
+        }
+    }
+
+    fn body() -> ExecutionBody {
+        let receipt = refs();
+        ExecutionBody {
+            model_ref: "model:deepseek-v4-pro".into(),
+            provider_ref: "provider:openrouter".into(),
+            route_ref: receipt.route_ref,
+            harness_ref: receipt.harness_ref,
+            harness_composition_ref: receipt.harness_composition_ref,
+            agent_session_ref: receipt.agent_session_ref,
+            session_space_ref: receipt.session_space_ref,
+            material_world_ref: None,
+            workcell_ref: None,
+        }
+    }
+
+    #[test]
+    fn explicit_receipt_cannot_move_to_another_session_or_agency_source() {
+        let receipt = refs();
+        let participant = participant();
+        let body = body();
+        validate_explicit_selection_binding(&receipt, &participant, &body).unwrap();
+
+        let mut another_session = body.clone();
+        another_session.agent_session_ref = "agent-session/other".into();
+        assert!(
+            validate_explicit_selection_binding(&receipt, &participant, &another_session).is_err()
+        );
+
+        let mut another_source = participant;
+        another_source.source_digest = format!("blake3:{}", "b".repeat(64));
+        assert!(validate_explicit_selection_binding(&receipt, &another_source, &body).is_err());
     }
 }
 

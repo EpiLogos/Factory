@@ -1,0 +1,111 @@
+{
+  "model_ref": "model:deepseek-v4-pro",
+  "provenance": [
+    "source/actual-pi-model-policy",
+    "rev/model-1",
+    "blake3:b6d49bbed23fb0108e333259477a6ed1296d6381a519301356fffac0406a792c",
+    "blake3:c41a66c2dda8a87eeb7801207b8a25e1078f2a8c2b446b14aada1010f2b7373e"
+  ],
+  "provider_ref": "provider:openrouter",
+  "ranking_explanation": {
+    "basis": {
+      "composition_scope": {
+        "ambient_components_claimed": false,
+        "kind": "thin-native-pi",
+        "selected_components": [],
+        "standing": "empty selections mean this receipt claims the exact Pi body and launch basis only; it does not claim ambient skills, extensions, tools, or contributions"
+      },
+      "composition_target_basis": {
+        "agency_source": {
+          "content_digest": "blake3:ecbd8a1dc9d7d37cd63eb353bc8303c4dd5e278bd9e1fb7f793df9648fbd36e0",
+          "path": "/private/tmp/.tmpOPWcLU/root-agency.json",
+          "revision": "rev/native-2",
+          "source_ref": "source/root"
+        },
+        "digest_contract": "aikit.sorted-json/v1",
+        "harness_profile": {
+          "digest": "blake3:b38e4988d5426913211f828a80c7df974c5d32341556d3bcded3c102b2a7a4d0",
+          "schema": "aikit.harness-profile/v1",
+          "slug": "pi"
+        },
+        "resident_body_basis": {
+          "cwd": "/private/tmp/.tmpOPWcLU",
+          "effective_launch_argv_digest": "f360f9c3851eb249643f3ef66febfda7fe0cc64c10393f97a10f4169b334cfab",
+          "harness_profile": "pi",
+          "model_basis_digest": "blake3:c41436ea8ce842c4bc2764229492c74d3d813eb9c111b2722855744d0a1253c9",
+          "owner_launcher_argv_digest": "7836720eee7b243ed6d59cae2b34ed778f74324cd5f1f264440fb721db601327",
+          "owner_launcher_provider_id": "root",
+          "protocol": "pi-rpc",
+          "provider_argv_digest": "7836720eee7b243ed6d59cae2b34ed778f74324cd5f1f264440fb721db601327",
+          "provider_id": "root",
+          "required_context": null,
+          "schema": "aikit.resident-body-basis/v1",
+          "task_bound": false
+        },
+        "schema": "aikit.harness-composition-target-basis/v1",
+        "world_binding_ref": "binding:root"
+      },
+      "digest_contract": "aikit.sorted-json/v1",
+      "harness_composition": {
+        "absences": [],
+        "agency": "agency:root",
+        "agent": "agent:root",
+        "component_bindings": [],
+        "contract_bindings": [],
+        "contributions": [],
+        "fingerprint": "438b4c51bc616475eff16c1340c19e8f8b9612e018c5dae5d488530a4c0f22d6",
+        "harness": "harness/pi",
+        "model": "model:deepseek-v4-pro",
+        "projections": [],
+        "session": "agent-session/root",
+        "state": "resolved",
+        "surfaces": [],
+        "target_revision": "blake3:739091ffa12104e07c010a3d533eb6b7e55bc0c70be247b40df83b508acd4cb2",
+        "version": "aikit.harness-composition/v2"
+      },
+      "native": {
+        "agent_session": "agent-session/root",
+        "model_observation": {
+          "available_models": [
+            {
+              "modelId": "deepseek/deepseek-v4-pro",
+              "name": "DeepSeek: DeepSeek V4 Pro 0423"
+            }
+          ],
+          "current_model_id": "deepseek/deepseek-v4-pro",
+          "standing": "Pi native get_state; provider=openrouter; configuration, not an inference receipt"
+        },
+        "native_session_id": "01a0caec-e9a1-7c96-bba6-6aa292007562",
+        "space": "session-space/root"
+      },
+      "route_basis": {
+        "catalogue_digest": "blake3:c41a66c2dda8a87eeb7801207b8a25e1078f2a8c2b446b14aada1010f2b7373e",
+        "model_ref": "model:deepseek-v4-pro",
+        "native_provider": "openrouter",
+        "policy_source": {
+          "content_digest": "blake3:b6d49bbed23fb0108e333259477a6ed1296d6381a519301356fffac0406a792c",
+          "path": "/private/tmp/.tmpOPWcLU/actual-pi-model-policy.json",
+          "revision": "rev/model-1",
+          "source": "source/actual-pi-model-policy"
+        },
+        "provider_native_id": "deepseek/deepseek-v4-pro",
+        "provider_ref": "provider:openrouter",
+        "schema": "aikit.model-route-basis/v1"
+      },
+      "schema": "aikit.explicit-model-selection-basis/v1",
+      "selection_kind": "explicit-pin"
+    },
+    "basis_digest": "blake3:3fb0aa497b0c3113ad1c969f8a97f9a76b4476a9c7b176d6b2eb6cd8101c6dd7",
+    "digest_contract": "aikit.sorted-json/v1",
+    "harness_composition_ref": "harness-composition/438b4c51bc616475eff16c1340c19e8f8b9612e018c5dae5d488530a4c0f22d6",
+    "harness_ref": "harness/pi",
+    "model_ref": "model:deepseek-v4-pro",
+    "provider_ref": "provider:openrouter",
+    "route_ref": "model-route/f64b3b413d18dc4c8d260a14e53a94d3f12ba76485824aaa566efdea122156c7",
+    "schema": "aikit.explicit-model-selection/v1",
+    "selection_kind": "explicit-pin",
+    "standing": "explicit source-backed model pin confirmed by the resident native owner; not a ranking or inference receipt"
+  },
+  "ranking_policy": "EXPLICIT_PIN",
+  "roster_version": "aikit.model-roster/v1"
+}
