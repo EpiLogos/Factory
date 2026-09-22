@@ -1035,11 +1035,7 @@ fn derive_identities(
 pub fn project_ref_for_key(project_key: &str) -> Result<ProjectRef, CommissionError> {
     stable_ref(project_key, "projectKey")?;
     ProjectRef::try_from(
-        Ref::new(
-            "project",
-            deterministic_ulid(0, project_key.as_bytes()),
-        )
-        .map_err(debug)?,
+        Ref::new("project", deterministic_ulid(0, project_key.as_bytes())).map_err(debug)?,
     )
     .map_err(debug)
 }
@@ -1270,13 +1266,18 @@ mod tests {
     fn first_commission_uses_initialized_project_and_setup_preserves_its_history() {
         let directory = tempfile::tempdir().unwrap();
         let request = request();
-        let initialized = crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
+        let initialized =
+            crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
         assert_eq!(initialized["runCount"], 0);
         let path = std::path::PathBuf::from(initialized["statePath"].as_str().unwrap());
         let receipt = FactoryDevelopmentalFileProvider::commission(&path, request.clone()).unwrap();
-        assert_eq!(receipt.commission.project_ref.to_string(), initialized["projectRef"]);
+        assert_eq!(
+            receipt.commission.project_ref.to_string(),
+            initialized["projectRef"]
+        );
         let bytes = std::fs::read(&path).unwrap();
-        let reopened = crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
+        let reopened =
+            crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
         assert_eq!(reopened["runCount"], 1);
         assert_eq!(reopened["status"], "already-present");
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
