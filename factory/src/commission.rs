@@ -1417,6 +1417,72 @@ mod tests {
         );
     }
 
+    fn build_snapshot_json(path: &std::path::Path, commission: &FactoryCommission) -> Value {
+        let snapshot = execute_cli(
+            &[
+                "build".into(),
+                "snapshot".into(),
+                path.display().to_string(),
+                commission.project_ref.to_string(),
+                commission.run_ref.to_string(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        serde_json::from_str(&snapshot).unwrap()
+    }
+
+    #[test]
+    fn build_view_names_the_project_from_its_native_key() {
+        for (key, label) in [
+            (
+                "central-project:project%3Aquaternal-logic",
+                "quaternal-logic",
+            ),
+            ("central-project:Factory", "Factory"),
+            ("control:root", "Central"),
+            ("factory-programme-195", "factory-programme-195"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("state.json");
+            let mut commissioned = request();
+            commissioned.project_key = key.into();
+            let receipt =
+                FactoryDevelopmentalFileProvider::commission(&path, commissioned).unwrap();
+            let snapshot = build_snapshot_json(&path, &receipt.commission);
+            assert_eq!(snapshot["view"]["project"]["label"], label, "key {key}");
+            assert_eq!(snapshot["view"]["project"]["projectKey"], key);
+            assert_eq!(
+                snapshot["view"]["project"]["projectRef"],
+                receipt.commission.project_ref.to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn build_view_falls_back_to_the_ref_when_the_state_carries_no_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let receipt = FactoryDevelopmentalFileProvider::commission(&path, request()).unwrap();
+        // Remove the Commission provenance so the state carries no native key
+        // and no Central link: the label must be the ref, never an invention.
+        let provider = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        let mut state = provider.state().clone();
+        state.commissions.clear();
+        assert!(state.project_name().is_none());
+        let run_ref = receipt.commission.run_ref.clone();
+        let snapshot = state.build_snapshot(&run_ref).unwrap();
+        assert_eq!(
+            snapshot.view.project.label,
+            receipt.commission.project_ref.to_string()
+        );
+        assert!(snapshot.view.project.project_key.is_none());
+        // The unmodified state still names it.
+        let named = provider.build_snapshot(&run_ref).unwrap();
+        assert_eq!(named.view.project.label, "factory-programme-195");
+    }
+
     #[test]
     fn real_cli_commissions_and_reopens_public_read() {
         let directory = tempfile::tempdir().unwrap();

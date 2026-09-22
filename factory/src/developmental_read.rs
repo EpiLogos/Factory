@@ -12,7 +12,7 @@ use crate::build::{
     AgencyRecord, CandidateRecord, EvidenceRecord, ExecutionRecord, FactoryActionAuthority,
     FactoryActionExecutor, FactoryActionInvocation, FactoryActionReceipt, FactoryBuildError,
     FactoryBuildSelection, FactoryBuildSnapshot, FactoryBuildState, FactoryBuildViewProvider,
-    HumanRequestRecord, FACTORY_NATIVE_OWNER,
+    HumanRequestRecord, ProjectName, FACTORY_NATIVE_OWNER,
 };
 use crate::commission::{
     CommissionError, FactoryCommission, FactoryCommissionReading, FactoryCommissionReceipt,
@@ -508,7 +508,28 @@ impl FactoryDevelopmentalState {
             project_ref: reading.project_ref,
             run_ref: reading.run_ref,
         };
-        Ok(FactoryBuildViewProvider.snapshot(&self.build, &selection)?)
+        Ok(FactoryBuildViewProvider.snapshot_with_project_name(
+            &self.build,
+            &selection,
+            self.project_name(),
+        )?)
+    }
+
+    /// The Project's native name from what this state really carries: the
+    /// native project key of an admitted Commission (validated against this
+    /// Project on open), else the verified Central project link. `None` when
+    /// the state carries neither; callers then show the ref.
+    pub fn project_name(&self) -> Option<ProjectName> {
+        let project_ref = self.build.project().reference();
+        self.commissions
+            .iter()
+            .filter(|commission| &commission.project_ref == project_ref)
+            .find_map(|commission| ProjectName::from_project_key(&commission.request.project_key))
+            .or_else(|| {
+                self.central_project_link().and_then(|link| {
+                    ProjectName::from_central_project_ref(&link.central_project_ref)
+                })
+            })
     }
 
     pub fn run_reading(

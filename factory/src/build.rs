@@ -542,7 +542,92 @@ pub struct FactoryBuildView {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectView {
     pub project_ref: String,
+    /// Display name of the Project. Derived from the native project key when
+    /// the owner state carries one (see [`project_label_from_key`]); otherwise
+    /// the project ref itself — a name is never invented.
     pub label: String,
+    /// The native project key the label was derived from, when one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
+}
+
+/// A Project's display name together with the native key it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectName {
+    pub label: String,
+    /// Present when the name came from the native project key; absent when it
+    /// came from a Central project link alone.
+    pub project_key: Option<String>,
+}
+
+impl ProjectName {
+    pub fn from_project_key(project_key: &str) -> Option<Self> {
+        Some(Self {
+            label: project_label_from_key(project_key)?,
+            project_key: Some(project_key.to_owned()),
+        })
+    }
+
+    pub fn from_central_project_ref(central_project_ref: &str) -> Option<Self> {
+        Some(Self {
+            label: central_project_name(central_project_ref)?,
+            project_key: None,
+        })
+    }
+}
+
+/// Name a Project from its native project key without inventing one.
+///
+/// - `control:root` is the Central root world, named `Central`.
+/// - `central-project:<id>` carries a percent-encoded Central project
+///   identity; it is decoded and named by [`central_project_name`].
+/// - Any other non-empty key is the owner's own stable name and is used as-is.
+///
+/// Returns `None` only for an empty key or an undecodable encoding.
+pub fn project_label_from_key(project_key: &str) -> Option<String> {
+    let key = project_key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    if key == "control:root" {
+        return Some("Central".into());
+    }
+    match key.strip_prefix("central-project:") {
+        Some(encoded) => central_project_name(&percent_decode(encoded)?),
+        None => Some(key.to_owned()),
+    }
+}
+
+/// Name a Central project from its Central identity. Central world refs have
+/// the grammar `project:<id>`; the `<id>` is the project's name. Bare
+/// identities (`Factory`, `O-I`) are already names.
+pub fn central_project_name(central_project_ref: &str) -> Option<String> {
+    let reference = central_project_ref.trim();
+    if reference == "control:root" {
+        return Some("Central".into());
+    }
+    let name = reference
+        .strip_prefix("project:")
+        .unwrap_or(reference)
+        .trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+fn percent_decode(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -585,6 +670,18 @@ impl FactoryBuildViewProvider {
         state: &FactoryBuildState,
         selection: &FactoryBuildSelection,
     ) -> Result<FactoryBuildSnapshot, FactoryBuildError> {
+        self.snapshot_with_project_name(state, selection, None)
+    }
+
+    /// Materialise the view with the Project's native name, when the caller's
+    /// owner state carries one (a Commission's `projectKey`, or a verified
+    /// Central project link). Without one the Project label is its ref.
+    pub fn snapshot_with_project_name(
+        &self,
+        state: &FactoryBuildState,
+        selection: &FactoryBuildSelection,
+        project_name: Option<ProjectName>,
+    ) -> Result<FactoryBuildSnapshot, FactoryBuildError> {
         if state.project.reference() != &selection.project_ref {
             return Err(FactoryBuildError::ProjectNotFound(
                 selection.project_ref.to_string(),
@@ -599,9 +696,17 @@ impl FactoryBuildViewProvider {
         }
 
         let view = FactoryBuildView {
-            project: ProjectView {
-                project_ref: state.project.reference().to_string(),
-                label: state.project.reference().to_string(),
+            project: match project_name {
+                Some(name) => ProjectView {
+                    project_ref: state.project.reference().to_string(),
+                    label: name.label,
+                    project_key: name.project_key,
+                },
+                None => ProjectView {
+                    project_ref: state.project.reference().to_string(),
+                    label: state.project.reference().to_string(),
+                    project_key: None,
+                },
             },
             run: RunView {
                 run_ref: run.reference().to_string(),
@@ -845,3 +950,54 @@ impl Display for FactoryBuildError {
 }
 
 impl Error for FactoryBuildError {}
+
+#[cfg(test)]
+mod project_name_tests {
+    use super::{central_project_name, project_label_from_key, ProjectName};
+
+    #[test]
+    fn project_key_names_decode_without_invention() {
+        assert_eq!(
+            project_label_from_key("central-project:Factory").as_deref(),
+            Some("Factory")
+        );
+        assert_eq!(
+            project_label_from_key("central-project:project%3Aquaternal-logic").as_deref(),
+            Some("quaternal-logic")
+        );
+        assert_eq!(
+            project_label_from_key("central-project:My%20Project").as_deref(),
+            Some("My Project")
+        );
+        assert_eq!(
+            project_label_from_key("control:root").as_deref(),
+            Some("Central")
+        );
+        assert_eq!(
+            project_label_from_key("factory-programme-195").as_deref(),
+            Some("factory-programme-195")
+        );
+        // Nothing to name, or an encoding that does not decode: no label.
+        assert_eq!(project_label_from_key("  "), None);
+        assert_eq!(project_label_from_key("central-project:"), None);
+        assert_eq!(project_label_from_key("central-project:bad%zz"), None);
+        assert_eq!(project_label_from_key("central-project:cut%4"), None);
+    }
+
+    #[test]
+    fn central_link_names_follow_the_central_ref_grammar() {
+        assert_eq!(central_project_name("O-I").as_deref(), Some("O-I"));
+        assert_eq!(
+            central_project_name("project:quaternal-logic").as_deref(),
+            Some("quaternal-logic")
+        );
+        assert_eq!(central_project_name("project:"), None);
+        assert_eq!(
+            ProjectName::from_central_project_ref("Factory"),
+            Some(ProjectName {
+                label: "Factory".into(),
+                project_key: None
+            })
+        );
+    }
+}

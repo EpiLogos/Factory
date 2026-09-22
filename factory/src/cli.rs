@@ -254,8 +254,9 @@ fn build_command(args: &[String], json: bool) -> Result<String, CliError> {
         return snapshot.to_json().map_err(CliError::from);
     }
     Ok(format!(
-        "{}\nProject: {}\nRun: {} ({})\nFrontier: {} — {}\nRevision: {}\nActions: {}",
+        "{}\nProject: {} ({})\nRun: {} ({})\nFrontier: {} — {}\nRevision: {}\nActions: {}",
         snapshot.contract,
+        snapshot.view.project.label,
         snapshot.view.project.project_ref,
         snapshot.view.run.run_ref,
         snapshot.view.run.status,
