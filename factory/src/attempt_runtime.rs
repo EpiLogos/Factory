@@ -1747,6 +1747,12 @@ impl From<crate::workflow::WorkflowError> for FactoryAttemptError {
     }
 }
 
+impl From<OrchestrationError> for FactoryAttemptError {
+    fn from(error: OrchestrationError) -> Self {
+        Self::Orchestration(error)
+    }
+}
+
 #[cfg(test)]
 mod explicit_selection_binding_tests {
     use super::*;
@@ -1812,11 +1818,5 @@ mod explicit_selection_binding_tests {
         let mut another_source = participant;
         another_source.source_digest = format!("blake3:{}", "b".repeat(64));
         assert!(validate_explicit_selection_binding(&receipt, &another_source, &body).is_err());
-    }
-}
-
-impl From<OrchestrationError> for FactoryAttemptError {
-    fn from(error: OrchestrationError) -> Self {
-        Self::Orchestration(error)
     }
 }
