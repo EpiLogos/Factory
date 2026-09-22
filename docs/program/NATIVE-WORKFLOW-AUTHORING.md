@@ -137,3 +137,13 @@ DSH maximal and one thinner native path retain different coverage. Use real DSH 
 A first-source stamp is authored intention, not a success result. New source after failure must preserve original evidence, and the independent verifier must reject a disconnected handler, wrong-source/attempt response or a fake completed status. Machine proof and actual human judgement remain distinct; no premature Recognition gate blocks construction.
 
 **Completion:** an ordinary person/agent can define and run work in base Factory, see what was meant beside what actually happened in the existing SSSF/trace experience, and revise or continue with exact lineage. QL/Vāk/Epi enrich that same technology rather than owning or gating it.
+
+## Project availability before the first Run — O:I #65/#201, 2026-09-22
+
+The owner's bootstrap correction makes ordinary Factory placement available before work is commissioned. `factory project setup <project-root> <native-project-key> [--central-source <project.json>] --json` initializes a zero-Run native Project or validates/reuses existing state. `factory project locate <project-root> --json` reads that owner placement. Factory owns `.factory/project.json` and its native developmental state; consumers use the returned location instead of guessing paths.
+
+The project key returned by the owner is used by subsequent Commission requests. Central bootstrap uses `factory project setup-central <root> <central-project-ref> <project.json>`: Factory encodes new keys without changing Central identities (including names containing spaces), and reuses an existing native Factory key when placement or Commission history supplies it. Initialization and Commission share their identity derivation. A present state with another identity refuses without replacement. A missing placement record can be recovered over existing state without recreating its work. Setup and Commission share the provider lock. Central child links use the existing source verifier; root Central has its own scope and receives no fabricated child manifest link.
+
+A moved Central link is reconciled only with identical native identity and source digest and an absent old source path. Both link locations remain in native provenance. Source changes do not become relocation.
+
+The next real undertaking still enters through `factory workflow commission` with its authored TypeScript, then the existing attempt Actions. Setup supplies no launched participant, grant, attempt, tool result or verification. This repair's owner tests are `factory/tests/project_setup.rs`; they exercise the real public CLI, native filesystem, compiler, Commission/source attachment and replay. Installed and provider evidence remain separate campaign obligations.

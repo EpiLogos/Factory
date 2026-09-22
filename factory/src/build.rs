@@ -150,6 +150,23 @@ pub struct FactoryBuildState {
 }
 
 impl FactoryBuildState {
+    /// A Project exists before it commissions work. Initialization must not
+    /// manufacture a Run merely to make the Project available to clients.
+    pub fn empty(project: Project) -> Self {
+        Self {
+            project,
+            runs: RunRegistry::default(),
+            revision: Revision::INITIAL,
+            claims: BTreeMap::new(),
+            evidence: BTreeMap::new(),
+            candidates: BTreeMap::new(),
+            human_requests: BTreeMap::new(),
+            agencies: BTreeMap::new(),
+            executions: BTreeMap::new(),
+            trajectories: BTreeMap::new(),
+        }
+    }
+
     pub fn new(project: Project, run: Run) -> Result<Self, FactoryBuildError> {
         if run.project_ref() != project.reference() {
             return Err(FactoryBuildError::ProjectRunMismatch);

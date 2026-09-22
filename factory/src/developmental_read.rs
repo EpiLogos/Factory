@@ -90,6 +90,13 @@ pub struct FactoryCentralProjectLinkReading {
     pub link: FactoryCentralProjectLink,
     pub project: FactoryProjectReading,
 }
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCentralProjectLinkRelocation {
+    pub previous: FactoryCentralProjectLink,
+    pub current: FactoryCentralProjectLink,
+}
 #[derive(Debug, Deserialize)]
 struct CentralProjectSource {
     schema: String,
@@ -156,6 +163,8 @@ pub struct FactoryDevelopmentalState {
     pub attempt_states: BTreeMap<RunRef, crate::attempt_native_store::FactoryRunAttempts>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub central_project_links: BTreeMap<ProjectRef, FactoryCentralProjectLink>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub central_project_link_relocations: Vec<FactoryCentralProjectLinkRelocation>,
 }
 
 impl FactoryDevelopmentalState {
@@ -175,6 +184,7 @@ impl FactoryDevelopmentalState {
             developmental_mutations: Vec::new(),
             attempt_states: BTreeMap::new(),
             central_project_links: BTreeMap::new(),
+            central_project_link_relocations: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -292,6 +302,22 @@ impl FactoryDevelopmentalState {
             ));
         }
         let project_ref = self.build.project().reference();
+        for (key, link) in &self.central_project_links {
+            if key != project_ref || &link.factory_project_ref != project_ref
+                || link.central_project_ref.trim().is_empty() || link.source_path.is_empty()
+                || !link.source_revision.starts_with("blake3:") {
+                return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink("Invalid stored Project link identity or source".into()));
+            }
+        }
+        for relocation in &self.central_project_link_relocations {
+            let (previous, current) = (&relocation.previous, &relocation.current);
+            if &previous.factory_project_ref != project_ref || &current.factory_project_ref != project_ref
+                || previous.central_project_ref != current.central_project_ref
+                || previous.source_revision != current.source_revision
+                || previous.source_path == current.source_path {
+                return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink("Invalid stored Project relocation provenance".into()));
+            }
+        }
         let mut previous: Option<&JourneyRef> = None;
         for journey in &self.journeys {
             journey
@@ -1122,6 +1148,54 @@ pub struct FactoryDevelopmentalFileProvider {
 }
 
 impl FactoryDevelopmentalFileProvider {
+    /// Initialize/reconcile the native Project under the same lock used by
+    /// Commission. A concurrent first Commission cannot be overwritten.
+    pub fn initialize_project(
+        path: impl Into<PathBuf>,
+        project: crate::core::run::Project,
+        link: Option<FactoryCentralProjectLinkRequest>,
+    ) -> Result<(Self, bool), FactoryDevelopmentalProviderError> {
+        let path = path.into();
+        let lock = Self::lock_path(&path)?;
+        let existed = path.exists();
+        let mut state = if existed { Self::read_state(&path)? } else {
+            FactoryDevelopmentalState::new(FactoryBuildState::empty(project.clone()), vec![])?
+        };
+        if state.build.project().reference() != project.reference() {
+            return Err(FactoryDevelopmentalReadError::ProjectNotFound(project.reference().to_string()).into());
+        }
+        let mut changed = false;
+        if let Some(request) = link {
+            let current = verify_central_project_link(&request)?;
+            if let Some(previous) = state.central_project_links.get(project.reference()).cloned() {
+                if previous != current {
+                    // Migration changes location, never identity or source
+                    // revision. Keep the original link as native provenance.
+                    if previous.central_project_ref != current.central_project_ref
+                        || previous.source_revision != current.source_revision
+                        || Path::new(&previous.source_path).exists() {
+                        return Err(FactoryDevelopmentalReadError::InvalidCentralProjectLink(
+                            "Existing Central link differs; relocation requires unchanged source bytes and an absent old path".into()).into());
+                    }
+                    state.central_project_link_relocations.push(FactoryCentralProjectLinkRelocation {previous, current:current.clone()});
+                    state.central_project_links.insert(project.reference().clone(), current);
+                    changed = true;
+                }
+            } else {
+                state.admit_central_project_link(request)?;
+                changed = true;
+            }
+        }
+        state.validate()?;
+        let provider = if existed {
+            let provider = Self {path, state};
+            if changed { provider.persist()?; }
+            provider
+        } else { Self::create_new(path, state)? };
+        FileExt::unlock(&lock)?;
+        Ok((provider, existed))
+    }
+
     /// Create the first Commission state without clobbering, or append/replay
     /// under the provider's exclusive lock when the path already exists.
     pub fn commission(
