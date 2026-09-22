@@ -25,7 +25,7 @@ policy={'schema':'central.effective-placement-policy/v1','scope_ref':'control:ro
     'sources':[{'source':{'ref':'central:source:control:root:Control/user/placement.json'},'revision':revision}],
     'outside_writes_prevented':False,'required_coverage':source['required_coverage'],'enforcement':source['enforcement'],
     'issued_at_unix_seconds':now,'expires_at_unix_seconds':now+source['lease_seconds'],
-    'protected_paths':[str(root/'Control/user')], 'writable_destinations':[{'path':str(root/'Work/demo'),'class':'repository','anchor':anchor(root/'Work/demo')}]}
+    'protected_paths':[str(root/path) for path in source['protected']], 'writable_destinations':[{'path':str(root/'Work/demo'),'class':'repository','anchor':anchor(root/'Work/demo')}]}
 area=root/'Control/agents/now/test-only'; nr=area/'now.json'; destination=area/'T'
 def reading():
     record=json.loads(nr.read_text()); body=nr.read_bytes()
@@ -50,7 +50,9 @@ elif action=='central.now.allocate':
 elif action=='central.now.read': data={**reading(),'schema':'central.now-reading/v1'}
 elif action=='central.work.validate':
     current=reading(); path=pathlib.Path(request['destination']); current_anchor=anchor(path)
-    allowed=(path.is_relative_to(root/'Work/demo') or path.is_relative_to(destination)) and not any(p.is_symlink() for p in [path,*path.parents])
+    protected=[pathlib.Path(value) for value in policy['protected_paths']]
+    conflicts_protected=any(path.is_relative_to(value) or value.is_relative_to(path) for value in protected)
+    allowed=(path.is_relative_to(root/'Work/demo') or path.is_relative_to(destination)) and not conflicts_protected and not any(p.is_symlink() for p in [path,*path.parents])
     allowed=allowed and request['expected_now_revision']==current['revision']['revision'] and request['expected_policy_revision']==revision
     if 'expected_destination_anchor' in request: allowed=allowed and request['expected_destination_anchor']==current_anchor
     data={'schema':'central.work-placement-validation/v1','allowed':allowed,'destination':str(path),'destination_anchor':current_anchor,
@@ -70,8 +72,9 @@ fn setup(world: &World, native: bool) -> std::path::PathBuf {
     fs::create_dir_all(root.join("Control/user")).unwrap();
     fs::create_dir_all(root.join("Control/relations")).unwrap();
     fs::create_dir_all(root.join("Work/demo/src")).unwrap();
+    fs::create_dir_all(root.join("Work/demo/.git")).unwrap();
     let policy = json!({"schema":"central.work-placement-policy/v1","scope_ref":"control:root",
-        "writable":[{"path":"Work/demo","class":"repository"}],"protected":[],
+        "writable":[{"path":"Work/demo","class":"repository"}],"protected":["Control/user","Work/demo/.git"],
         "enforcement":"native-actions","required_coverage":["file-content"],"lease_seconds":300});
     fs::write(root.join("Control/user/placement.json"), policy.to_string()).unwrap();
     fs::write(root.join("Control/relations/source-relations.json"), json!({
@@ -141,6 +144,15 @@ fn native_central_preparation_reaches_owner_and_the_actual_dispatch_path() {
     assert_eq!(prepared["needsReconciliation"], false, "{prepared}");
     assert!(world.calls().is_empty());
     let checkpoint = &prepared["observation"]["payload"]["detail"]["checkpoint"];
+    assert_eq!(
+        checkpoint["workingDirectoryAnchor"]["path"],
+        request["workingDirectory"]
+    );
+    assert!(checkpoint["validations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|validation| validation["data"]["destination"] != request["workingDirectory"]));
     let now_path = checkpoint["allocation"]["writable_destination"]
         .as_str()
         .unwrap();
@@ -160,6 +172,70 @@ fn native_central_preparation_reaches_owner_and_the_actual_dispatch_path() {
         .as_str()
         .unwrap()
         .contains(now_path));
+}
+
+#[test]
+fn native_central_cwd_is_anchored_without_granting_the_repository_root_as_a_write() {
+    let (world, ctrl, request) = native_world();
+    // The controlled native policy protects the repository's .git descendant,
+    // so central.work.validate rejects the repository root as a write. The cwd
+    // is still an authorised invocation location and the selected file remains
+    // the only write validation.
+    let prepared = preparation(&world, &request);
+    assert_eq!(prepared["needsReconciliation"], false, "{prepared}");
+    let checkpoint = &prepared["observation"]["payload"]["detail"]["checkpoint"];
+    let validations = checkpoint["validations"].as_array().unwrap();
+    assert_eq!(validations.len(), 1);
+    assert_eq!(
+        validations[0]["data"]["destination"],
+        request["destinations"][0]
+    );
+    let root = world.dir.path().canonicalize().unwrap();
+    let input = json!({
+        "now_ref": checkpoint["allocation"]["now_ref"],
+        "expected_now_revision": checkpoint["allocation"]["revision"]["revision"],
+        "expected_policy_revision": checkpoint["policy"]["revision"],
+        "destination": request["workingDirectory"],
+    });
+    let refused = Command::new(ctrl)
+        .args(["--json", "--root"])
+        .arg(root)
+        .args(["action", "run", "central.work.validate"])
+        .arg(input.to_string())
+        .output()
+        .unwrap();
+    assert!(
+        !refused.status.success(),
+        "Central unexpectedly granted repository-root write: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    assert_eq!(
+        success(world.owner(&owner_request(&world)))["needsReconciliation"],
+        false
+    );
+}
+
+#[test]
+fn native_central_rejects_redirected_or_replaced_cwd_before_worker_transport() {
+    for redirected in [true, false] {
+        let (world, _, mut request) = native_world();
+        let root = world.dir.path().canonicalize().unwrap();
+        if redirected {
+            let alias = root.join("Work/alias");
+            std::os::unix::fs::symlink(root.join("Work/demo"), &alias).unwrap();
+            request["workingDirectory"] = json!(alias);
+            let refused = preparation(&world, &request);
+            assert_eq!(refused["needsReconciliation"], true, "{refused}");
+        } else {
+            assert_eq!(preparation(&world, &request)["needsReconciliation"], false);
+            let original = root.join("Work/demo");
+            let moved = root.join("Work/demo-before-external-replacement");
+            fs::rename(&original, &moved).unwrap();
+            fs::create_dir_all(original.join("src")).unwrap();
+            assert!(!world.owner(&owner_request(&world)).status.success());
+        }
+        assert!(world.calls().is_empty());
+    }
 }
 
 #[test]

@@ -67,6 +67,17 @@ identity, expected Factory revision, pinned Central endpoint, absolute working
 directory and selected destinations. `timeoutMs` is an optional total transport
 budget of 1..30000 ms, not a new remote-worker lifetime.
 
+The working directory is an invocation location, not an implicit write grant.
+Factory checks that it is a real canonical directory within a native Central
+writable destination and outside protected ground, then retains its device and
+inode. A repository root can therefore be the cwd while its `.git` and other
+protected descendants remain unwritable. Only the explicitly selected destinations
+go through Central's write validation; the Workcell worker boundary remains
+separate. Dispatch rechecks the cwd identity against fresh policy. Missing,
+redirected or replaced directories refuse before worker transport. Older ready
+checkpoints without this cwd anchor require explicit preparation recovery; they
+are not silently upgraded or reused.
+
 Factory derives the allocation's task, purpose, selected Agent/Agency and source
 relationships from the existing attempt. It retains the actual returned NOW,
 source revision, policy revision and destination anchors; it never reconstructs
