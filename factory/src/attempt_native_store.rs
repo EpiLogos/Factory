@@ -41,6 +41,11 @@ impl FactoryRunAttempts {
         &self.attempts
     }
 
+    /// The retained coordinator snapshot (legs and their current executions).
+    pub fn snapshot(&self) -> &OrchestrationSnapshot {
+        &self.snapshot
+    }
+
     /// The exact admitted source, not a current file or a guessed display name.
     pub fn workflow_source(&self) -> &WorkflowSource {
         &self.workflow_source

@@ -208,6 +208,20 @@ these native commands and deliberately contains only seeded, ready/planned
 work—no Agency, Execution, Activity or Return is inferred. See
 `docs/canon/FACTORY-SELF-HOSTING-COMMISSION.md`.
 
+Work is held by stable World Positions (`central:position:<world>:<slug>`, defined
+by Central) through `factory development custody assign|update|list`: durable
+`factory.work-custody/v1` records in the same developmental state, written under
+its lock. Closed custody reopens only with `--reopen`; a hand-off names its
+receiver and creates the successor in the same write. `factory development
+current-work --position P` answers `none`, `one` or `ambiguous` from every
+in-progress custody and every running attempt whose participant names `P` — never
+from a capped list, never the most recent — and refuses to guess when relations
+name more than one work node or one cannot be resolved. `factory development
+inhabitation` projects, per Run, the Positions in custody and the occupant
+relations each attempt already records, with absent foreign refs marked absent.
+Without a state path these commands use the nearest `.factory/project.json`. See
+the O:I World inhabitation contract v1, section 3.
+
 This repository now contains several layers with different authority:
 
 ```text

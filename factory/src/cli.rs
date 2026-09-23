@@ -121,9 +121,11 @@ Usage:\n  factory project setup <root> <native-project-key> [--central-source <p
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development build   <state> <run-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Telemetry (operator and Agent reads over the real developmental services):\n  factory telemetry status  <state> [--json]\n  factory telemetry inspect <state> <telemetry-ref> [--json]\n  factory telemetry search  <state> <query> [--regex] [--limit N] [--aikit <bin>] [--json]\n  factory telemetry stats   <state> [--template <name>] [--drill-down] [--json]\n  factory telemetry watch   <state> [--interval S] [--max-events N] [--duration S] [--resume <cursor>]\n  factory telemetry compare <original-state> <changed-state> [--json]\n  factory telemetry export  <state> [--json]\n  factory telemetry doctor  <state> [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
+{}\n\n\
 <state> in build/action/verify accepts a `factory.build-local-provider-state/v1` document or a `factory.developmental-local-provider/v1` developmental state, such as the document `factory conformance developmental-state` writes.\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.",
-        env!("CARGO_PKG_VERSION")
+        env!("CARGO_PKG_VERSION"),
+        crate::inhabitation_cli::help()
     )
 }
 
@@ -153,6 +155,11 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.action",
             "development.observe",
             "development.observations",
+            "development.custody.assign",
+            "development.custody.update",
+            "development.custody.list",
+            "development.current-work",
+            "development.inhabitation",
             "action.list",
             "action.invoke",
             "config-contribution",
@@ -188,6 +195,12 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_ROUTINE_CONTINUATION_ADMISSION,
             FACTORY_ROUTINE_CONTINUATION_READING,
             FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
+            crate::work_custody::FACTORY_WORK_CUSTODY,
+            crate::work_custody::FACTORY_WORK_CUSTODY_RECEIPT,
+            crate::work_custody::FACTORY_WORK_CUSTODY_LISTING,
+            crate::current_work::FACTORY_CURRENT_WORK,
+            crate::inhabitation::FACTORY_INHABITATION_READING,
+            crate::work_custody::FACTORY_REFUSAL,
             crate::telemetry_cli::FACTORY_TELEMETRY_STATUS_CONTRACT,
             crate::telemetry_cli::FACTORY_TELEMETRY_INSPECT_CONTRACT,
             crate::telemetry_cli::FACTORY_TELEMETRY_SEARCH_CONTRACT,
@@ -297,6 +310,12 @@ fn development_command(
     // provider is opened, so recording an observation never demands a state
     // document the recorder does not own.
     match operation.as_str() {
+        // World inhabitation verbs locate their own state and refuse in three
+        // parts; the process entry prints those refusals as documents.
+        "custody" | "current-work" | "inhabitation" => {
+            return crate::inhabitation_cli::execute(args, json)
+                .map_err(|refusal| CliError(refusal.to_string()));
+        }
         "observe" => {
             let ledger_root = args
                 .get(1)

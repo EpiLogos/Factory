@@ -151,6 +151,7 @@ impl World {
                 agency_ref: "agency:test".into(),
                 world_binding_ref: "binding:test".into(),
                 profile_ref: None,
+                position_ref: None,
                 source_ref: workflow.source.reference.to_string(),
                 source_revision: workflow.source.revision.clone(),
                 source_digest: format!("blake3:{}", workflow.source.digest),

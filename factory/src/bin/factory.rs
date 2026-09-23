@@ -10,6 +10,11 @@ fn main() -> std::process::ExitCode {
     if epilogos_factory::configuration::is_config_command(args.first().map(String::as_str)) {
         return epilogos_factory::configuration::config_main(&args);
     }
+    // World inhabitation refusals are three-part documents; under --json they
+    // go to stdout with a non-zero exit, like the configuration plane's.
+    if epilogos_factory::inhabitation_cli::is_inhabitation_command(&args) {
+        return epilogos_factory::inhabitation_cli::main(&args);
+    }
     match epilogos_factory::attempt_cli::execute(&args, None) {
         Ok(output) => {
             if !output.is_empty() {

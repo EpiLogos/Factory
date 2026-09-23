@@ -119,6 +119,12 @@ impl OrchestrationSnapshot {
         &self.active_writers
     }
 
+    /// The retained leg per WorkflowUnit, exactly as persisted. Restore checks
+    /// these same records against the Run; readers must not reinterpret them.
+    pub fn legs(&self) -> &BTreeMap<WorkflowUnitRef, LegRecord> {
+        &self.legs
+    }
+
     /// Reopen only against the canonical Run and freshly compiled authored
     /// source. Authority is reconstituted by Run, never deserialized from input.
     pub fn restore(

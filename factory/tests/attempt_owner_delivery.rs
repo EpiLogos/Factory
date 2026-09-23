@@ -183,6 +183,7 @@ impl World {
                 agency_ref: "agency:transport".into(),
                 world_binding_ref: "world-binding:test".into(),
                 profile_ref: None,
+                position_ref: None,
                 source_ref: self.workflow.source.reference.to_string(),
                 source_revision: self.workflow.source.revision.clone(),
                 source_digest: format!("blake3:{}", self.workflow.source.digest),
