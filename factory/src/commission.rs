@@ -1005,14 +1005,7 @@ fn derive_identities(
 ) -> Result<(ProjectRef, JourneyRef, RunRef), CommissionError> {
     let moment = timestamp(&request.commissioned_at, "commissionedAt")?;
     let millis = timestamp_ms(moment)?;
-    let project_ref = ProjectRef::try_from(
-        Ref::new(
-            "project",
-            deterministic_ulid(0, request.project_key.as_bytes()),
-        )
-        .map_err(debug)?,
-    )
-    .map_err(debug)?;
+    let project_ref = project_ref_for_key(&request.project_key)?;
     let journey_ref = JourneyRef::new(
         Ref::new(
             "journey",
@@ -1036,6 +1029,15 @@ fn derive_identities(
     )
     .map_err(debug)?;
     Ok((project_ref, journey_ref, run_ref))
+}
+
+/// Initialization and first Commission share the same Project identity.
+pub fn project_ref_for_key(project_key: &str) -> Result<ProjectRef, CommissionError> {
+    stable_ref(project_key, "projectKey")?;
+    ProjectRef::try_from(
+        Ref::new("project", deterministic_ulid(0, project_key.as_bytes())).map_err(debug)?,
+    )
+    .map_err(debug)
 }
 
 fn commission_basis(request: &FactoryCommissionRequest) -> Vec<String> {
@@ -1258,6 +1260,30 @@ mod tests {
         let mut unbounded = direct.clone();
         unbounded.root_act.agent_ref = "agent:someone-else".into();
         assert!(unbounded.validate().is_err());
+    }
+
+    #[test]
+    fn first_commission_uses_initialized_project_and_setup_preserves_its_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let request = request();
+        let initialized =
+            crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
+        assert_eq!(initialized["runCount"], 0);
+        let path = std::path::PathBuf::from(initialized["statePath"].as_str().unwrap());
+        let receipt = FactoryDevelopmentalFileProvider::commission(&path, request.clone()).unwrap();
+        assert_eq!(
+            receipt.commission.project_ref.to_string(),
+            initialized["projectRef"]
+        );
+        let bytes = std::fs::read(&path).unwrap();
+        let reopened =
+            crate::project_setup::setup(directory.path(), &request.project_key, None).unwrap();
+        assert_eq!(reopened["runCount"], 1);
+        assert_eq!(reopened["status"], "already-present");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let replay = FactoryDevelopmentalFileProvider::commission(&path, request).unwrap();
+        assert_eq!(replay.status, FactoryAdmissionStatus::AlreadyApplied);
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
     }
 
     #[test]

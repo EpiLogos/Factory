@@ -46,6 +46,17 @@ corresponding tests. Native authority fields are the established Factory
 admission boundary, not a new claim of credential isolation between hostile
 same-host processes.
 
+An explicit native model choice can supply AIKit's
+`aikit.explicit-model-selection/v1` receipt through the existing Execution
+Intelligence selection field. `EXPLICIT_PIN` is a deliberate pin, not an invented
+ranking result. Factory verifies the owner basis and route digests using
+`aikit.sorted-json/v1`, the thin Pi composition's exact target basis, and the
+attempt's matching Agent, Agency, WorldBinding, source ref/revision/digest,
+AgentSession and SessionSpace. A valid receipt from another conversation is not
+the body for this attempt. The ordinary ranked selection path remains available.
+Neither receipt is dispatch, an authority grant, a loaded-Skill claim or a model
+result; current native task/authority checks still run before the actual send.
+
 ## Native preparation and fresh dispatch
 
 `factory attempt prepare` (also `factory development attempt prepare`) calls
@@ -55,6 +66,17 @@ Actions for the existing attempt. `CentralAttemptRequest` in
 identity, expected Factory revision, pinned Central endpoint, absolute working
 directory and selected destinations. `timeoutMs` is an optional total transport
 budget of 1..30000 ms, not a new remote-worker lifetime.
+
+The working directory is an invocation location, not an implicit write grant.
+Factory checks that it is a real canonical directory within a native Central
+writable destination and outside protected ground, then retains its device and
+inode. A repository root can therefore be the cwd while its `.git` and other
+protected descendants remain unwritable. Only the explicitly selected destinations
+go through Central's write validation; the Workcell worker boundary remains
+separate. Dispatch rechecks the cwd identity against fresh policy. Missing,
+redirected or replaced directories refuse before worker transport. Older ready
+checkpoints without this cwd anchor require explicit preparation recovery; they
+are not silently upgraded or reused.
 
 Factory derives the allocation's task, purpose, selected Agent/Agency and source
 relationships from the existing attempt. It retains the actual returned NOW,
@@ -80,7 +102,8 @@ The successful preflight accompanies the existing bounded task packet and
 transport receipt. Delivery recovery and historical replay never resend work.
 This is not Git Candidate provisioning or an independently enforced worker
 sandbox: stronger interception/material requirements still refuse on the plain
-session path. An endpoint revision pin is not installed-binary authentication.
+session path. The task-bound path described below consumes the native worker
+boundary. An endpoint revision pin is not installed-binary authentication.
 
 Read-only attempts retain the native allocated NOW through their actual Central
 tracking fact. The existing receiving adapter carries that NOW with the verified
@@ -112,8 +135,17 @@ fails; unavailable current readback is null rather than an old snapshot.
 The pinned plain AIKit session path does not establish effective placement
 protection. Factory therefore refuses protected or write-effect dispatch on
 this path rather than treating declared coverage or a sandboxed control client
-as confinement of an already-running worker. This restriction marks an
-unfinished adapter join, not completion of protected continuous work.
+as confinement of an already-running worker.
+
+The task-bound AIKit contract at
+`8804866fb49ec5072aaedcfcf032c7a078fa585f` supplies the separate protected route
+through `attempt_task_dispatch.rs`. Factory reads the actual prepared native
+task and compares its exact Agency/source, NOW, policy, cwd, writable/protected
+paths and Workcell inspection to this attempt. The addressed send carries
+`expected_task`; AIKit checks it again at its own execution boundary. This
+supports the joined operation without weakening the plain-session refusal.
+Actual OS coverage, launched process and provider result still need their native
+receipts; a configured boundary alone is not whole-operation acceptance.
 
 ## Attempt-scoped material lifecycle
 

@@ -97,6 +97,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
             option_env!("SUITE_BUILD_REVISION").unwrap_or("unknown")
         )),
         Some("capabilities") => render_capabilities(json),
+        Some("project") => crate::project_setup::execute(&args[1..]).map_err(CliError),
         Some("build") => build_command(&args[1..], json),
         Some("conformance") => conformance_command(&args[1..], json),
         Some("development") => development_command(&args[1..], json, stdin_override),
@@ -116,7 +117,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 fn help() -> String {
     format!(
         "Software Factory {}\n\n\
-Usage:\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory config-contribution [--json]\n  factory config validate --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config plan     --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config apply    --plan-file <path|-> [--changeset <id>] [--json]\n  factory config reset    --setting <setting-ref> [--scope <kind>:<ref>] [--changeset <id>] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
+Usage:\n  factory project setup <root> <native-project-key> [--central-source <project.json>] [--json]\n  factory project setup-central <root> <central-project-ref> <project.json> [--json]\n  factory project locate <root> [--json]\n  factory --version\n  factory capabilities [--json]\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n  factory build refresh  <state> <project-ref> <run-ref> [--json]\n  factory conformance developmental-state <output> [--json]\n  factory action list    <state> <project-ref> <run-ref> [--json]\n  factory action invoke  <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory system [--json]\n  factory config-contribution [--json]\n  factory config validate --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config plan     --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config apply    --plan-file <path|-> [--changeset <id>] [--json]\n  factory config reset    --setting <setting-ref> [--scope <kind>:<ref>] [--changeset <id>] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
 Developmental reads:\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run     <state> <run-ref> [--json]\n  factory development build   <state> <run-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit  <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development commission <state> [request-file|-] [--json]\n  factory development commission-read <state> <request-ref> [--json]\n  factory development mutate <state> [request-file|-] [--json]\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n  factory development routine-continuation <state> <invocation-ref> [--json]\n  factory development action  <state> [request-file|-] [--json]\n\n\
 Telemetry (operator and Agent reads over the real developmental services):\n  factory telemetry status  <state> [--json]\n  factory telemetry inspect <state> <telemetry-ref> [--json]\n  factory telemetry search  <state> <query> [--regex] [--limit N] [--aikit <bin>] [--json]\n  factory telemetry stats   <state> [--template <name>] [--drill-down] [--json]\n  factory telemetry watch   <state> [--interval S] [--max-events N] [--duration S] [--resume <cursor>]\n  factory telemetry compare <original-state> <changed-state> [--json]\n  factory telemetry export  <state> [--json]\n  factory telemetry doctor  <state> [--json]\n\n\
 Run development ledger:\n  factory development observe      <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development observations <ledger-root> <run-ref> [--json]\n\n\
@@ -132,6 +133,9 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
         product: "software-factory",
         version: env!("CARGO_PKG_VERSION"),
         commands: vec![
+            "project.setup",
+            "project.setup-central",
+            "project.locate",
             "build.snapshot",
             "build.refresh",
             "conformance.developmental-state",

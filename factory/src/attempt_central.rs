@@ -14,6 +14,8 @@ use crate::core::run::RunRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+#[cfg(unix)]
+use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
@@ -139,6 +141,64 @@ fn policy_valid(policy: &Value) -> Result<(), String> {
         return Err("Central placement lease expired before the operation".into());
     }
     Ok(())
+}
+#[cfg(unix)]
+fn working_directory_anchor(policy: &Value, directory: &Path) -> Result<Value, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    if !absolute(directory)
+        || directory
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            != directory
+    {
+        return Err("working directory must exist with its exact canonical identity".into());
+    }
+    let metadata = fs::symlink_metadata(directory).map_err(|error| error.to_string())?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("working directory must remain a real directory".into());
+    }
+    let grants = policy["writable_destinations"]
+        .as_array()
+        .ok_or("Central policy omitted its native writable destinations")?;
+    let mut within_grant = false;
+    for grant in grants {
+        let path = Path::new(text(grant, "path")?);
+        if !absolute(path) {
+            return Err("Central policy returned a non-absolute writable destination".into());
+        }
+        within_grant |= directory.starts_with(path);
+    }
+    let protected = policy["protected_paths"]
+        .as_array()
+        .ok_or("Central policy omitted its protected paths")?;
+    let mut inside_protected = false;
+    for value in protected {
+        let raw = value
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("Central policy returned a non-text protected path")?;
+        let path = Path::new(raw);
+        if !absolute(path) {
+            return Err("Central policy returned a non-absolute protected path".into());
+        }
+        inside_protected |= directory.starts_with(path);
+    }
+    if !within_grant || inside_protected {
+        return Err(
+            "working directory must be inside a native writable destination and outside protected ground"
+                .into(),
+        );
+    }
+    Ok(json!({
+        "path": directory,
+        "device": metadata.dev(),
+        "inode": metadata.ino(),
+    }))
+}
+#[cfg(not(unix))]
+fn working_directory_anchor(_policy: &Value, _directory: &Path) -> Result<Value, String> {
+    Err("native working-directory identity is unsupported on this platform".into())
 }
 fn record<'a>(
     reading: &'a FactoryAttemptReading,
@@ -387,9 +447,15 @@ fn prepare(
     if previous.is_some_and(|old| old["allocation"]["now_ref"] != allocation["now_ref"]) {
         return Err("recovery changed the original NOW identity".into());
     }
-    let mut paths = request.destinations.clone();
-    paths.insert(request.working_directory.clone());
-    let destinations = paths.iter().map(|path| json!(path)).collect::<Vec<_>>();
+    // The cwd identifies where the native task body is launched. It is not an
+    // implied request to write/remove the repository root: explicit selected
+    // destinations remain the only paths presented to Central write validation.
+    let cwd_anchor = working_directory_anchor(policy, &request.working_directory)?;
+    let destinations = request
+        .destinations
+        .iter()
+        .map(|path| json!(path))
+        .collect::<Vec<_>>();
     let checked = validations(
         endpoint,
         policy,
@@ -402,6 +468,7 @@ fn prepare(
     let checkpoint = json!({
         "central": endpoint,
         "workingDirectory": request.working_directory,
+        "workingDirectoryAnchor": cwd_anchor,
         "policy": policy,
         "allocation": allocation,
         "validations": checked,
@@ -469,6 +536,13 @@ pub(crate) fn preflight(
     if policy["data"]["revision"] != old_policy["revision"] {
         return Err(
             "Central placement policy changed after preparation; re-resolve before dispatch".into(),
+        );
+    }
+    let cwd_anchor = working_directory_anchor(&policy["data"], cwd)?;
+    if checkpoint["workingDirectoryAnchor"] != cwd_anchor {
+        return Err(
+            "working directory identity changed after preparation; re-resolve before dispatch"
+                .into(),
         );
     }
     let allocation = &checkpoint["allocation"];

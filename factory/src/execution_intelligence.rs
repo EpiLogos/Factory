@@ -5,7 +5,7 @@
 //! AIKit selection is consumed as an opaque resource reference plus an inspectable
 //! ranking receipt; Run identity remains Factory truth.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -122,6 +122,240 @@ pub enum ExecutionInteropError {
     EmptyModelRef,
     EmptyRunRef,
     InvalidWorkflowUnitRef(String),
+    InvalidExplicitSelection(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExplicitSelectionRefs {
+    pub route_ref: String,
+    pub harness_ref: String,
+    pub harness_composition_ref: String,
+    pub agent_ref: String,
+    pub agency_ref: String,
+    pub world_binding_ref: String,
+    pub source_ref: String,
+    pub source_revision: String,
+    pub source_digest: String,
+    pub agent_session_ref: String,
+    pub session_space_ref: String,
+}
+
+fn required_selection_text<'a>(
+    value: &'a Value,
+    field: &str,
+) -> Result<&'a str, ExecutionInteropError> {
+    value
+        .as_str()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| {
+            ExecutionInteropError::InvalidExplicitSelection(format!(
+                "explicit selection lacks {field}"
+            ))
+        })
+}
+
+const SORTED_JSON_DIGEST_CONTRACT: &str = "aikit.sorted-json/v1";
+
+fn sorted_json(value: &Value) -> Value {
+    match value {
+        Value::Array(values) => Value::Array(values.iter().map(sorted_json).collect()),
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .map(|(key, value)| (key.clone(), sorted_json(value)))
+                .collect::<BTreeMap<_, _>>()
+                .into_iter()
+                .collect(),
+        ),
+        value => value.clone(),
+    }
+}
+
+fn sorted_json_digest(value: &Value) -> Result<String, ExecutionInteropError> {
+    let encoded = serde_json::to_vec(&sorted_json(value))
+        .map_err(|error| ExecutionInteropError::InvalidExplicitSelection(error.to_string()))?;
+    Ok(format!("blake3:{}", blake3::hash(&encoded).to_hex()))
+}
+
+/// Validate AIKit's source-backed explicit pin compatibility receipt. The
+/// historical field is still named `ranking_explanation`, but this branch is
+/// explicitly not a ranking: its typed receipt and exact digest are required.
+pub fn explicit_selection_refs(
+    selection: &AikitModelRosterSelection,
+) -> Result<Option<ExplicitSelectionRefs>, ExecutionInteropError> {
+    if selection.ranking_policy != "EXPLICIT_PIN" {
+        return Ok(None);
+    }
+    let receipt = &selection.ranking_explanation;
+    if receipt["schema"] != "aikit.explicit-model-selection/v1"
+        || receipt["selection_kind"] != "explicit-pin"
+        || receipt["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "EXPLICIT_PIN requires AIKit's typed explicit-selection receipt".into(),
+        ));
+    }
+    if receipt["model_ref"] != selection.model_ref
+        || receipt["provider_ref"] != selection.provider_ref
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection model/provider differs from the Factory selection".into(),
+        ));
+    }
+    let basis = receipt.get("basis").ok_or_else(|| {
+        ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection lacks its owner basis".into(),
+        )
+    })?;
+    if basis["schema"] != "aikit.explicit-model-selection-basis/v1"
+        || basis["selection_kind"] != "explicit-pin"
+        || basis["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection basis has the wrong schema or kind".into(),
+        ));
+    }
+    let expected_basis_digest = sorted_json_digest(basis)?;
+    if receipt["basis_digest"] != expected_basis_digest {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection basis changed after AIKit issued it".into(),
+        ));
+    }
+    let route_ref = required_selection_text(&receipt["route_ref"], "route_ref")?;
+    let route_basis = basis.get("route_basis").ok_or_else(|| {
+        ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection lacks its route basis".into(),
+        )
+    })?;
+    if route_basis["schema"] != "aikit.model-route-basis/v1"
+        || route_basis["model_ref"] != selection.model_ref
+        || route_basis["provider_ref"] != selection.provider_ref
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection route basis differs from the selected model/provider".into(),
+        ));
+    }
+    let expected_route_ref = format!(
+        "model-route/{}",
+        sorted_json_digest(route_basis)?
+            .strip_prefix("blake3:")
+            .expect("sorted digest carries its algorithm")
+    );
+    if route_ref != expected_route_ref {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection route reference does not identify its exact basis".into(),
+        ));
+    }
+    let harness_ref = required_selection_text(&receipt["harness_ref"], "harness_ref")?;
+    let harness_composition_ref = required_selection_text(
+        &receipt["harness_composition_ref"],
+        "harness_composition_ref",
+    )?;
+    let composition = &basis["harness_composition"];
+    let scope = &basis["composition_scope"];
+    if scope["kind"] != "thin-native-pi"
+        || scope["ambient_components_claimed"] != false
+        || !scope["selected_components"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection overstates or changes its thin Pi composition scope".into(),
+        ));
+    }
+    let target_basis = &basis["composition_target_basis"];
+    let resident_body = &target_basis["resident_body_basis"];
+    if target_basis["schema"] != "aikit.harness-composition-target-basis/v1"
+        || target_basis["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
+        || target_basis["harness_profile"]["slug"] != "pi"
+        || resident_body["schema"] != "aikit.resident-body-basis/v1"
+        || resident_body["protocol"] != "pi-rpc"
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection lacks the exact native Pi body/profile basis".into(),
+        ));
+    }
+    for (field, value) in [
+        ("body provider id", &resident_body["provider_id"]),
+        (
+            "provider argv digest",
+            &resident_body["provider_argv_digest"],
+        ),
+        (
+            "owner launcher provider id",
+            &resident_body["owner_launcher_provider_id"],
+        ),
+        (
+            "owner launcher argv digest",
+            &resident_body["owner_launcher_argv_digest"],
+        ),
+        (
+            "effective launch argv digest",
+            &resident_body["effective_launch_argv_digest"],
+        ),
+        ("model basis digest", &resident_body["model_basis_digest"]),
+        (
+            "Agency source",
+            &target_basis["agency_source"]["source_ref"],
+        ),
+        ("WorldBinding ref", &target_basis["world_binding_ref"]),
+    ] {
+        required_selection_text(value, field)?;
+    }
+    let expected_target_revision = sorted_json_digest(target_basis)?;
+    let fingerprint = required_selection_text(
+        &composition["fingerprint"],
+        "harness composition fingerprint",
+    )?;
+    if composition["version"] != "aikit.harness-composition/v2"
+        || composition["harness"] != harness_ref
+        || composition["model"] != selection.model_ref
+        || composition["target_revision"] != expected_target_revision
+        || harness_composition_ref != format!("harness-composition/{fingerprint}")
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection harness composition does not match its model/harness reference"
+                .into(),
+        ));
+    }
+    let agent_ref = required_selection_text(&composition["agent"], "composition agent")?;
+    let agency_ref = required_selection_text(&composition["agency"], "composition Agency")?;
+    let agent_session_ref =
+        required_selection_text(&composition["session"], "composition session")?;
+    let session_space_ref =
+        required_selection_text(&basis["native"]["space"], "native SessionSpace")?;
+    if basis["native"]["agent_session"] != agent_session_ref {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "native AgentSession differs from the harness composition session".into(),
+        ));
+    }
+    let agency_source = &target_basis["agency_source"];
+    Ok(Some(ExplicitSelectionRefs {
+        route_ref: route_ref.into(),
+        harness_ref: harness_ref.into(),
+        harness_composition_ref: harness_composition_ref.into(),
+        agent_ref: agent_ref.into(),
+        agency_ref: agency_ref.into(),
+        world_binding_ref: required_selection_text(
+            &target_basis["world_binding_ref"],
+            "WorldBinding ref",
+        )?
+        .into(),
+        source_ref: required_selection_text(&agency_source["source_ref"], "Agency source ref")?
+            .into(),
+        source_revision: required_selection_text(
+            &agency_source["revision"],
+            "Agency source revision",
+        )?
+        .into(),
+        source_digest: required_selection_text(
+            &agency_source["content_digest"],
+            "Agency source digest",
+        )?
+        .into(),
+        agent_session_ref: agent_session_ref.into(),
+        session_space_ref: session_space_ref.into(),
+    }))
 }
 
 pub fn accept_aikit_selection(
@@ -150,6 +384,7 @@ pub fn accept_aikit_selection(
             selection.roster_version,
         ));
     }
+    explicit_selection_refs(&selection)?;
     Ok(ExecutionDisposition {
         schema_version: EXECUTION_INTELLIGENCE_INTEROP_VERSION.to_string(),
         demand,
@@ -220,6 +455,13 @@ mod tests {
             }),
             provenance: vec!["aikit:model-roster:request-42".into()],
         }
+    }
+
+    fn explicit_selection() -> AikitModelRosterSelection {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/aikit-explicit-pi-selection.json"
+        ))
+        .expect("fixture was emitted by AIKit actual-Pi realisation test")
     }
 
     #[test]
@@ -307,5 +549,38 @@ mod tests {
             .as_object()
             .unwrap()
             .contains_key("exact_spend"));
+    }
+
+    #[test]
+    fn explicit_pin_is_consumed_as_an_owner_receipt_and_changed_or_missing_basis_refuses() {
+        let selection = explicit_selection();
+        let refs = explicit_selection_refs(&selection).unwrap().unwrap();
+        assert!(refs.route_ref.starts_with("model-route/"));
+        assert_eq!(refs.harness_ref, "harness/pi");
+        assert!(refs
+            .harness_composition_ref
+            .starts_with("harness-composition/"));
+        assert_eq!(refs.agent_session_ref, "agent-session/root");
+        assert_eq!(refs.session_space_ref, "session-space/root");
+        assert!(accept_aikit_selection(demand(), selection.clone(), "t1").is_ok());
+
+        let mut changed = selection.clone();
+        changed.ranking_explanation["basis"]["composition_target_basis"]["resident_body_basis"]
+            ["provider_argv_digest"] = json!("changed-argv");
+        assert!(matches!(
+            accept_aikit_selection(demand(), changed, "t2"),
+            Err(ExecutionInteropError::InvalidExplicitSelection(_))
+        ));
+
+        let mut missing = selection;
+        missing
+            .ranking_explanation
+            .as_object_mut()
+            .unwrap()
+            .remove("basis");
+        assert!(matches!(
+            accept_aikit_selection(demand(), missing, "t3"),
+            Err(ExecutionInteropError::InvalidExplicitSelection(_))
+        ));
     }
 }

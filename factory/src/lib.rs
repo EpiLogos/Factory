@@ -43,6 +43,7 @@ pub mod native_process;
 pub mod orchestration;
 pub mod project_development;
 pub mod project_development_store;
+pub mod project_setup;
 pub mod routine_continuation;
 pub mod structural_ground;
 pub mod system;
