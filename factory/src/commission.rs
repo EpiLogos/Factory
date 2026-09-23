@@ -1451,6 +1451,9 @@ mod tests {
             let receipt =
                 FactoryDevelopmentalFileProvider::commission(&path, commissioned).unwrap();
             let snapshot = build_snapshot_json(&path, &receipt.commission);
+            crate::build::assert_build_view_contract(
+                &serde_json::from_value(snapshot.clone()).unwrap(),
+            );
             assert_eq!(snapshot["view"]["project"]["label"], label, "key {key}");
             assert_eq!(snapshot["view"]["project"]["projectKey"], key);
             assert_eq!(
@@ -1458,6 +1461,71 @@ mod tests {
                 receipt.commission.project_ref.to_string()
             );
         }
+    }
+
+    fn admit_execution(
+        status: &str,
+        suffix: &str,
+        run_ref: &RunRef,
+    ) -> FactoryDevelopmentalMutationRequest {
+        let execution_ref = format!("execution:admitted-{suffix}");
+        serde_json::from_value(serde_json::json!({
+            "contract": FACTORY_DEVELOPMENTAL_MUTATION_REQUEST,
+            "mutationRef": format!("mutation:admit-{suffix}"),
+            "occurrenceRef": format!("occurrence:admit-{suffix}"),
+            "source": {
+                "owner": "factory",
+                "reference": execution_ref,
+                "revision": "r1",
+                "standing": "owner-native-observation"
+            },
+            "observedAt": "2026-09-23T10:00:00Z",
+            "mutation": {
+                "kind": "admit-situated-execution",
+                "execution": {
+                    "runRef": run_ref,
+                    "executionRef": execution_ref,
+                    "status": status,
+                    "surfaceRefs": [],
+                    "workcellBindingRefs": []
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn admitted_executions_must_speak_the_shared_status_vocabulary() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let receipt = FactoryDevelopmentalFileProvider::commission(&path, request()).unwrap();
+        let run_ref = receipt.commission.run_ref.clone();
+        let mut provider = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let refused = provider
+            .apply_developmental_mutation(admit_execution("done", "outside", &run_ref))
+            .expect_err("a status outside the vocabulary is refused");
+        assert!(
+            refused.to_string().contains("InvalidExecutionStatus"),
+            "{refused}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "refusal changes nothing"
+        );
+        for (index, status) in crate::build::ExecutionStatus::ALL.iter().enumerate() {
+            provider
+                .apply_developmental_mutation(admit_execution(
+                    status.as_str(),
+                    &index.to_string(),
+                    &run_ref,
+                ))
+                .unwrap_or_else(|error| panic!("{status}: {error}"));
+        }
+        let snapshot = provider.build_snapshot(&run_ref).unwrap();
+        assert_eq!(snapshot.view.executions.len(), 8);
+        crate::build::assert_build_view_contract(&snapshot);
     }
 
     #[test]

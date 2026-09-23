@@ -4836,4 +4836,12 @@ mod tests {
         assert!(telemetry.get("cpu").is_none());
         assert!(telemetry.get("memory").is_none());
     }
+
+    #[test]
+    fn correlated_build_view_keeps_its_contract() {
+        let state = correlated_state();
+        let snapshot = state.build_snapshot(&RUN.parse().unwrap()).unwrap();
+        assert_eq!(snapshot.view.executions.len(), 2);
+        crate::build::assert_build_view_contract(&snapshot);
+    }
 }

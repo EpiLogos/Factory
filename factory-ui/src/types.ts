@@ -1,4 +1,14 @@
 export type Status = 'queued' | 'running' | 'success' | 'fail' | 'blocked' | 'cancelled'
+/** Mirrors contracts/factory/build-view.schema.json $defs/executionStatus exactly. */
+export type ExecutionStatus =
+  | 'queued'
+  | 'running'
+  | 'blocked'
+  | 'returned'
+  | 'success'
+  | 'fail'
+  | 'cancelled'
+  | 'contract-fixture'
 export type ViewDepth = 'semantic' | 'live' | 'trajectory'
 
 export type TraceEventKind =
@@ -167,7 +177,7 @@ export interface LiveExecutionView {
   executionRef: string
   agencyRef?: string
   agentRef?: string
-  status: Status
+  status: ExecutionStatus
   harnessRef?: string
   harnessCompositionRef?: string
   agentSessionRef?: string

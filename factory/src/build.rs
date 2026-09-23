@@ -98,11 +98,76 @@ pub struct AgencyRecord {
     pub return_state: Option<String>,
 }
 
+/// The one closed execution status vocabulary, shared with every host that
+/// renders Factory executions (contract: `build-view.schema.json`
+/// `$defs/executionStatus`). Factory refuses to admit an execution whose
+/// status is outside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionStatus {
+    /// Admitted and not yet started.
+    Queued,
+    /// Carrying work now.
+    Running,
+    /// Cannot proceed until something outside it changes.
+    Blocked,
+    /// Came back with a readable return; recognition is still pending.
+    Returned,
+    /// Finished, and its return was accepted or verified.
+    Success,
+    /// Ended in failure.
+    Fail,
+    /// Stopped by decision before it finished.
+    Cancelled,
+    /// A conformance fixture execution, not real work.
+    ContractFixture,
+}
+
+impl ExecutionStatus {
+    pub const ALL: [Self; 8] = [
+        Self::Queued,
+        Self::Running,
+        Self::Blocked,
+        Self::Returned,
+        Self::Success,
+        Self::Fail,
+        Self::Cancelled,
+        Self::ContractFixture,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Blocked => "blocked",
+            Self::Returned => "returned",
+            Self::Success => "success",
+            Self::Fail => "fail",
+            Self::Cancelled => "cancelled",
+            Self::ContractFixture => "contract-fixture",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
+}
+
+impl Display for ExecutionStatus {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionRecord {
     pub run_ref: RunRef,
     pub execution_ref: String,
+    /// One of [`ExecutionStatus`]. Kept as text so previously persisted
+    /// states still open; every admission path validates it.
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agency_ref: Option<String>,
@@ -361,6 +426,11 @@ impl FactoryBuildState {
         &mut self,
         execution: ExecutionRecord,
     ) -> Result<(), FactoryBuildError> {
+        if ExecutionStatus::parse(&execution.status).is_none() {
+            return Err(FactoryBuildError::InvalidExecutionStatus(
+                execution.status.clone(),
+            ));
+        }
         self.ensure_run(&execution.run_ref)?;
         insert_unique(
             &mut self.executions,
@@ -1072,6 +1142,8 @@ pub enum FactoryBuildError {
     MissingCapabilityGrant,
     MissingActionAuthority,
     ActionAlreadyApplied(String),
+    /// An execution status outside [`ExecutionStatus`].
+    InvalidExecutionStatus(String),
     RunContract(RunContractError),
 }
 
@@ -1248,6 +1320,7 @@ mod frontier_tests {
             (NodeState::Returned, "Returned — awaiting recognition."),
         ] {
             let snapshot = snapshot_of(vec![work("unit", state)], vec![]);
+            assert_build_view_contract(&snapshot);
             assert_eq!(snapshot.view.frontier.summary, sentence);
             let json = snapshot.to_json().unwrap();
             assert!(!json.contains("Some("), "Debug text leaked: {json}");
@@ -1312,6 +1385,7 @@ mod frontier_tests {
         );
         assert_eq!(held.view.frontier.title, "Work next");
         assert_eq!(held.view.frontier.gate_state.as_deref(), Some("held"));
+        assert_build_view_contract(&held);
 
         let passed = snapshot_of(
             vec![
@@ -1323,6 +1397,7 @@ mod frontier_tests {
         );
         assert_eq!(passed.view.frontier.title, "Work next");
         assert_eq!(passed.view.frontier.gate_state.as_deref(), Some("passed"));
+        assert_build_view_contract(&passed);
 
         // No gate in front of the frontier: no claim.
         let ungated = snapshot_of(vec![work("unit", NodeState::Ready)], vec![]);
@@ -1338,5 +1413,104 @@ mod frontier_tests {
             vec![requires("barrier", "left"), requires("next", "barrier")],
         );
         assert_eq!(undetermined.view.frontier.gate_state, None);
+    }
+}
+
+/// Validate a snapshot against the published build-view contract schema.
+#[cfg(test)]
+pub(crate) fn assert_build_view_contract(snapshot: &FactoryBuildSnapshot) {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../contracts/factory/build-view.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::Validator::new(&schema).expect("build-view schema compiles");
+    let instance = serde_json::to_value(snapshot).unwrap();
+    let errors = validator
+        .iter_errors(&instance)
+        .map(|error| format!("{} at {}", error, error.instance_path))
+        .collect::<Vec<_>>();
+    assert!(
+        errors.is_empty(),
+        "build view breaks its contract: {errors:#?}"
+    );
+}
+
+#[cfg(test)]
+mod execution_status_tests {
+    use super::*;
+
+    const SCHEMA: &str = include_str!("../../contracts/factory/build-view.schema.json");
+
+    #[test]
+    fn contract_schema_and_rust_vocabulary_are_the_same_closed_set() {
+        let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+        let declared = schema["$defs"]["executionStatus"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                assert!(
+                    entry["description"].as_str().is_some_and(|d| !d.is_empty()),
+                    "every status is documented"
+                );
+                entry["const"].as_str().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>();
+        let native = ExecutionStatus::ALL
+            .iter()
+            .map(|status| status.as_str().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(declared, native);
+        for status in ExecutionStatus::ALL {
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                Value::String(status.as_str().into())
+            );
+            assert_eq!(ExecutionStatus::parse(status.as_str()), Some(status));
+        }
+    }
+
+    #[test]
+    fn every_producer_value_is_in_the_vocabulary() {
+        // Every value a Factory producer writes today (conformance fixture,
+        // developmental telemetry fixtures, live Build fixtures).
+        for written in ["contract-fixture", "returned", "running", "success"] {
+            assert!(ExecutionStatus::parse(written).is_some(), "{written}");
+        }
+        // The conformance producer writes through the validated path, so a
+        // generated state can only carry vocabulary values.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        crate::conformance::create_developmental_conformance_state(&path).unwrap();
+        let state: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let executions = state["state"]["build"]["executions"].as_object().unwrap();
+        assert!(!executions.is_empty());
+        for execution in executions.values() {
+            assert!(ExecutionStatus::parse(execution["status"].as_str().unwrap()).is_some());
+        }
+    }
+
+    #[test]
+    fn the_contract_schema_refuses_a_status_outside_the_vocabulary() {
+        let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+        let validator = jsonschema::Validator::new(&schema).unwrap();
+        let execution = serde_json::json!({
+            "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FAB",
+            "executionRef": "execution:x",
+            "status": "done",
+            "surfaceRefs": [],
+            "workcellBindingRefs": []
+        });
+        let definition = serde_json::json!({
+            "$ref": "#/$defs/execution",
+            "$defs": schema["$defs"].clone()
+        });
+        let execution_validator = jsonschema::Validator::new(&definition).unwrap();
+        assert!(!execution_validator.is_valid(&execution));
+        let mut accepted = execution.clone();
+        accepted["status"] = "returned".into();
+        assert!(execution_validator.is_valid(&accepted));
+        // The full document schema compiles too.
+        assert!(!validator.is_valid(&serde_json::json!({})));
     }
 }
