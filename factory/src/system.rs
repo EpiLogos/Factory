@@ -131,6 +131,51 @@ fn build_descriptor() -> Result<Value, crate::cli::CliError> {
             "explain": { "ref": "factory development observe", "command": ["factory", "development", "observe", "<ledger-root>", "<run-ref>"] },
             "history": { "ref": "factory development observations", "command": ["factory", "development", "observations", "<ledger-root>", "<run-ref>"] },
         }),
+        json!({
+            "action_ref": "factory.development.custody.list",
+            "title": "List Position work custody",
+            "args": [
+                {"name": "position_ref", "kind": "reference"},
+                {"name": "run_ref", "kind": "string"},
+                {"name": "custody_state", "kind": "string"},
+            ],
+            "availability": "disclosed",
+            "unavailable_reason": null,
+            "subject_kinds": ["software-factory.run"],
+            "authority": { "requires": [], "granted_by": "caller", "evidence_ref": null },
+            "exposure": { "ui": true, "agent": true, "headless": true },
+            "explain": { "ref": "factory development custody list", "command": ["factory", "development", "custody", "list", "<state>"] },
+            "history": { "ref": "factory development custody list", "command": ["factory", "development", "custody", "list", "<state>"] },
+        }),
+        json!({
+            "action_ref": "factory.development.current-work",
+            "title": "Read a Position's current work",
+            "args": [
+                {"name": "position_ref", "kind": "reference"},
+            ],
+            "availability": "disclosed",
+            "unavailable_reason": null,
+            "subject_kinds": ["central:position"],
+            "authority": { "requires": [], "granted_by": "caller", "evidence_ref": null },
+            "exposure": { "ui": true, "agent": true, "headless": true },
+            "explain": { "ref": "factory development current-work", "command": ["factory", "development", "current-work", "<state>", "--position", "<central:position:…>"] },
+            "history": { "ref": "factory development current-work", "command": ["factory", "development", "current-work", "<state>", "--position", "<central:position:…>"] },
+        }),
+        json!({
+            "action_ref": "factory.development.inhabitation",
+            "title": "Read Run inhabitation",
+            "args": [
+                {"name": "run_ref", "kind": "string"},
+                {"name": "position_ref", "kind": "reference"},
+            ],
+            "availability": "disclosed",
+            "unavailable_reason": null,
+            "subject_kinds": ["software-factory.run"],
+            "authority": { "requires": [], "granted_by": "caller", "evidence_ref": null },
+            "exposure": { "ui": true, "agent": true, "headless": true },
+            "explain": { "ref": "factory development inhabitation", "command": ["factory", "development", "inhabitation", "<state>"] },
+            "history": { "ref": "factory development inhabitation", "command": ["factory", "development", "inhabitation", "<state>"] },
+        }),
     ];
 
     let body = json!({
@@ -324,7 +369,7 @@ mod tests {
     fn canonical_actions_are_disclosed_with_authority() {
         let value = descriptor();
         let actions = value["actions"].as_array().unwrap();
-        assert_eq!(actions.len(), 2);
+        assert_eq!(actions.len(), 5);
         let request_evidence = &actions[0];
         assert_eq!(
             request_evidence["action_ref"],
@@ -338,6 +383,36 @@ mod tests {
             .iter()
             .any(|r| r == REQUEST_MORE_EVIDENCE_CAPABILITY_REF));
         assert_eq!(actions[1]["action_ref"], "factory.development.observe");
+
+        // The World inhabitation reads (#261) are disclosed read-only, each with
+        // an explain command naming its exact CLI.
+        assert_eq!(actions[2]["action_ref"], "factory.development.custody.list");
+        assert_eq!(
+            actions[2]["explain"]["command"],
+            json!(["factory", "development", "custody", "list", "<state>"])
+        );
+        assert_eq!(actions[3]["action_ref"], "factory.development.current-work");
+        assert_eq!(
+            actions[3]["explain"]["command"],
+            json!([
+                "factory",
+                "development",
+                "current-work",
+                "<state>",
+                "--position",
+                "<central:position:…>"
+            ])
+        );
+        assert_eq!(actions[4]["action_ref"], "factory.development.inhabitation");
+        assert_eq!(
+            actions[4]["explain"]["command"],
+            json!(["factory", "development", "inhabitation", "<state>"])
+        );
+        for action in &actions[2..] {
+            assert_eq!(action["availability"], "disclosed");
+            assert_eq!(action["authority"]["requires"], json!([]));
+        }
+
         for action in actions {
             for surface in ["ui", "agent", "headless"] {
                 assert_eq!(action["exposure"][surface], true);
