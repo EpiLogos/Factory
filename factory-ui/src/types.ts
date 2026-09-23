@@ -203,6 +203,23 @@ export interface FrontierView {
   gateState?: string
 }
 
+/** Mirrors contracts/factory/build-view.schema.json $defs/executionUsage. `null` is unknown, never zero. */
+export interface ExecutionUsage {
+  contract: 'factory.execution-usage/v1'
+  executionRef: string
+  telemetryRef: string
+  availability: 'available' | 'unavailable' | 'unsupported'
+  reason?: string
+  observationRefs: string[]
+  inputTokens: number | null
+  outputTokens: number | null
+  cacheReadTokens: number | null
+  cacheWriteTokens: number | null
+  cost: { amount: number; currency: string } | null
+  startedAt: string | null
+  endedAt: string | null
+}
+
 export interface FactoryBuildView {
   project: {
     projectRef: string
@@ -223,6 +240,7 @@ export interface FactoryBuildView {
   executions: LiveExecutionView[]
   trajectories: ExecutionTraceView[]
   actions: FactoryActionView[]
+  executionUsage?: ExecutionUsage[]
 }
 
 export interface ActionInvocation {

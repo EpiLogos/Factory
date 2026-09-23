@@ -606,6 +606,11 @@ pub struct FactoryBuildView {
     pub executions: Vec<ExecutionRecord>,
     pub trajectories: Vec<Value>,
     pub actions: Vec<FactoryActionView>,
+    /// Normalised usage per correlated execution of this Run. Present only
+    /// when the view is read from a developmental state that carries
+    /// execution correlations; each entry says what is unknown as `null`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_usage: Vec<crate::developmental_read::FactoryExecutionUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -810,6 +815,7 @@ impl FactoryBuildViewProvider {
                 subject_kinds: vec!["candidate".into()],
                 required_capability_ref: REQUEST_MORE_EVIDENCE_CAPABILITY_REF.into(),
             }],
+            execution_usage: Vec::new(),
         };
 
         Ok(FactoryBuildSnapshot {

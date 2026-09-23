@@ -644,6 +644,133 @@
           "items": {
             "$ref": "#/$defs/action"
           }
+        },
+        "executionUsage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/executionUsage"
+          },
+          "description": "Present when the view is read from a developmental state with execution correlations for this Run."
+        }
+      }
+    },
+    "executionUsage": {
+      "description": "Factory-normalised model usage for one execution, summed over its Actuation actuation.model-usage/v1 observations. Missing is never zero: a value is null unless every observation reports it with an available standing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "executionRef",
+        "telemetryRef",
+        "availability",
+        "observationRefs",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "cost",
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "contract": {
+          "const": "factory.execution-usage/v1"
+        },
+        "executionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetryRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observationRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "usage_ref@revision of every summed owner observation"
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.read_input"
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.creation_input"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "amount",
+                "currency"
+              ],
+              "properties": {
+                "amount": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "currency": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "earliest reported start (RFC 3339)"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "latest reported completion (RFC 3339)"
         }
       }
     }

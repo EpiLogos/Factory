@@ -24,7 +24,7 @@ use serde_json::{json, Value};
 use crate::cli::CliError;
 use crate::core::identity::Ref;
 use crate::developmental_read::{
-    FactoryDevelopmentalFileProvider, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
+    FactoryDevelopmentalFileProvider, FactoryExecutionUsage, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
 };
 
 pub const FACTORY_TELEMETRY_STATUS_CONTRACT: &str = "factory.telemetry-status/v1";
@@ -196,6 +196,28 @@ struct AttemptSummarySource {
     readable_return: Option<Value>,
 }
 
+/// One human line for normalised usage; unknown values say so, never `0`.
+fn usage_line(usage: &FactoryExecutionUsage) -> String {
+    if usage.observation_refs.is_empty() {
+        return format!(
+            "not observed ({})",
+            usage.reason.as_deref().unwrap_or("no owner observation")
+        );
+    }
+    let count = |value: Option<u64>| value.map_or_else(|| "unknown".into(), |v| v.to_string());
+    format!(
+        "in {} · out {} · cache read {} · cache write {} · cost {}",
+        count(usage.input_tokens),
+        count(usage.output_tokens),
+        count(usage.cache_read_tokens),
+        count(usage.cache_write_tokens),
+        usage.cost.as_ref().map_or_else(
+            || "unknown".into(),
+            |cost| format!("{} {}", cost.amount, cost.currency)
+        ),
+    )
+}
+
 fn inspect(args: &[String], json: bool) -> Result<String, CliError> {
     let state_path = require_state_path(args)?;
     let telemetry_ref: Ref = args
@@ -216,16 +238,18 @@ fn inspect(args: &[String], json: bool) -> Result<String, CliError> {
                 .state()
                 .execution_correlations
                 .iter()
-                .find(|correlation| correlation.telemetry_ref == telemetry_ref)
-                .map(|correlation| serde_json::to_value(correlation).unwrap_or(Value::Null));
-            let Some(correlation) = degraded else {
+                .find(|correlation| correlation.telemetry_ref == telemetry_ref);
+            let Some(recorded) = degraded else {
                 return Err(CliError::new(error.to_string()));
             };
+            let usage = FactoryExecutionUsage::from_correlation(recorded);
+            let correlation = serde_json::to_value(recorded).unwrap_or(Value::Null);
             let document = json!({
                 "contract": FACTORY_TELEMETRY_INSPECT_CONTRACT,
                 "state": state_path.to_string_lossy(),
                 "status": "correlation-recorded-owners-pending",
                 "correlation": correlation,
+                "usage": usage,
                 "absences": [error.to_string()],
             });
             return render(&document, json, || {
@@ -294,7 +318,7 @@ fn inspect(args: &[String], json: bool) -> Result<String, CliError> {
     render(&document, json, || {
         let temporal = &reading.temporal;
         format!(
-            "{}\nTelemetry: {}\nRun: {} · Unit: {} · Execution: {}\nAgency: {}\nChild NOW: {}\nDay refs: {}\nGit basis: {}\nReturned evidence: {}\nRelated attempts: {}",
+            "{}\nTelemetry: {}\nRun: {} · Unit: {} · Execution: {}\nAgency: {}\nChild NOW: {}\nDay refs: {}\nGit basis: {}\nUsage: {}\nReturned evidence: {}\nRelated attempts: {}",
             FACTORY_TELEMETRY_INSPECT_CONTRACT,
             reading.telemetry_ref,
             reading.run_ref,
@@ -321,6 +345,7 @@ fn inspect(args: &[String], json: bool) -> Result<String, CliError> {
                         .unwrap_or_default()
                 ))
                 .unwrap_or_else(|| "(none recorded)".into()),
+            usage_line(&reading.usage),
             reading.return_state.evidence_refs.len(),
             related.len(),
         )
@@ -1849,5 +1874,162 @@ mod remainder_tests {
         let cursor = lines.last().expect("cursor line");
         assert_eq!(cursor["type"], "cursor");
         assert!(cursor["cursor"]["stateRevision"].is_u64());
+    }
+
+    /// A public `actuation.model-usage/v1` observation re-bound to the
+    /// conformance state's Agency/execution, as its owner would report it.
+    fn observed_usage(input: u64, output: u64) -> Value {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../contracts/factory/fixtures/execution-telemetry-reading.json"
+        ))
+        .unwrap();
+        let mut observation = fixture["modelUsage"]["observations"][0].clone();
+        let usage = &mut observation["modelUsage"];
+        usage["actuation_ref"] = json!("actuation:factory-conformance");
+        usage["correlation"] = json!({
+            "agent_ref": "agent:factory-conformance",
+            "agency_ref": "agency:factory/conformance",
+            "harness_ref": "harness:factory-native-cli",
+            "external_refs": []
+        });
+        usage["tokens"] =
+            json!({"standing": "provider-reported", "input": input, "output": output});
+        usage["cost"] =
+            json!({"standing": "provider-reported", "amount": 0.042, "currency": "USD"});
+        usage["timing"] = json!({
+            "started_at": "2026-09-23T09:00:00Z",
+            "completed_at": "2026-09-23T09:02:30Z",
+            "latency": {"standing": "observed", "milliseconds": 150000.0}
+        });
+        observation
+    }
+
+    fn record_correlation(correlation: &Value, suffix: &str) -> Value {
+        json!({
+            "contract": "factory.developmental-mutation-request/v1",
+            "mutationRef": format!("mutation:usage-{suffix}"),
+            "occurrenceRef": format!("occurrence:usage-{suffix}"),
+            "source": {
+                "owner": "factory",
+                "reference": correlation["correlationRef"],
+                "revision": "r1",
+                "standing": "owner-native-observation"
+            },
+            "observedAt": "2026-09-23T09:03:00Z",
+            "mutation": {"kind": "record-execution-correlation", "correlation": correlation}
+        })
+    }
+
+    #[test]
+    fn recorded_usage_is_validated_retained_and_read_back_normalised() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("state.json");
+        create_developmental_conformance_state(&path).unwrap();
+        let state: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let original = &state["state"]["executionCorrelations"][0];
+        let mut provider = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+
+        // An owner observation that claims counts under an absent standing is
+        // refused, and the state is unchanged.
+        let mut dishonest = original.clone();
+        dishonest["correlationRef"] = json!("execution-correlation:01M2S15SA8Q9CQ2SFN130Z5HT0");
+        dishonest["telemetryRef"] = json!("telemetry:01M2S15SA8YGJVA2RCSXWB2MP0");
+        let mut observation = observed_usage(1, 1);
+        observation["modelUsage"]["tokens"] = json!({"standing": "not-reported", "input": 7});
+        dishonest["modelUsage"] = json!({
+            "owner": "actuation", "availability": "available", "observations": [observation]
+        });
+        let before = std::fs::read(&path).unwrap();
+        let refused = provider
+            .apply_developmental_mutation(
+                serde_json::from_value(record_correlation(&dishonest, "dishonest")).unwrap(),
+            )
+            .expect_err("counts under an absent standing are refused");
+        assert!(
+            refused.to_string().contains("tokens cannot carry counts"),
+            "{refused}"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        // An honest observation is admitted through the real producer path.
+        let mut correlation = original.clone();
+        correlation["correlationRef"] = json!("execution-correlation:01M2S15SA8Q9CQ2SFN130Z5HT1");
+        correlation["telemetryRef"] = json!("telemetry:01M2S15SA8YGJVA2RCSXWB2MP1");
+        correlation["modelUsage"] = json!({
+            "owner": "actuation", "availability": "available",
+            "observations": [observed_usage(1200, 340)]
+        });
+        provider
+            .apply_developmental_mutation(
+                serde_json::from_value(record_correlation(&correlation, "honest")).unwrap(),
+            )
+            .expect("an honest owner observation is admitted");
+
+        // Retained: a fresh open still carries the owner evidence.
+        let reopened = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        let retained = reopened
+            .state()
+            .execution_correlations
+            .iter()
+            .find(|c| c.telemetry_ref.to_string() == "telemetry:01M2S15SA8YGJVA2RCSXWB2MP1")
+            .unwrap();
+        assert_eq!(retained.model_usage.observations.len(), 1);
+
+        // `factory telemetry inspect` exposes the normalised usage.
+        let document = parse(
+            &execute(
+                &telemetry_args(&[
+                    "inspect",
+                    path.to_str().unwrap(),
+                    "telemetry:01M2S15SA8YGJVA2RCSXWB2MP1",
+                    "--json",
+                ]),
+                true,
+            )
+            .unwrap(),
+        );
+        let usage = &document["reading"]["usage"];
+        assert_eq!(usage["contract"], "factory.execution-usage/v1");
+        assert_eq!(usage["inputTokens"], 1200);
+        assert_eq!(usage["outputTokens"], 340);
+        assert_eq!(usage["cacheReadTokens"], 26788);
+        assert_eq!(usage["cacheWriteTokens"], 53010);
+        assert_eq!(usage["cost"], json!({"amount": 0.042, "currency": "USD"}));
+        assert_eq!(usage["startedAt"], "2026-09-23T09:00:00Z");
+        assert_eq!(usage["endedAt"], "2026-09-23T09:02:30Z");
+        let text = execute(
+            &telemetry_args(&[
+                "inspect",
+                path.to_str().unwrap(),
+                "telemetry:01M2S15SA8YGJVA2RCSXWB2MP1",
+            ]),
+            false,
+        )
+        .unwrap();
+        assert!(text.contains("Usage: in 1200 · out 340"), "{text}");
+
+        // The build view exposes it per execution, next to the unobserved one.
+        let run_ref = correlation["runRef"].as_str().unwrap();
+        let project_ref = state["state"]["build"]["project"]["ref"].as_str().unwrap();
+        let snapshot: Value = serde_json::from_str(
+            &crate::cli::execute_cli(
+                &[
+                    "build".into(),
+                    "snapshot".into(),
+                    path.display().to_string(),
+                    project_ref.into(),
+                    run_ref.into(),
+                    "--json".into(),
+                ],
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let entries = snapshot["view"]["executionUsage"].as_array().unwrap();
+        assert!(entries.iter().any(|e| e["inputTokens"] == 1200));
+        assert!(entries
+            .iter()
+            .any(|e| e["inputTokens"].is_null() && e["availability"] == "unavailable"));
     }
 }
