@@ -760,6 +760,7 @@ fn disposition(
             agency_ref,
             world_binding_ref: "world-binding:controlled".into(),
             profile_ref: None,
+            position_ref: None,
             source_ref: workflow.source.reference.to_string(),
             source_revision: workflow.source.revision.clone(),
             source_digest: format!("blake3:{}", workflow.source.digest),

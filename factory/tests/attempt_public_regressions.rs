@@ -186,6 +186,7 @@ impl World {
                 agency_ref: agency,
                 world_binding_ref: "world-binding:controlled-test".into(),
                 profile_ref: None,
+                position_ref: None,
                 source_ref: "source:controlled-test".into(),
                 source_revision: "fixture-v1".into(),
                 source_digest: format!("blake3:{}", blake3::hash(b"controlled test only").to_hex()),

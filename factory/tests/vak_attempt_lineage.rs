@@ -130,6 +130,7 @@ fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDispo
             agency_ref: "agency:durable-chain".into(),
             world_binding_ref: "world-binding:durable-chain".into(),
             profile_ref: Some("profile:c-prime".into()),
+            position_ref: None,
             source_ref: workflow.source.reference.to_string(),
             source_revision: workflow.source.revision.clone(),
             source_digest: format!("blake3:{}", workflow.source.digest),

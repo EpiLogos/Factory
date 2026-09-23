@@ -25,11 +25,14 @@ pub mod commission;
 pub mod configuration;
 pub mod conformance;
 pub mod core;
+pub mod current_work;
 pub mod development_field;
 pub mod development_field_cli;
 pub mod developmental_read;
 pub mod execution_intelligence;
 pub mod git_development;
+pub mod inhabitation;
+pub mod inhabitation_cli;
 // JourneyRef implements the standard AsRef trait below. Keep the legacy inherent
 // accessor during this additive contract tranche without weakening any other lint.
 #[allow(clippy::should_implement_trait)]
@@ -49,6 +52,7 @@ pub mod structural_ground;
 pub mod system;
 pub mod telemetry_cli;
 pub mod vak_orchestration;
+pub mod work_custody;
 pub mod workflow;
 pub mod workflow_authoring;
 

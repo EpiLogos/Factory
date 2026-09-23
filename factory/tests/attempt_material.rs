@@ -291,6 +291,7 @@ print(json.dumps(value))
                 agency_ref: "agency:material-test".into(),
                 world_binding_ref: "binding:test".into(),
                 profile_ref: None,
+                position_ref: None,
                 source_ref: self.workflow.source.reference.to_string(),
                 source_revision: self.workflow.source.revision.clone(),
                 source_digest: format!("blake3:{}", self.workflow.source.digest),

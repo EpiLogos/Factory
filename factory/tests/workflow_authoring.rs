@@ -315,6 +315,7 @@ impl World {
                 agency_ref: agency,
                 world_binding_ref: "world-binding:controlled-test".into(),
                 profile_ref: None,
+                position_ref: None,
                 source_ref: "source:controlled-acp-input".into(),
                 source_revision: "fixture-source-v1".into(),
                 source_digest: format!(

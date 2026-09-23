@@ -165,6 +165,11 @@ pub struct FactoryDevelopmentalState {
     pub central_project_links: BTreeMap<ProjectRef, FactoryCentralProjectLink>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub central_project_link_relocations: Vec<FactoryCentralProjectLinkRelocation>,
+    /// Durable custody of developmental work by World Positions
+    /// (`factory.work-custody/v1`). Absent in states that never assigned any,
+    /// so those documents round-trip byte-for-byte.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub work_custody: Vec<crate::work_custody::FactoryWorkCustody>,
 }
 
 impl FactoryDevelopmentalState {
@@ -185,6 +190,7 @@ impl FactoryDevelopmentalState {
             attempt_states: BTreeMap::new(),
             central_project_links: BTreeMap::new(),
             central_project_link_relocations: Vec::new(),
+            work_custody: Vec::new(),
         };
         state.validate()?;
         Ok(state)
@@ -359,6 +365,8 @@ impl FactoryDevelopmentalState {
                 }
             }
         }
+        crate::work_custody::validate_custody_collection(&self.work_custody)
+            .map_err(FactoryDevelopmentalReadError::InvalidWorkCustody)?;
         let compiled_workflows = self.compile_workflows()?;
         self.validate_execution_correlations(&compiled_workflows)?;
         let mut invocation_refs = BTreeSet::new();
@@ -3603,6 +3611,7 @@ pub enum FactoryDevelopmentalReadError {
     InvalidCommission(String),
     InvalidCentralProjectLink(String),
     CentralProjectLinkNotFound(String),
+    InvalidWorkCustody(String),
     Build(FactoryBuildError),
 }
 

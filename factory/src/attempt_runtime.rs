@@ -52,6 +52,12 @@ pub struct SituatedParticipant {
     pub world_binding_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_ref: Option<String>,
+    /// The stable World Position (`central:position:<world>:<slug>`) this
+    /// participant occupies for the attempt. Central defines Positions; Factory
+    /// carries the ref verbatim and never derives one from the Agent or body.
+    /// Attempts admitted without one stay byte-identical to earlier state.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_ref: Option<String>,
     pub source_ref: String,
     pub source_revision: String,
     pub source_digest: String,
@@ -1049,6 +1055,10 @@ fn validate_disposition(
             ));
         }
     }
+    if let Some(position) = &disposition.participant.position_ref {
+        crate::work_custody::validate_position_ref(position)
+            .map_err(FactoryAttemptError::InvalidDisposition)?;
+    }
     for (field, value) in [
         ("agentRef", disposition.participant.agent_ref.as_str()),
         ("agencyRef", disposition.participant.agency_ref.as_str()),
@@ -1781,6 +1791,7 @@ mod explicit_selection_binding_tests {
             agency_ref: receipt.agency_ref,
             world_binding_ref: receipt.world_binding_ref,
             profile_ref: None,
+            position_ref: None,
             source_ref: receipt.source_ref,
             source_revision: receipt.source_revision,
             source_digest: receipt.source_digest,
