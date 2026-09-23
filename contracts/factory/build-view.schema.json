@@ -1,0 +1,778 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factory.build-view.schema/v1",
+  "title": "Factory Build view snapshot (factory build snapshot --json)",
+  "description": "The read model a host renders for one Run. Factory owns every value; hosts mirror these vocabularies rather than extend them.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "providerContract",
+    "revision",
+    "provenance",
+    "view"
+  ],
+  "properties": {
+    "contract": {
+      "const": "factory.build-view/v1"
+    },
+    "providerContract": {
+      "const": "factory.build-view-provider/v1"
+    },
+    "revision": {
+      "$ref": "#/$defs/revision"
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "factoryStateRevision",
+        "runRevision",
+        "runMapRevision",
+        "source"
+      ],
+      "properties": {
+        "owner": {
+          "const": "factory"
+        },
+        "factoryStateRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "runMapRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "view": {
+      "$ref": "#/$defs/view"
+    }
+  },
+  "$defs": {
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "executionStatus": {
+      "description": "The one closed execution status vocabulary. Factory refuses to admit an execution whose status is outside it.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "Admitted and not yet started."
+        },
+        {
+          "const": "running",
+          "description": "Carrying work now."
+        },
+        {
+          "const": "blocked",
+          "description": "Cannot proceed until something outside it changes (a human decision, a gate, a dependency)."
+        },
+        {
+          "const": "returned",
+          "description": "Came back with a readable return; recognition of that return is still pending."
+        },
+        {
+          "const": "success",
+          "description": "Finished, and its return was accepted or verified."
+        },
+        {
+          "const": "fail",
+          "description": "Ended in failure."
+        },
+        {
+          "const": "cancelled",
+          "description": "Stopped by decision before it finished."
+        },
+        {
+          "const": "contract-fixture",
+          "description": "A conformance fixture execution, not real work. Never shown as live."
+        }
+      ]
+    },
+    "runStatus": {
+      "description": "Run lifecycle folded for display: queued (seeded), running (active, finishing), blocked (waiting_human, suspended), success (finished, archived), fail (aborted).",
+      "enum": [
+        "queued",
+        "running",
+        "blocked",
+        "success",
+        "fail"
+      ]
+    },
+    "closureState": {
+      "description": "The Run's closure standing from its lifecycle alone; never a verification Closure.",
+      "oneOf": [
+        {
+          "const": "open",
+          "description": "seeded, active, waiting_human or suspended"
+        },
+        {
+          "const": "closing",
+          "description": "finishing"
+        },
+        {
+          "const": "closed",
+          "description": "finished or archived"
+        },
+        {
+          "const": "aborted",
+          "description": "aborted"
+        }
+      ]
+    },
+    "gateState": {
+      "description": "Standing of the Run Map gates the frontier node requires. Omitted when there is no such gate or the map does not determine it.",
+      "oneOf": [
+        {
+          "const": "held",
+          "description": "at least one required gate still waits on unsatisfied work"
+        },
+        {
+          "const": "passed",
+          "description": "every required gate's prerequisites are satisfied"
+        }
+      ]
+    },
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "projectRef",
+        "label"
+      ],
+      "properties": {
+        "projectRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The Project's name from its native key or Central link; the projectRef itself when the state carries neither."
+        },
+        "projectKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The native project key the label was derived from, when there is one."
+        }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "runMapRef",
+        "label",
+        "status"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runMapRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/runStatus"
+        }
+      }
+    },
+    "frontier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "subjectRef",
+        "title",
+        "mode",
+        "summary"
+      ],
+      "properties": {
+        "subjectRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "mode": {
+          "enum": [
+            "work",
+            "decision",
+            "recognition",
+            "return"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "description": "One plain sentence, or empty when the frontier node carries no state."
+        },
+        "closureState": {
+          "$ref": "#/$defs/closureState"
+        },
+        "gateState": {
+          "$ref": "#/$defs/gateState"
+        }
+      }
+    },
+    "claim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "claimRef",
+        "statement",
+        "status",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "claimRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "statement": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "evidenceRef",
+        "label"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidenceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "assessment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "nativeRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producingExecutionRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "candidateRef",
+        "revision",
+        "label",
+        "status",
+        "producingExecutionRefs",
+        "claimRefs",
+        "evidenceRefs",
+        "artifactRefs",
+        "tradeoffs"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "candidateRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "producingExecutionRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "claimRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "artifactRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "previewRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tradeoffs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "humanRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "humanRequestRef",
+        "decisionRef",
+        "question",
+        "whyHuman",
+        "blockedExecutionRefs",
+        "evidenceRefs"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "humanRequestRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "decisionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "question": {
+          "type": "string"
+        },
+        "whyHuman": {
+          "type": "string"
+        },
+        "blockedExecutionRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "evidenceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "agency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "agencyRef",
+        "agentRef",
+        "label",
+        "metagencyGrantRefs"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agencyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "position": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rootScopeRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "metagencyGrantRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "actuationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "returnRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "returnState": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runRef",
+        "executionRef",
+        "status",
+        "surfaceRefs",
+        "workcellBindingRefs"
+      ],
+      "properties": {
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "executionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/executionStatus"
+        },
+        "agencyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harnessRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harnessCompositionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentSessionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionSpaceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "surfaceRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "workcellBindingRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "nativeTrajectoryRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "actionRef",
+        "label",
+        "subjectKinds",
+        "requiredCapabilityRef"
+      ],
+      "properties": {
+        "actionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        },
+        "subjectKinds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "requiredCapabilityRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project",
+        "run",
+        "frontier",
+        "claims",
+        "evidence",
+        "candidates",
+        "humanRequests",
+        "agencies",
+        "executions",
+        "trajectories",
+        "actions"
+      ],
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/project"
+        },
+        "run": {
+          "$ref": "#/$defs/run"
+        },
+        "frontier": {
+          "$ref": "#/$defs/frontier"
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/claim"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/candidate"
+          }
+        },
+        "humanRequests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/humanRequest"
+          }
+        },
+        "agencies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/agency"
+          }
+        },
+        "executions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/execution"
+          }
+        },
+        "trajectories": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/action"
+          }
+        },
+        "executionUsage": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/executionUsage"
+          },
+          "description": "Present when the view is read from a developmental state with execution correlations for this Run."
+        }
+      }
+    },
+    "executionUsage": {
+      "description": "Factory-normalised model usage for one execution, summed over its Actuation actuation.model-usage/v1 observations. Missing is never zero: a value is null unless every observation reports it with an available standing.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "executionRef",
+        "telemetryRef",
+        "availability",
+        "observationRefs",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "cost",
+        "startedAt",
+        "endedAt"
+      ],
+      "properties": {
+        "contract": {
+          "const": "factory.execution-usage/v1"
+        },
+        "executionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetryRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observationRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "usage_ref@revision of every summed owner observation"
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.read_input"
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.creation_input"
+        },
+        "cost": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "amount",
+                "currency"
+              ],
+              "properties": {
+                "amount": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "currency": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        },
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "earliest reported start (RFC 3339)"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "latest reported completion (RFC 3339)"
+        }
+      }
+    }
+  }
+}

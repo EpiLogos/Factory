@@ -169,6 +169,20 @@
       }
     }]
   },
+  "usage": {
+    "contract": "factory.execution-usage/v1",
+    "executionRef": "execution:implement-compiler",
+    "telemetryRef": "telemetry:01ARZ3NDEKTSV4RRFFQ69G5FA4",
+    "availability": "available",
+    "observationRefs": ["model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX@5fefe920790b1beec05c258c9d65328539ba4e44"],
+    "inputTokens": 2,
+    "outputTokens": 64000,
+    "cacheReadTokens": 26788,
+    "cacheWriteTokens": 53010,
+    "cost": null,
+    "startedAt": null,
+    "endedAt": "2026-07-18T23:16:15.618Z"
+  },
   "handoff": {
     "fromAgencyRef": "agency:parasakti/research",
     "delegationRef": "delegation:research-to-implementation",

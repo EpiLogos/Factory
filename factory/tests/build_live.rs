@@ -220,6 +220,19 @@ fn canonical_factory_state_materialises_without_read_side_mutation() {
     assert!(thin.harness_composition_ref.is_none());
     assert!(thin.session_space_ref.is_none());
 
+    // The published build-view contract accepts exactly this document.
+    let schema: serde_json::Value = serde_json::from_str(include_str!(
+        "../../contracts/factory/build-view.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::Validator::new(&schema).unwrap();
+    let instance = serde_json::to_value(&snapshot).unwrap();
+    let errors = validator
+        .iter_errors(&instance)
+        .map(|error| format!("{error} at {}", error.instance_path))
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "{errors:#?}");
+
     let serialised = snapshot.to_json().unwrap();
     assert!(serialised.contains(SESSION_SPACE));
     assert!(serialised.contains("composition-fingerprint-42"));

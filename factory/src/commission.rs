@@ -1417,6 +1417,140 @@ mod tests {
         );
     }
 
+    fn build_snapshot_json(path: &std::path::Path, commission: &FactoryCommission) -> Value {
+        let snapshot = execute_cli(
+            &[
+                "build".into(),
+                "snapshot".into(),
+                path.display().to_string(),
+                commission.project_ref.to_string(),
+                commission.run_ref.to_string(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        serde_json::from_str(&snapshot).unwrap()
+    }
+
+    #[test]
+    fn build_view_names_the_project_from_its_native_key() {
+        for (key, label) in [
+            (
+                "central-project:project%3Aquaternal-logic",
+                "quaternal-logic",
+            ),
+            ("central-project:Factory", "Factory"),
+            ("control:root", "Central"),
+            ("factory-programme-195", "factory-programme-195"),
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("state.json");
+            let mut commissioned = request();
+            commissioned.project_key = key.into();
+            let receipt =
+                FactoryDevelopmentalFileProvider::commission(&path, commissioned).unwrap();
+            let snapshot = build_snapshot_json(&path, &receipt.commission);
+            crate::build::assert_build_view_contract(
+                &serde_json::from_value(snapshot.clone()).unwrap(),
+            );
+            assert_eq!(snapshot["view"]["project"]["label"], label, "key {key}");
+            assert_eq!(snapshot["view"]["project"]["projectKey"], key);
+            assert_eq!(
+                snapshot["view"]["project"]["projectRef"],
+                receipt.commission.project_ref.to_string()
+            );
+        }
+    }
+
+    fn admit_execution(
+        status: &str,
+        suffix: &str,
+        run_ref: &RunRef,
+    ) -> FactoryDevelopmentalMutationRequest {
+        let execution_ref = format!("execution:admitted-{suffix}");
+        serde_json::from_value(serde_json::json!({
+            "contract": FACTORY_DEVELOPMENTAL_MUTATION_REQUEST,
+            "mutationRef": format!("mutation:admit-{suffix}"),
+            "occurrenceRef": format!("occurrence:admit-{suffix}"),
+            "source": {
+                "owner": "factory",
+                "reference": execution_ref,
+                "revision": "r1",
+                "standing": "owner-native-observation"
+            },
+            "observedAt": "2026-09-23T10:00:00Z",
+            "mutation": {
+                "kind": "admit-situated-execution",
+                "execution": {
+                    "runRef": run_ref,
+                    "executionRef": execution_ref,
+                    "status": status,
+                    "surfaceRefs": [],
+                    "workcellBindingRefs": []
+                }
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn admitted_executions_must_speak_the_shared_status_vocabulary() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let receipt = FactoryDevelopmentalFileProvider::commission(&path, request()).unwrap();
+        let run_ref = receipt.commission.run_ref.clone();
+        let mut provider = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let refused = provider
+            .apply_developmental_mutation(admit_execution("done", "outside", &run_ref))
+            .expect_err("a status outside the vocabulary is refused");
+        assert!(
+            refused.to_string().contains("InvalidExecutionStatus"),
+            "{refused}"
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "refusal changes nothing"
+        );
+        for (index, status) in crate::build::ExecutionStatus::ALL.iter().enumerate() {
+            provider
+                .apply_developmental_mutation(admit_execution(
+                    status.as_str(),
+                    &index.to_string(),
+                    &run_ref,
+                ))
+                .unwrap_or_else(|error| panic!("{status}: {error}"));
+        }
+        let snapshot = provider.build_snapshot(&run_ref).unwrap();
+        assert_eq!(snapshot.view.executions.len(), 8);
+        crate::build::assert_build_view_contract(&snapshot);
+    }
+
+    #[test]
+    fn build_view_falls_back_to_the_ref_when_the_state_carries_no_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let receipt = FactoryDevelopmentalFileProvider::commission(&path, request()).unwrap();
+        // Remove the Commission provenance so the state carries no native key
+        // and no Central link: the label must be the ref, never an invention.
+        let provider = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        let mut state = provider.state().clone();
+        state.commissions.clear();
+        assert!(state.project_name().is_none());
+        let run_ref = receipt.commission.run_ref.clone();
+        let snapshot = state.build_snapshot(&run_ref).unwrap();
+        assert_eq!(
+            snapshot.view.project.label,
+            receipt.commission.project_ref.to_string()
+        );
+        assert!(snapshot.view.project.project_key.is_none());
+        // The unmodified state still names it.
+        let named = provider.build_snapshot(&run_ref).unwrap();
+        assert_eq!(named.view.project.label, "factory-programme-195");
+    }
+
     #[test]
     fn real_cli_commissions_and_reopens_public_read() {
         let directory = tempfile::tempdir().unwrap();

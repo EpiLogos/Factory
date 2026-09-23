@@ -12,7 +12,7 @@ use crate::build::{
     AgencyRecord, CandidateRecord, EvidenceRecord, ExecutionRecord, FactoryActionAuthority,
     FactoryActionExecutor, FactoryActionInvocation, FactoryActionReceipt, FactoryBuildError,
     FactoryBuildSelection, FactoryBuildSnapshot, FactoryBuildState, FactoryBuildViewProvider,
-    HumanRequestRecord, FACTORY_NATIVE_OWNER,
+    HumanRequestRecord, ProjectName, FACTORY_NATIVE_OWNER,
 };
 use crate::commission::{
     CommissionError, FactoryCommission, FactoryCommissionReading, FactoryCommissionReceipt,
@@ -508,7 +508,35 @@ impl FactoryDevelopmentalState {
             project_ref: reading.project_ref,
             run_ref: reading.run_ref,
         };
-        Ok(FactoryBuildViewProvider.snapshot(&self.build, &selection)?)
+        let mut snapshot = FactoryBuildViewProvider.snapshot_with_project_name(
+            &self.build,
+            &selection,
+            self.project_name(),
+        )?;
+        snapshot.view.execution_usage = self
+            .execution_correlations
+            .iter()
+            .filter(|correlation| &correlation.run_ref == run_ref)
+            .map(FactoryExecutionUsage::from_correlation)
+            .collect();
+        Ok(snapshot)
+    }
+
+    /// The Project's native name from what this state really carries: the
+    /// native project key of an admitted Commission (validated against this
+    /// Project on open), else the verified Central project link. `None` when
+    /// the state carries neither; callers then show the ref.
+    pub fn project_name(&self) -> Option<ProjectName> {
+        let project_ref = self.build.project().reference();
+        self.commissions
+            .iter()
+            .filter(|commission| &commission.project_ref == project_ref)
+            .find_map(|commission| ProjectName::from_project_key(&commission.request.project_key))
+            .or_else(|| {
+                self.central_project_link().and_then(|link| {
+                    ProjectName::from_central_project_ref(&link.central_project_ref)
+                })
+            })
     }
 
     pub fn run_reading(
@@ -766,6 +794,7 @@ impl FactoryDevelopmentalState {
             temporal: correlation.temporal.clone(),
             model_usage: correlation.model_usage.deduplicated(),
             material_usage: correlation.material_usage.deduplicated(),
+            usage: FactoryExecutionUsage::from_correlation(correlation),
             handoff: correlation.handoff.clone(),
             return_state: FactoryExecutionReturnState {
                 agency_return_ref: agency.return_ref.clone(),
@@ -2929,6 +2958,163 @@ impl FactoryOwnerTelemetryLink {
     }
 }
 
+pub const FACTORY_EXECUTION_USAGE_CONTRACT: &str = "factory.execution-usage/v1";
+
+/// Normalised model usage for one execution: the Actuation-owned
+/// `actuation.model-usage/v1` observations its correlation carries, summed
+/// into one flat reading a host can show without parsing native shapes.
+///
+/// Missing is never zero. A field is present only when *every* observation
+/// reports it with an available standing; otherwise it is `null`. With no
+/// observations every field is `null` and `availability`/`reason` say why.
+/// The owner observations stay in `modelUsage`; this reading is derived from
+/// them and names them in `observationRefs`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryExecutionUsage {
+    pub contract: String,
+    pub execution_ref: String,
+    pub telemetry_ref: Ref,
+    /// The Actuation model-usage link's availability, unchanged.
+    pub availability: FactoryTelemetryAvailability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// `usage_ref@revision` of every summed owner observation.
+    pub observation_refs: Vec<String>,
+    #[serde(default)]
+    pub input_tokens: Option<u64>,
+    #[serde(default)]
+    pub output_tokens: Option<u64>,
+    /// Actuation `cache.read_input`.
+    #[serde(default)]
+    pub cache_read_tokens: Option<u64>,
+    /// Actuation `cache.creation_input`.
+    #[serde(default)]
+    pub cache_write_tokens: Option<u64>,
+    /// Present only when every observation reports a cost in one currency.
+    #[serde(default)]
+    pub cost: Option<FactoryUsageCost>,
+    /// Earliest reported start, when every observation reports one.
+    #[serde(default)]
+    pub started_at: Option<String>,
+    /// Latest reported completion, when every observation reports one.
+    #[serde(default)]
+    pub ended_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryUsageCost {
+    pub amount: f64,
+    pub currency: String,
+}
+
+impl FactoryExecutionUsage {
+    pub fn from_correlation(correlation: &FactoryExecutionCorrelation) -> Self {
+        let link = correlation.model_usage.deduplicated();
+        let observations = link
+            .observations
+            .iter()
+            .filter_map(|observation| observation.model_usage.as_ref())
+            .collect::<Vec<_>>();
+        // An observation ref without its Actuation payload cannot be summed;
+        // it makes every total unknown rather than silently smaller.
+        let complete = observations.len() == link.observations.len();
+        let every = |value: &dyn Fn(&FactoryActuationModelUsageObservation) -> Option<u64>| {
+            if !complete || observations.is_empty() {
+                return None;
+            }
+            observations.iter().try_fold(0u64, |total, observation| {
+                total.checked_add(value(observation)?)
+            })
+        };
+        fn tokens(
+            observation: &FactoryActuationModelUsageObservation,
+        ) -> Option<&FactoryModelUsageTokens> {
+            (!observation.tokens.standing.absent()).then_some(&observation.tokens)
+        }
+        fn cache(
+            observation: &FactoryActuationModelUsageObservation,
+        ) -> Option<&FactoryModelUsageCache> {
+            (!observation.cache.standing.absent()).then_some(&observation.cache)
+        }
+        let input_tokens = every(&|o| tokens(o)?.input);
+        let output_tokens = every(&|o| tokens(o)?.output);
+        let cache_read_tokens = every(&|o| cache(o)?.read_input);
+        let cache_write_tokens = every(&|o| cache(o)?.creation_input);
+
+        let cost = (complete && !observations.is_empty())
+            .then(|| {
+                let mut currency: Option<&str> = None;
+                let mut amount = 0.0f64;
+                for observation in &observations {
+                    if observation.cost.standing.absent() {
+                        return None;
+                    }
+                    let this_currency = observation.cost.currency.as_deref()?;
+                    if currency.is_some_and(|c| c != this_currency) {
+                        return None;
+                    }
+                    currency = Some(this_currency);
+                    amount += observation.cost.amount?;
+                }
+                Some(FactoryUsageCost {
+                    amount,
+                    currency: currency?.to_owned(),
+                })
+            })
+            .flatten();
+
+        let instant = |value: &str| chrono::DateTime::parse_from_rfc3339(value).ok();
+        let bound = |pick: &dyn Fn(&FactoryActuationModelUsageObservation) -> Option<&String>,
+                     earliest: bool| {
+            if !complete || observations.is_empty() {
+                return None;
+            }
+            let mut chosen: Option<(chrono::DateTime<chrono::FixedOffset>, &String)> = None;
+            for observation in &observations {
+                let value = pick(observation)?;
+                let at = instant(value)?;
+                let better = chosen.is_none_or(
+                    |(current, _)| {
+                        if earliest {
+                            at < current
+                        } else {
+                            at > current
+                        }
+                    },
+                );
+                if better {
+                    chosen = Some((at, value));
+                }
+            }
+            chosen.map(|(_, value)| value.clone())
+        };
+        let started_at = bound(&|o| o.timing.started_at.as_ref(), true);
+        let ended_at = bound(&|o| o.timing.completed_at.as_ref(), false);
+
+        Self {
+            contract: FACTORY_EXECUTION_USAGE_CONTRACT.into(),
+            execution_ref: correlation.execution_ref.clone(),
+            telemetry_ref: correlation.telemetry_ref.clone(),
+            availability: link.availability,
+            reason: link.reason.clone(),
+            observation_refs: link
+                .observations
+                .iter()
+                .map(|observation| format!("{}@{}", observation.reference, observation.revision))
+                .collect(),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            cache_write_tokens,
+            cost,
+            started_at,
+            ended_at,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FactoryTelemetryAvailability {
@@ -2951,6 +3137,8 @@ pub struct FactoryExecutionTelemetryReading {
     pub temporal: FactoryTemporalCorrelation,
     pub model_usage: FactoryOwnerTelemetryLink,
     pub material_usage: FactoryOwnerTelemetryLink,
+    /// Normalised usage over `model_usage`'s owner observations.
+    pub usage: FactoryExecutionUsage,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handoff: Option<FactoryAgencyHandoff>,
     pub return_state: FactoryExecutionReturnState,
@@ -4814,5 +5002,221 @@ mod tests {
         assert!(telemetry.get("cost").is_none());
         assert!(telemetry.get("cpu").is_none());
         assert!(telemetry.get("memory").is_none());
+    }
+
+    #[test]
+    fn correlated_build_view_keeps_its_contract() {
+        let state = correlated_state();
+        let snapshot = state.build_snapshot(&RUN.parse().unwrap()).unwrap();
+        assert_eq!(snapshot.view.executions.len(), 2);
+        crate::build::assert_build_view_contract(&snapshot);
+    }
+
+    fn second_observation(
+        id: &str,
+        tokens: (u64, u64),
+        cost: Option<f64>,
+        started_at: Option<&str>,
+        completed_at: &str,
+    ) -> FactoryRevisionedOwnerRef {
+        let mut observation = actuation_model_usage_conformance_fixture();
+        observation.reference = format!("model-usage:claude-code:{id}");
+        let usage = observation.model_usage.as_mut().unwrap();
+        usage.usage_ref = observation.reference.clone();
+        usage.tokens.input = Some(tokens.0);
+        usage.tokens.output = Some(tokens.1);
+        if let Some(amount) = cost {
+            usage.cost = FactoryModelUsageCost {
+                standing: FactoryModelUsageStanding::ProviderReported,
+                amount: Some(amount),
+                currency: Some("USD".into()),
+                pricing_basis: None,
+            };
+        }
+        usage.timing.started_at = started_at.map(Into::into);
+        usage.timing.completed_at = Some(completed_at.into());
+        observation
+    }
+
+    fn available(observations: Vec<FactoryRevisionedOwnerRef>) -> FactoryOwnerTelemetryLink {
+        FactoryOwnerTelemetryLink {
+            owner: FactoryTelemetryOwner::Actuation,
+            availability: FactoryTelemetryAvailability::Available,
+            observations,
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn normalised_usage_reads_one_owner_observation_exactly() {
+        let mut state = correlated_state();
+        state.execution_correlations[0].model_usage =
+            available(vec![actuation_model_usage_conformance_fixture()]);
+        state.validate().unwrap();
+        let usage = FactoryExecutionUsage::from_correlation(&state.execution_correlations[0]);
+        assert_eq!(usage.contract, FACTORY_EXECUTION_USAGE_CONTRACT);
+        assert_eq!(usage.availability, FactoryTelemetryAvailability::Available);
+        assert_eq!(
+            (usage.input_tokens, usage.output_tokens),
+            (Some(2), Some(64000))
+        );
+        assert_eq!(
+            (usage.cache_read_tokens, usage.cache_write_tokens),
+            (Some(26788), Some(53010))
+        );
+        // Cost and start were not reported by the owner: unknown, not zero.
+        assert_eq!(usage.cost, None);
+        assert_eq!(usage.started_at, None);
+        assert_eq!(usage.ended_at.as_deref(), Some("2026-07-18T23:16:15.618Z"));
+        assert_eq!(
+            usage.observation_refs,
+            vec!["model-usage:claude-code:msg_011CdAMUYyuCjjHDEJwMTTeX@5fefe920790b1beec05c258c9d65328539ba4e44"]
+        );
+        let json = serde_json::to_value(&usage).unwrap();
+        assert!(json["cost"].is_null() && json.get("cost").is_some());
+        assert!(json["startedAt"].is_null() && json.get("startedAt").is_some());
+    }
+
+    #[test]
+    fn normalised_usage_sums_only_what_every_observation_reports() {
+        let mut state = correlated_state();
+        state.execution_correlations[0].model_usage = available(vec![
+            actuation_model_usage_conformance_fixture(),
+            second_observation(
+                "msg_second",
+                (10, 5),
+                Some(0.5),
+                Some("2026-07-18T23:10:00Z"),
+                "2026-07-18T23:20:00Z",
+            ),
+        ]);
+        state.validate().unwrap();
+        let usage = FactoryExecutionUsage::from_correlation(&state.execution_correlations[0]);
+        assert_eq!(
+            (usage.input_tokens, usage.output_tokens),
+            (Some(12), Some(64005))
+        );
+        // The first observation reports no cost and no start: the totals stay
+        // unknown rather than shrinking to the reported part.
+        assert_eq!(usage.cost, None);
+        assert_eq!(usage.started_at, None);
+        assert_eq!(usage.ended_at.as_deref(), Some("2026-07-18T23:20:00Z"));
+
+        state.execution_correlations[0].model_usage = available(vec![
+            second_observation(
+                "msg_a",
+                (1, 2),
+                Some(0.5),
+                Some("2026-07-18T23:10:00Z"),
+                "2026-07-18T23:11:00Z",
+            ),
+            second_observation(
+                "msg_b",
+                (3, 4),
+                Some(0.25),
+                Some("2026-07-18T23:05:00Z"),
+                "2026-07-18T23:30:00Z",
+            ),
+        ]);
+        state.validate().unwrap();
+        let usage = FactoryExecutionUsage::from_correlation(&state.execution_correlations[0]);
+        assert_eq!(
+            (usage.input_tokens, usage.output_tokens),
+            (Some(4), Some(6))
+        );
+        assert_eq!(
+            usage.cost,
+            Some(FactoryUsageCost {
+                amount: 0.75,
+                currency: "USD".into()
+            })
+        );
+        assert_eq!(usage.started_at.as_deref(), Some("2026-07-18T23:05:00Z"));
+        assert_eq!(usage.ended_at.as_deref(), Some("2026-07-18T23:30:00Z"));
+    }
+
+    #[test]
+    fn unobserved_usage_is_null_with_its_reason_everywhere_it_is_read() {
+        let mut state = correlated_state();
+        state.execution_correlations[0].model_usage =
+            available(vec![actuation_model_usage_conformance_fixture()]);
+        state.validate().unwrap();
+        let unobserved = state
+            .execution_correlations
+            .iter()
+            .find(|correlation| correlation.model_usage.observations.is_empty())
+            .unwrap()
+            .clone();
+        let usage = FactoryExecutionUsage::from_correlation(&unobserved);
+        assert_eq!(
+            usage.availability,
+            FactoryTelemetryAvailability::Unavailable
+        );
+        assert!(usage.reason.is_some());
+        let json = serde_json::to_value(&usage).unwrap();
+        for field in [
+            "inputTokens",
+            "outputTokens",
+            "cacheReadTokens",
+            "cacheWriteTokens",
+            "cost",
+            "startedAt",
+            "endedAt",
+        ] {
+            assert!(
+                json.get(field).is_some_and(serde_json::Value::is_null),
+                "{field}"
+            );
+        }
+
+        // The telemetry reading carries it...
+        let reading = state
+            .execution_telemetry_reading(&unobserved.telemetry_ref)
+            .unwrap();
+        assert_eq!(reading.usage, usage);
+        // ...and the build view carries one entry per correlated execution.
+        let snapshot = state.build_snapshot(&RUN.parse().unwrap()).unwrap();
+        assert_eq!(
+            snapshot.view.execution_usage.len(),
+            state.execution_correlations.len()
+        );
+        assert!(snapshot
+            .view
+            .execution_usage
+            .iter()
+            .any(|entry| entry.input_tokens == Some(2)));
+        crate::build::assert_build_view_contract(&snapshot);
+    }
+
+    #[test]
+    fn usage_schema_definitions_agree_across_contracts() {
+        let read: serde_json::Value = serde_json::from_str(SCHEMA).unwrap();
+        let build: serde_json::Value = serde_json::from_str(include_str!(
+            "../../contracts/factory/build-view.schema.json"
+        ))
+        .unwrap();
+        let normalise = |value: &serde_json::Value| {
+            let mut value = value.clone();
+            // Key order and presentation may differ; the constraints may not.
+            value.as_object_mut().unwrap().remove("description");
+            value
+        };
+        assert_eq!(
+            normalise(&read["$defs"]["executionUsage"]),
+            normalise(&build["$defs"]["executionUsage"])
+        );
+        // A real reading validates against the executionUsage definition.
+        let mut state = correlated_state();
+        state.execution_correlations[0].model_usage =
+            available(vec![actuation_model_usage_conformance_fixture()]);
+        let reading = state
+            .execution_telemetry_reading(&state.execution_correlations[0].telemetry_ref.clone())
+            .unwrap();
+        let definition = serde_json::json!({
+            "$ref": "#/$defs/executionUsage",
+            "$defs": { "executionUsage": read["$defs"]["executionUsage"].clone() }
+        });
+        let validator = jsonschema::Validator::new(&definition).unwrap();
+        assert!(validator.is_valid(&serde_json::to_value(&reading.usage).unwrap()));
     }
 }

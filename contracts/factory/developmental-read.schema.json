@@ -578,7 +578,7 @@
     },
     "executionTelemetryReading": {
       "type": "object",
-      "required": ["contract", "provenance", "telemetryRef", "projectRef", "runRef", "workflowUnitRef", "executionRef", "condition", "temporal", "modelUsage", "materialUsage", "returnState"],
+      "required": ["contract", "provenance", "telemetryRef", "projectRef", "runRef", "workflowUnitRef", "executionRef", "condition", "temporal", "modelUsage", "materialUsage", "usage", "returnState"],
       "properties": {
         "contract": { "const": "factory.execution-telemetry-reading/v1" },
         "provenance": { "$ref": "#/$defs/executionTelemetryProvenance" },
@@ -591,8 +591,52 @@
         "temporal": { "$ref": "#/$defs/temporalCorrelation" },
         "modelUsage": { "$ref": "#/$defs/telemetryLink" },
         "materialUsage": { "$ref": "#/$defs/telemetryLink" },
+        "usage": { "$ref": "#/$defs/executionUsage" },
         "handoff": { "$ref": "#/$defs/handoff" },
-        "returnState": { "$ref": "#/$defs/executionReturnState" }
+        "returnState": { "$ref": "#/$defs/executionReturnState" },
+        "gitBasis": { "$ref": "#/$defs/gitBasis" }
+      },
+      "additionalProperties": false
+    },
+    "gitBasis": {
+      "type": "object",
+      "required": ["repository", "baseHead", "worktreeClean"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "baseHead": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "minLength": 1 },
+        "worktreeClean": { "type": ["boolean", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "executionUsage": {
+      "description": "Factory-normalised model usage for one execution, summed over its Actuation actuation.model-usage/v1 observations. Missing is never zero: a value is null unless every observation reports it with an available standing.",
+      "type": "object",
+      "required": ["contract", "executionRef", "telemetryRef", "availability", "observationRefs", "inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "cost", "startedAt", "endedAt"],
+      "properties": {
+        "contract": { "const": "factory.execution-usage/v1" },
+        "executionRef": { "type": "string", "minLength": 1 },
+        "telemetryRef": { "type": "string", "minLength": 1 },
+        "availability": { "enum": ["available", "unavailable", "unsupported"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "observationRefs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "usage_ref@revision of every summed owner observation" },
+        "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
+        "cacheReadTokens": { "type": ["integer", "null"], "minimum": 0, "description": "Actuation cache.read_input" },
+        "cacheWriteTokens": { "type": ["integer", "null"], "minimum": 0, "description": "Actuation cache.creation_input" },
+        "cost": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["amount", "currency"],
+              "properties": { "amount": { "type": "number", "minimum": 0 }, "currency": { "type": "string", "minLength": 1 } },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "startedAt": { "type": ["string", "null"], "description": "earliest reported start (RFC 3339)" },
+        "endedAt": { "type": ["string", "null"], "description": "latest reported completion (RFC 3339)" }
       },
       "additionalProperties": false
     }

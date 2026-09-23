@@ -1,6 +1,6 @@
 use crate::core::identity::Revision;
 use crate::core::run::{
-    CommandOutcome, NodeKind, NodeState, Project, ProjectRef, Run, RunContractError,
+    CommandOutcome, EdgeKind, NodeKind, NodeState, Project, ProjectRef, Run, RunContractError,
     RunMutationAuthority, RunRef, RunRegistry, RunThoughtCommand, RunThoughtOutcome,
     RunTopologyCommand,
 };
@@ -98,11 +98,76 @@ pub struct AgencyRecord {
     pub return_state: Option<String>,
 }
 
+/// The one closed execution status vocabulary, shared with every host that
+/// renders Factory executions (contract: `build-view.schema.json`
+/// `$defs/executionStatus`). Factory refuses to admit an execution whose
+/// status is outside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExecutionStatus {
+    /// Admitted and not yet started.
+    Queued,
+    /// Carrying work now.
+    Running,
+    /// Cannot proceed until something outside it changes.
+    Blocked,
+    /// Came back with a readable return; recognition is still pending.
+    Returned,
+    /// Finished, and its return was accepted or verified.
+    Success,
+    /// Ended in failure.
+    Fail,
+    /// Stopped by decision before it finished.
+    Cancelled,
+    /// A conformance fixture execution, not real work.
+    ContractFixture,
+}
+
+impl ExecutionStatus {
+    pub const ALL: [Self; 8] = [
+        Self::Queued,
+        Self::Running,
+        Self::Blocked,
+        Self::Returned,
+        Self::Success,
+        Self::Fail,
+        Self::Cancelled,
+        Self::ContractFixture,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Blocked => "blocked",
+            Self::Returned => "returned",
+            Self::Success => "success",
+            Self::Fail => "fail",
+            Self::Cancelled => "cancelled",
+            Self::ContractFixture => "contract-fixture",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|status| status.as_str() == value)
+    }
+}
+
+impl Display for ExecutionStatus {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionRecord {
     pub run_ref: RunRef,
     pub execution_ref: String,
+    /// One of [`ExecutionStatus`]. Kept as text so previously persisted
+    /// states still open; every admission path validates it.
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agency_ref: Option<String>,
@@ -361,6 +426,11 @@ impl FactoryBuildState {
         &mut self,
         execution: ExecutionRecord,
     ) -> Result<(), FactoryBuildError> {
+        if ExecutionStatus::parse(&execution.status).is_none() {
+            return Err(FactoryBuildError::InvalidExecutionStatus(
+                execution.status.clone(),
+            ));
+        }
         self.ensure_run(&execution.run_ref)?;
         insert_unique(
             &mut self.executions,
@@ -536,13 +606,103 @@ pub struct FactoryBuildView {
     pub executions: Vec<ExecutionRecord>,
     pub trajectories: Vec<Value>,
     pub actions: Vec<FactoryActionView>,
+    /// Normalised usage per correlated execution of this Run. Present only
+    /// when the view is read from a developmental state that carries
+    /// execution correlations; each entry says what is unknown as `null`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_usage: Vec<crate::developmental_read::FactoryExecutionUsage>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectView {
     pub project_ref: String,
+    /// Display name of the Project. Derived from the native project key when
+    /// the owner state carries one (see [`project_label_from_key`]); otherwise
+    /// the project ref itself — a name is never invented.
     pub label: String,
+    /// The native project key the label was derived from, when one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_key: Option<String>,
+}
+
+/// A Project's display name together with the native key it came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectName {
+    pub label: String,
+    /// Present when the name came from the native project key; absent when it
+    /// came from a Central project link alone.
+    pub project_key: Option<String>,
+}
+
+impl ProjectName {
+    pub fn from_project_key(project_key: &str) -> Option<Self> {
+        Some(Self {
+            label: project_label_from_key(project_key)?,
+            project_key: Some(project_key.to_owned()),
+        })
+    }
+
+    pub fn from_central_project_ref(central_project_ref: &str) -> Option<Self> {
+        Some(Self {
+            label: central_project_name(central_project_ref)?,
+            project_key: None,
+        })
+    }
+}
+
+/// Name a Project from its native project key without inventing one.
+///
+/// - `control:root` is the Central root world, named `Central`.
+/// - `central-project:<id>` carries a percent-encoded Central project
+///   identity; it is decoded and named by [`central_project_name`].
+/// - Any other non-empty key is the owner's own stable name and is used as-is.
+///
+/// Returns `None` only for an empty key or an undecodable encoding.
+pub fn project_label_from_key(project_key: &str) -> Option<String> {
+    let key = project_key.trim();
+    if key.is_empty() {
+        return None;
+    }
+    if key == "control:root" {
+        return Some("Central".into());
+    }
+    match key.strip_prefix("central-project:") {
+        Some(encoded) => central_project_name(&percent_decode(encoded)?),
+        None => Some(key.to_owned()),
+    }
+}
+
+/// Name a Central project from its Central identity. Central world refs have
+/// the grammar `project:<id>`; the `<id>` is the project's name. Bare
+/// identities (`Factory`, `O-I`) are already names.
+pub fn central_project_name(central_project_ref: &str) -> Option<String> {
+    let reference = central_project_ref.trim();
+    if reference == "control:root" {
+        return Some("Central".into());
+    }
+    let name = reference
+        .strip_prefix("project:")
+        .unwrap_or(reference)
+        .trim();
+    (!name.is_empty()).then(|| name.to_owned())
+}
+
+fn percent_decode(encoded: &str) -> Option<String> {
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(index + 1..index + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            decoded.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -561,8 +721,15 @@ pub struct FrontierView {
     pub title: String,
     pub mode: String,
     pub summary: String,
+    /// The Run's closure standing, read from its lifecycle alone:
+    /// `open` | `closing` | `closed` | `aborted`. This is lifecycle standing,
+    /// never a verification Closure (no closure envelope is implied).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closure_state: Option<String>,
+    /// Standing of the Run Map gates the frontier node requires: `held` when
+    /// any such gate still waits on unsatisfied work, `passed` when every one
+    /// is satisfied. Absent when the frontier requires no gate or the map
+    /// does not determine the gate's standing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gate_state: Option<String>,
 }
@@ -585,6 +752,18 @@ impl FactoryBuildViewProvider {
         state: &FactoryBuildState,
         selection: &FactoryBuildSelection,
     ) -> Result<FactoryBuildSnapshot, FactoryBuildError> {
+        self.snapshot_with_project_name(state, selection, None)
+    }
+
+    /// Materialise the view with the Project's native name, when the caller's
+    /// owner state carries one (a Commission's `projectKey`, or a verified
+    /// Central project link). Without one the Project label is its ref.
+    pub fn snapshot_with_project_name(
+        &self,
+        state: &FactoryBuildState,
+        selection: &FactoryBuildSelection,
+        project_name: Option<ProjectName>,
+    ) -> Result<FactoryBuildSnapshot, FactoryBuildError> {
         if state.project.reference() != &selection.project_ref {
             return Err(FactoryBuildError::ProjectNotFound(
                 selection.project_ref.to_string(),
@@ -599,9 +778,17 @@ impl FactoryBuildViewProvider {
         }
 
         let view = FactoryBuildView {
-            project: ProjectView {
-                project_ref: state.project.reference().to_string(),
-                label: state.project.reference().to_string(),
+            project: match project_name {
+                Some(name) => ProjectView {
+                    project_ref: state.project.reference().to_string(),
+                    label: name.label,
+                    project_key: name.project_key,
+                },
+                None => ProjectView {
+                    project_ref: state.project.reference().to_string(),
+                    label: state.project.reference().to_string(),
+                    project_key: None,
+                },
             },
             run: RunView {
                 run_ref: run.reference().to_string(),
@@ -628,6 +815,7 @@ impl FactoryBuildViewProvider {
                 subject_kinds: vec!["candidate".into()],
                 required_capability_ref: REQUEST_MORE_EVIDENCE_CAPABILITY_REF.into(),
             }],
+            execution_usage: Vec::new(),
         };
 
         Ok(FactoryBuildSnapshot {
@@ -691,6 +879,137 @@ fn run_status(run: &Run) -> String {
     .into()
 }
 
+/// The Run's closure standing from its lifecycle. See
+/// [`FrontierView::closure_state`].
+fn closure_state(run: &Run) -> &'static str {
+    use crate::core::run::RunLifecycle;
+
+    match run.lifecycle() {
+        RunLifecycle::Seeded
+        | RunLifecycle::Active
+        | RunLifecycle::WaitingHuman
+        | RunLifecycle::Suspended => "open",
+        RunLifecycle::Finishing => "closing",
+        RunLifecycle::Finished | RunLifecycle::Archived => "closed",
+        RunLifecycle::Aborted => "aborted",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GateStanding {
+    Held,
+    Passed,
+}
+
+/// The standing of the gates `node` requires. Gates carry no stored state in
+/// the Run Map, so a gate's standing is derived from what it requires: passed
+/// only when every prerequisite is satisfied, held while any prerequisite is
+/// still planned, ready, running, blocked, waiting or returned. Anything the
+/// map does not determine (superseded or abandoned prerequisites, stateless
+/// decision/candidate/authority/nested-run prerequisites) yields no claim.
+fn frontier_gate_state(run: &Run, node: &crate::core::run::NodeId) -> Option<&'static str> {
+    let map = run.map();
+    let gates = required_nodes(run, node)
+        .filter(|id| map.nodes().get(*id).map(|n| n.kind) == Some(NodeKind::Gate))
+        .collect::<Vec<_>>();
+    if gates.is_empty() {
+        return None;
+    }
+    let mut visiting = std::collections::BTreeSet::new();
+    let standings = gates
+        .into_iter()
+        .map(|gate| gate_standing(run, gate, &mut visiting))
+        .collect::<Vec<_>>();
+    if standings.contains(&Some(GateStanding::Held)) {
+        Some("held")
+    } else if standings.iter().all(|s| *s == Some(GateStanding::Passed)) {
+        Some("passed")
+    } else {
+        None
+    }
+}
+
+fn required_nodes<'a>(
+    run: &'a Run,
+    node: &'a crate::core::run::NodeId,
+) -> impl Iterator<Item = &'a crate::core::run::NodeId> + 'a {
+    run.map()
+        .edges()
+        .iter()
+        .filter(move |edge| edge.relation == EdgeKind::Requires && &edge.from == node)
+        .map(|edge| &edge.to)
+}
+
+fn gate_standing<'a>(
+    run: &'a Run,
+    gate: &'a crate::core::run::NodeId,
+    visiting: &mut std::collections::BTreeSet<&'a crate::core::run::NodeId>,
+) -> Option<GateStanding> {
+    if !visiting.insert(gate) {
+        return None;
+    }
+    let mut standing = GateStanding::Passed;
+    let mut undetermined = false;
+    for prerequisite in required_nodes(run, gate) {
+        let Some(node) = run.map().nodes().get(prerequisite) else {
+            undetermined = true;
+            continue;
+        };
+        let held = match (node.kind, node.state) {
+            (NodeKind::Gate, _) => match gate_standing(run, prerequisite, visiting) {
+                Some(GateStanding::Held) => true,
+                Some(GateStanding::Passed) => false,
+                None => {
+                    undetermined = true;
+                    false
+                }
+            },
+            (_, Some(NodeState::Satisfied)) => false,
+            (
+                _,
+                Some(
+                    NodeState::Planned
+                    | NodeState::Ready
+                    | NodeState::Active
+                    | NodeState::Blocked
+                    | NodeState::Waiting
+                    | NodeState::Returned,
+                ),
+            ) => true,
+            _ => {
+                undetermined = true;
+                false
+            }
+        };
+        if held {
+            standing = GateStanding::Held;
+        }
+    }
+    visiting.remove(gate);
+    match standing {
+        GateStanding::Held => Some(GateStanding::Held),
+        GateStanding::Passed if undetermined => None,
+        GateStanding::Passed => Some(GateStanding::Passed),
+    }
+}
+
+/// One plain sentence for the frontier node's state, or nothing when the
+/// node carries no state of its own.
+fn frontier_summary(state: Option<NodeState>) -> &'static str {
+    match state {
+        Some(NodeState::Planned) => "Planned.",
+        Some(NodeState::Ready) => "Ready to start.",
+        Some(NodeState::Active) => "Running.",
+        Some(NodeState::Blocked) => "Blocked.",
+        Some(NodeState::Waiting) => "Waiting.",
+        Some(NodeState::Satisfied) => "Done.",
+        Some(NodeState::Returned) => "Returned — awaiting recognition.",
+        Some(NodeState::Superseded) => "Superseded.",
+        Some(NodeState::Abandoned) => "Abandoned.",
+        None => "",
+    }
+}
+
 fn materialise_frontier(run: &Run) -> FrontierView {
     let nodes = run.map().nodes().values().collect::<Vec<_>>();
     let selected = [
@@ -723,16 +1042,16 @@ fn materialise_frontier(run: &Run) -> FrontierView {
                 _ => "work",
             }
             .into(),
-            summary: format!("RunMap frontier: {:?}", node.state),
-            closure_state: None,
-            gate_state: None,
+            summary: frontier_summary(node.state).into(),
+            closure_state: Some(closure_state(run).into()),
+            gate_state: frontier_gate_state(run, &node.id).map(Into::into),
         },
         None => FrontierView {
             subject_ref: run.reference().to_string(),
             title: run.destination().to_owned(),
             mode: "work".into(),
-            summary: "RunMap has no active/ready/blocked/waiting frontier node.".into(),
-            closure_state: None,
+            summary: "Nothing is ready, running, blocked, waiting or returned.".into(),
+            closure_state: Some(closure_state(run).into()),
             gate_state: None,
         },
     }
@@ -829,6 +1148,8 @@ pub enum FactoryBuildError {
     MissingCapabilityGrant,
     MissingActionAuthority,
     ActionAlreadyApplied(String),
+    /// An execution status outside [`ExecutionStatus`].
+    InvalidExecutionStatus(String),
     RunContract(RunContractError),
 }
 
@@ -845,3 +1166,357 @@ impl Display for FactoryBuildError {
 }
 
 impl Error for FactoryBuildError {}
+
+#[cfg(test)]
+mod project_name_tests {
+    use super::{central_project_name, project_label_from_key, ProjectName};
+
+    #[test]
+    fn project_key_names_decode_without_invention() {
+        assert_eq!(
+            project_label_from_key("central-project:Factory").as_deref(),
+            Some("Factory")
+        );
+        assert_eq!(
+            project_label_from_key("central-project:project%3Aquaternal-logic").as_deref(),
+            Some("quaternal-logic")
+        );
+        assert_eq!(
+            project_label_from_key("central-project:My%20Project").as_deref(),
+            Some("My Project")
+        );
+        assert_eq!(
+            project_label_from_key("control:root").as_deref(),
+            Some("Central")
+        );
+        assert_eq!(
+            project_label_from_key("factory-programme-195").as_deref(),
+            Some("factory-programme-195")
+        );
+        // Nothing to name, or an encoding that does not decode: no label.
+        assert_eq!(project_label_from_key("  "), None);
+        assert_eq!(project_label_from_key("central-project:"), None);
+        assert_eq!(project_label_from_key("central-project:bad%zz"), None);
+        assert_eq!(project_label_from_key("central-project:cut%4"), None);
+    }
+
+    #[test]
+    fn central_link_names_follow_the_central_ref_grammar() {
+        assert_eq!(central_project_name("O-I").as_deref(), Some("O-I"));
+        assert_eq!(
+            central_project_name("project:quaternal-logic").as_deref(),
+            Some("quaternal-logic")
+        );
+        assert_eq!(central_project_name("project:"), None);
+        assert_eq!(
+            ProjectName::from_central_project_ref("Factory"),
+            Some(ProjectName {
+                label: "Factory".into(),
+                project_key: None
+            })
+        );
+    }
+}
+
+#[cfg(test)]
+mod frontier_tests {
+    use super::*;
+    use crate::core::run::{
+        NodeId, RunTopologyCommand, TopologyEdge, TopologyMutation, TopologyNode,
+    };
+
+    const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAA";
+    const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FAB";
+
+    fn work(id: &str, state: NodeState) -> TopologyNode {
+        TopologyNode {
+            id: NodeId::new(id).unwrap(),
+            kind: NodeKind::Work,
+            label: format!("Work {id}"),
+            state: Some(state),
+            semantic_ref: None,
+        }
+    }
+
+    fn gate(id: &str) -> TopologyNode {
+        TopologyNode {
+            id: NodeId::new(id).unwrap(),
+            kind: NodeKind::Gate,
+            label: format!("Gate {id}"),
+            state: None,
+            semantic_ref: None,
+        }
+    }
+
+    fn requires(from: &str, to: &str) -> TopologyEdge {
+        TopologyEdge {
+            from: NodeId::new(from).unwrap(),
+            to: NodeId::new(to).unwrap(),
+            relation: EdgeKind::Requires,
+        }
+    }
+
+    /// A Build state whose single Run carries exactly these nodes and edges.
+    fn snapshot_of(nodes: Vec<TopologyNode>, edges: Vec<TopologyEdge>) -> FactoryBuildSnapshot {
+        let project_ref: ProjectRef = PROJECT.parse().unwrap();
+        let run_ref: RunRef = RUN.parse().unwrap();
+        let run = Run::new(
+            run_ref.clone(),
+            project_ref.clone(),
+            "Frontier fixture",
+            "factory",
+        )
+        .unwrap();
+        let mut state = FactoryBuildState::new(Project::new(project_ref.clone()), run).unwrap();
+        let authority = state.run_mutation_authority(&run_ref).unwrap();
+        // Every node hangs from the destination unless an edge already
+        // reaches it, so the fixture is a valid, reachable Run Map.
+        let reached = edges
+            .iter()
+            .map(|edge| edge.to.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut edges = edges;
+        for node in &nodes {
+            if !reached.contains(&node.id) {
+                edges.push(TopologyEdge {
+                    from: NodeId::new("destination").unwrap(),
+                    to: node.id.clone(),
+                    relation: EdgeKind::Requires,
+                });
+            }
+        }
+        let mut mutations = nodes
+            .into_iter()
+            .map(|node| TopologyMutation::AddNode { node })
+            .collect::<Vec<_>>();
+        mutations.extend(
+            edges
+                .into_iter()
+                .map(|edge| TopologyMutation::AddEdge { edge }),
+        );
+        state
+            .apply_run_topology_command(
+                &run_ref,
+                &authority,
+                RunTopologyCommand {
+                    command_id: "frontier-fixture".into(),
+                    expected_revision: state.run(&run_ref).unwrap().revision(),
+                    mutation: TopologyMutation::Batch { mutations },
+                },
+            )
+            .unwrap();
+        FactoryBuildViewProvider
+            .snapshot(
+                &state,
+                &FactoryBuildSelection {
+                    project_ref,
+                    run_ref,
+                },
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn frontier_summary_is_a_plain_sentence_never_debug_text() {
+        for (state, sentence) in [
+            (NodeState::Ready, "Ready to start."),
+            (NodeState::Active, "Running."),
+            (NodeState::Blocked, "Blocked."),
+            (NodeState::Waiting, "Waiting."),
+            (NodeState::Returned, "Returned — awaiting recognition."),
+        ] {
+            let snapshot = snapshot_of(vec![work("unit", state)], vec![]);
+            assert_build_view_contract(&snapshot);
+            assert_eq!(snapshot.view.frontier.summary, sentence);
+            let json = snapshot.to_json().unwrap();
+            assert!(!json.contains("Some("), "Debug text leaked: {json}");
+            assert!(!json.contains("RunMap frontier"));
+        }
+        // Stateless nodes say nothing rather than print an Option.
+        assert_eq!(frontier_summary(None), "");
+        // No frontier node at all: one plain sentence.
+        let idle = snapshot_of(vec![work("unit", NodeState::Satisfied)], vec![]);
+        assert_eq!(
+            idle.view.frontier.summary,
+            "Nothing is ready, running, blocked, waiting or returned."
+        );
+    }
+
+    #[test]
+    fn closure_state_reads_the_run_lifecycle() {
+        let snapshot = snapshot_of(vec![work("unit", NodeState::Ready)], vec![]);
+        // A freshly seeded Run is open.
+        assert_eq!(
+            snapshot.view.frontier.closure_state.as_deref(),
+            Some("open")
+        );
+        let idle = snapshot_of(vec![work("unit", NodeState::Satisfied)], vec![]);
+        assert_eq!(idle.view.frontier.closure_state.as_deref(), Some("open"));
+        // Every lifecycle maps to exactly one closure standing.
+        let run = Run::new(
+            RUN.parse().unwrap(),
+            PROJECT.parse().unwrap(),
+            "Closure fixture",
+            "factory",
+        )
+        .unwrap();
+        for (lifecycle, closure) in [
+            ("seeded", "open"),
+            ("active", "open"),
+            ("waiting_human", "open"),
+            ("suspended", "open"),
+            ("finishing", "closing"),
+            ("finished", "closed"),
+            ("archived", "closed"),
+            ("aborted", "aborted"),
+        ] {
+            let mut value = serde_json::to_value(&run).unwrap();
+            value["lifecycle"] = lifecycle.into();
+            let run: Run = serde_json::from_value(value).unwrap();
+            assert_eq!(closure_state(&run), closure, "lifecycle {lifecycle}");
+        }
+    }
+
+    #[test]
+    fn gate_state_is_derived_from_what_the_frontier_gate_requires() {
+        // The barrier waits for `left`; `next` is released by it. The
+        // frontier picks the blocked `next` before the waiting `left`.
+        let held = snapshot_of(
+            vec![
+                work("left", NodeState::Waiting),
+                work("next", NodeState::Blocked),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(held.view.frontier.title, "Work next");
+        assert_eq!(held.view.frontier.gate_state.as_deref(), Some("held"));
+        assert_build_view_contract(&held);
+
+        let passed = snapshot_of(
+            vec![
+                work("left", NodeState::Satisfied),
+                work("next", NodeState::Ready),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(passed.view.frontier.title, "Work next");
+        assert_eq!(passed.view.frontier.gate_state.as_deref(), Some("passed"));
+        assert_build_view_contract(&passed);
+
+        // No gate in front of the frontier: no claim.
+        let ungated = snapshot_of(vec![work("unit", NodeState::Ready)], vec![]);
+        assert_eq!(ungated.view.frontier.gate_state, None);
+
+        // A superseded prerequisite leaves the gate undetermined: no claim.
+        let undetermined = snapshot_of(
+            vec![
+                work("left", NodeState::Superseded),
+                work("next", NodeState::Ready),
+                gate("barrier"),
+            ],
+            vec![requires("barrier", "left"), requires("next", "barrier")],
+        );
+        assert_eq!(undetermined.view.frontier.gate_state, None);
+    }
+}
+
+/// Validate a snapshot against the published build-view contract schema.
+#[cfg(test)]
+pub(crate) fn assert_build_view_contract(snapshot: &FactoryBuildSnapshot) {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../contracts/factory/build-view.schema.json"
+    ))
+    .unwrap();
+    let validator = jsonschema::Validator::new(&schema).expect("build-view schema compiles");
+    let instance = serde_json::to_value(snapshot).unwrap();
+    let errors = validator
+        .iter_errors(&instance)
+        .map(|error| format!("{} at {}", error, error.instance_path))
+        .collect::<Vec<_>>();
+    assert!(
+        errors.is_empty(),
+        "build view breaks its contract: {errors:#?}"
+    );
+}
+
+#[cfg(test)]
+mod execution_status_tests {
+    use super::*;
+
+    const SCHEMA: &str = include_str!("../../contracts/factory/build-view.schema.json");
+
+    #[test]
+    fn contract_schema_and_rust_vocabulary_are_the_same_closed_set() {
+        let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+        let declared = schema["$defs"]["executionStatus"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                assert!(
+                    entry["description"].as_str().is_some_and(|d| !d.is_empty()),
+                    "every status is documented"
+                );
+                entry["const"].as_str().unwrap().to_owned()
+            })
+            .collect::<Vec<_>>();
+        let native = ExecutionStatus::ALL
+            .iter()
+            .map(|status| status.as_str().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(declared, native);
+        for status in ExecutionStatus::ALL {
+            assert_eq!(
+                serde_json::to_value(status).unwrap(),
+                Value::String(status.as_str().into())
+            );
+            assert_eq!(ExecutionStatus::parse(status.as_str()), Some(status));
+        }
+    }
+
+    #[test]
+    fn every_producer_value_is_in_the_vocabulary() {
+        // Every value a Factory producer writes today (conformance fixture,
+        // developmental telemetry fixtures, live Build fixtures).
+        for written in ["contract-fixture", "returned", "running", "success"] {
+            assert!(ExecutionStatus::parse(written).is_some(), "{written}");
+        }
+        // The conformance producer writes through the validated path, so a
+        // generated state can only carry vocabulary values.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        crate::conformance::create_developmental_conformance_state(&path).unwrap();
+        let state: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let executions = state["state"]["build"]["executions"].as_object().unwrap();
+        assert!(!executions.is_empty());
+        for execution in executions.values() {
+            assert!(ExecutionStatus::parse(execution["status"].as_str().unwrap()).is_some());
+        }
+    }
+
+    #[test]
+    fn the_contract_schema_refuses_a_status_outside_the_vocabulary() {
+        let schema: Value = serde_json::from_str(SCHEMA).unwrap();
+        let validator = jsonschema::Validator::new(&schema).unwrap();
+        let execution = serde_json::json!({
+            "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FAB",
+            "executionRef": "execution:x",
+            "status": "done",
+            "surfaceRefs": [],
+            "workcellBindingRefs": []
+        });
+        let definition = serde_json::json!({
+            "$ref": "#/$defs/execution",
+            "$defs": schema["$defs"].clone()
+        });
+        let execution_validator = jsonschema::Validator::new(&definition).unwrap();
+        assert!(!execution_validator.is_valid(&execution));
+        let mut accepted = execution.clone();
+        accepted["status"] = "returned".into();
+        assert!(execution_validator.is_valid(&accepted));
+        // The full document schema compiles too.
+        assert!(!validator.is_valid(&serde_json::json!({})));
+    }
+}
