@@ -6,7 +6,8 @@
 //! the working directory, through the same `factory project locate` reading.
 //!
 //! Refusals are three-part. Under `--json` the refusal document goes to stdout
-//! and the process exits 1; otherwise it goes to stderr. Readings whose outcome
+//! and the process exits 2 (as every other `factory` failure does); otherwise it
+//! goes to stderr. Readings whose outcome
 //! is `none` or `ambiguous` are answers, not refusals, and exit 0.
 
 use crate::core::run::{RunRef, WorkflowUnitRef};
@@ -65,7 +66,7 @@ pub fn main(args: &[String]) -> ExitCode {
             } else {
                 eprintln!("factory: {refusal}");
             }
-            ExitCode::from(1)
+            ExitCode::from(2)
         }
     }
 }

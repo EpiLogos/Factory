@@ -58,11 +58,11 @@ fn ok(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-/// A lawful refusal: exit 1, a three-part JSON document on stdout.
+/// A lawful refusal: exit 2, a three-part JSON document on stdout.
 fn refused(output: Output, code: &str) -> Value {
     assert_eq!(
         output.status.code(),
-        Some(1),
+        Some(2),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -613,7 +613,7 @@ fn refusals_are_three_part_and_leave_the_state_untouched() {
         None,
         None,
     );
-    assert_eq!(human.status.code(), Some(1));
+    assert_eq!(human.status.code(), Some(2));
     assert!(human.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&human.stderr);
     assert!(stderr.contains("--reason is required"), "{stderr}");
