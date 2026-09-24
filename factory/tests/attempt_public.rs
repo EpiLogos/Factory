@@ -13,6 +13,9 @@ use epilogos_factory::execution_intelligence::{
     accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand, AIKIT_MODEL_ROSTER_VERSION,
 };
 use epilogos_factory::orchestration::{LegStatus, RetryGrant, ReturnedArtifact};
+use epilogos_factory::project_development_store::read_developmental_state;
+use epilogos_factory::sensing::{Observation, Policy};
+use epilogos_factory::sensing_sources::verify_current;
 use epilogos_factory::workflow::{
     compile_workflow, workflow_source_digest, CompiledWorkflow, WorkflowSource,
 };
@@ -25,6 +28,270 @@ use tempfile::TempDir;
 const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
+#[test]
+fn failed_owner_dispatch_remains_the_same_signal_after_later_verification() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:failed-dispatch".into(),
+            task_ref: "task:failed-dispatch".into(),
+            parent_journey_ref: "journey:failed-dispatch".into(),
+            workflow_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    fixture
+        .action(FactoryAttemptOperation::BindDispatch {
+            attempt_ref: "attempt:failed-dispatch".into(),
+            execution_ref: "execution:failed-dispatch".into(),
+            receipt: owner_receipt(
+                "aikit/session-space",
+                "delivery:failed-dispatch",
+                "receipt:failed-dispatch",
+                OwnerOperationPhase::Failed,
+                set(["evidence:native-provider-failure"]),
+                BTreeSet::new(),
+            ),
+        })
+        .unwrap();
+    let policy_path = fixture._dir.path().join("policy.json");
+    std::fs::write(&policy_path, serde_json::to_vec(&json!({
+        "schema":"factory.sensing-policy/v1","version":1,"project_world_ref":PROJECT,
+        "sources":[{"id":"attempts","provider":"factory","scope":PROJECT,
+                    "source_ref":"factory:attempts:controlled","arguments":{"kind":"attempts"}}],
+        "workflows":{"collect":{"enabled":true,"sources":["attempts"]}}
+    })).unwrap()).unwrap();
+    let now: chrono::DateTime<chrono::Utc> = std::time::SystemTime::now().into();
+    let since = (now - chrono::Duration::hours(1)).to_rfc3339();
+    let until = (now + chrono::Duration::hours(1)).to_rfc3339();
+    let collect = || {
+        let output = run_factory(
+            &[
+                "telemetry".into(),
+                "collect".into(),
+                fixture.state.display().to_string(),
+                "--policy".into(),
+                policy_path.display().to_string(),
+                "--since".into(),
+                since.clone(),
+                "--until".into(),
+                until.clone(),
+                "--json".into(),
+            ],
+            None,
+        );
+        assert_success(&output);
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let first = collect();
+    assert_eq!(first["collection"]["coverage"][0]["state"], "complete");
+    assert_eq!(
+        first["collection"]["signal_refs"].as_array().unwrap().len(),
+        1
+    );
+    let signal_ref = first["collection"]["signal_refs"][0].as_str().unwrap();
+    let read_signal = || {
+        let output = run_factory(
+            &[
+                "telemetry".into(),
+                "signal".into(),
+                fixture.state.display().to_string(),
+                signal_ref.into(),
+                "--json".into(),
+            ],
+            None,
+        );
+        assert_success(&output);
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()
+    };
+    let first_signal = read_signal();
+    let original_observation: Observation =
+        serde_json::from_value(first_signal["signal"]["observation"].clone()).unwrap();
+    let policy: Policy = serde_json::from_slice(&std::fs::read(&policy_path).unwrap()).unwrap();
+    verify_current(
+        &original_observation,
+        &read_developmental_state(&fixture.state).unwrap(),
+        &policy,
+    )
+    .unwrap();
+    assert_eq!(
+        first_signal["signal"]["observation"]["source_ref"],
+        "attempt:failed-dispatch"
+    );
+    assert!(first_signal["signal"]["observation"]["relation_refs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|reference| reference == "receipt:failed-dispatch"));
+    assert!(
+        fixture.reading().attempts[0]
+            .failure_evidence_refs
+            .is_empty(),
+        "failed dispatch has no explicit Fail mutation"
+    );
+    let stats = run_factory(
+        &[
+            "telemetry".into(),
+            "stats".into(),
+            fixture.state.display().to_string(),
+            "--template".into(),
+            "attempts-by-agency".into(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert_success(&stats);
+    let stats: Value = serde_json::from_slice(&stats.stdout).unwrap();
+    assert_eq!(stats["denominator"]["attempts"], 1);
+    assert_eq!(
+        stats["groups"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|group| group["withFailureEvidence"].as_u64().unwrap())
+            .sum::<u64>(),
+        1
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    let mut later = verification(&workflow, "inspect-source", "verification:later-failed");
+    later.outcome = VerificationOutcome::Failed;
+    fixture
+        .action(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "attempt:failed-dispatch".into(),
+            verification: later,
+        })
+        .unwrap();
+    let next = collect();
+    assert_eq!(
+        next["collection"]["signal_refs"].as_array().unwrap().len(),
+        2
+    );
+    let after_signal = read_signal();
+    assert_eq!(
+        after_signal["signal"]["observation"]["source_revision"],
+        first_signal["signal"]["observation"]["source_revision"],
+        "a later verification must not rewrite the failure source revision"
+    );
+    assert!(
+        after_signal["signal"]["prior_observations"].is_null()
+            || after_signal["signal"]["prior_observations"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+    );
+    let timed = fixture.reading().attempts.remove(0);
+    assert!(timed
+        .verification_recorded_at
+        .contains_key("verification:later-failed"));
+    verify_current(
+        &original_observation,
+        &read_developmental_state(&fixture.state).unwrap(),
+        &policy,
+    )
+    .unwrap();
+    fixture
+        .action(FactoryAttemptOperation::RecordObservation {
+            attempt_ref: "attempt:failed-dispatch".into(),
+            receipt: owner_receipt(
+                "aikit/session-space",
+                "delivery:later-failure",
+                "receipt:later-failure",
+                OwnerOperationPhase::Failed,
+                set(["evidence:second-native-failure"]),
+                BTreeSet::new(),
+            ),
+        })
+        .unwrap();
+    assert!(
+        verify_current(
+            &original_observation,
+            &read_developmental_state(&fixture.state).unwrap(),
+            &policy
+        )
+        .is_err(),
+        "new failure evidence must invalidate the old source revision"
+    );
+}
+
+#[test]
+fn native_receipt_admission_times_survive_restart_and_bound_later_verification() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:timed".into(),
+            task_ref: "task:timed".into(),
+            parent_journey_ref: "journey:timed".into(),
+            workflow_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:timed",
+        "inspect-source",
+        "execution:timed",
+    );
+    let first = fixture.reading().attempts.remove(0);
+    assert!(first.attempt_recorded_at.is_some());
+    assert!(first.return_recorded_at.is_some());
+    assert_eq!(first.verification_count_at_return, Some(1));
+    assert_eq!(first.verification_recorded_at.len(), 1);
+
+    let before = run_factory(
+        &[
+            "telemetry".into(),
+            "stats".into(),
+            fixture.state.display().to_string(),
+            "--template".into(),
+            "return-to-verification".into(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert_success(&before);
+    let before: Value = serde_json::from_slice(&before.stdout).unwrap();
+    assert_eq!(before["denominator"]["withTimedLaterVerification"], 0);
+    assert!(before["meanDurationMs"].is_null());
+
+    fixture
+        .action(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "attempt:timed".into(),
+            verification: verification(&workflow, "inspect-source", "verification:timed:later"),
+        })
+        .unwrap();
+    let reopened = fixture.reading().attempts.remove(0);
+    assert_eq!(reopened.verification_recorded_at.len(), 2);
+    let after = run_factory(
+        &[
+            "telemetry".into(),
+            "stats".into(),
+            fixture.state.display().to_string(),
+            "--template".into(),
+            "return-to-verification".into(),
+            "--drill-down".into(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert_success(&after);
+    let after: Value = serde_json::from_slice(&after.stdout).unwrap();
+    assert_eq!(after["denominator"]["withTimedLaterVerification"], 1);
+    assert_eq!(
+        after["verificationTargets"][0]["laterVerificationRef"],
+        "verification:timed:later"
+    );
+    assert!(after["verificationTargets"][0]["durationMs"].is_number());
+}
 
 #[test]
 fn public_cli_restart_readback_rejects_stale_revision_and_retains_tracking_return_links() {
@@ -177,6 +444,7 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
     assert!(fail_while_uncertain.is_err());
     let still_uncertain = fixture.reading();
     assert_eq!(still_uncertain.legs[&unit].status, LegStatus::Active);
+    assert!(still_uncertain.attempts[0].failure_recorded_at.is_none());
     assert!(still_uncertain.attempts[0]
         .dispatch
         .as_ref()
@@ -255,9 +523,69 @@ fn public_cli_preserves_uncertain_partial_effects_reconciliation_and_bounded_ret
     let reading = fixture.reading();
     assert_eq!(reading.attempts.len(), 2);
     assert_eq!(reading.legs[&unit].status, LegStatus::Failed);
+    for attempt in &reading.attempts {
+        let recorded = attempt
+            .failure_recorded_at
+            .as_deref()
+            .expect("native failure admission time");
+        chrono::DateTime::parse_from_rfc3339(recorded).expect("persisted RFC3339 time");
+    }
     assert!(reading.attempts[0]
         .failure_evidence_refs
         .contains("effect:possible-provider-turn"));
+    let policy_path = fixture._dir.path().join("retry-policy.json");
+    std::fs::write(
+        &policy_path,
+        serde_json::to_vec(&json!({
+            "schema":"factory.sensing-policy/v1","version":1,"project_world_ref":PROJECT,
+            "sources":[{"id":"attempts","provider":"factory","scope":PROJECT,
+                        "source_ref":"factory:attempts:retry","arguments":{"kind":"attempts"}}],
+            "workflows":{"collect":{"enabled":true,"sources":["attempts"]}}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let output = run_factory(
+        &[
+            "telemetry".into(),
+            "collect".into(),
+            fixture.state.display().to_string(),
+            "--policy".into(),
+            policy_path.display().to_string(),
+            "--json".into(),
+        ],
+        None,
+    );
+    assert_success(&output);
+    let collected: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mut found_retry = false;
+    for signal_ref in collected["collection"]["signal_refs"].as_array().unwrap() {
+        let output = run_factory(
+            &[
+                "telemetry".into(),
+                "signal".into(),
+                fixture.state.display().to_string(),
+                signal_ref.as_str().unwrap().into(),
+                "--json".into(),
+            ],
+            None,
+        );
+        assert_success(&output);
+        let signal: Value = serde_json::from_slice(&output.stdout).unwrap();
+        if signal["signal"]["observation"]["source_ref"] == "factory:attempt-retry:attempt:second" {
+            found_retry = true;
+            let refs = signal["signal"]["observation"]["relation_refs"]
+                .as_array()
+                .unwrap();
+            assert!(refs.iter().any(|reference| reference == "attempt:first"));
+            assert!(refs.iter().any(|reference| reference == "attempt:second"));
+            assert!(refs.iter().any(|reference| reference == "grant:inspect"));
+        }
+    }
+    assert!(
+        found_retry,
+        "native retry must be a source-qualified observation"
+    );
 }
 
 #[test]

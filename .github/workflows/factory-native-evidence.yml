@@ -45,6 +45,14 @@ jobs:
           git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/factory-central-owner" rev-parse HEAD > native-evidence/central-source-sha.txt
           test "$(cat native-evidence/central-source-sha.txt)" = 9ab77a22fb69fa8fbcd4b23d04b00e5d3b2c725f
+      - name: Prepare exact Actuation authority owner for sensing integration
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/factory-actuation-owner"
+          git -C "$RUNNER_TEMP/factory-actuation-owner" remote add origin https://github.com/EpiLogos/Actuation.git
+          git -C "$RUNNER_TEMP/factory-actuation-owner" fetch --depth=1 origin 8ad34cb3df3cb9112c57f2db385e2d0bdd57a786
+          git -C "$RUNNER_TEMP/factory-actuation-owner" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/factory-actuation-owner" rev-parse HEAD > native-evidence/actuation-source-sha.txt
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: factory-native-attempt-integration
@@ -52,12 +60,14 @@ jobs:
           workspaces: |
             . -> target
             ${{ runner.temp }}/factory-central-owner -> target
+            ${{ runner.temp }}/factory-actuation-owner -> target
       # Format, Clippy and all-target/doctests remain in required factory-rust.
       # This lane supplies the nine native integration cases selected below.
       - name: Build exact native binaries
         run: |
           cargo build --locked --package epilogos-factory --bin factory
           cargo build --manifest-path "$RUNNER_TEMP/factory-central-owner/Cargo.toml" -p ctrl --locked
+          cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-cli --bin actuation --locked
       - name: Real native Central to Factory preparation and dispatch gates
         id: integration
         env:
@@ -69,6 +79,12 @@ jobs:
           cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
           test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 9
           cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
+      - name: Real Actuation authority and Factory sensing integration
+        run: |
+          set -euo pipefail
+          export PATH="$RUNNER_TEMP/factory-actuation-owner/target/debug:$PATH"
+          test -x "$RUNNER_TEMP/factory-actuation-owner/target/debug/actuation"
+          cargo test --locked -p epilogos-factory --test sensing_public -- --nocapture 2>&1 | tee native-evidence/sensing-public.log
       - name: Preserve integration-tested native binary
         if: ${{ !cancelled() && steps.integration.outcome == 'success' }}
         run: |

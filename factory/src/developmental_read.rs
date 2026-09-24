@@ -170,6 +170,12 @@ pub struct FactoryDevelopmentalState {
     /// so those documents round-trip byte-for-byte.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub work_custody: Vec<crate::work_custody::FactoryWorkCustody>,
+    /// Qualified signal/work relations, not a copy of provider telemetry history.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::sensing::SensingState::is_empty"
+    )]
+    pub sensing: crate::sensing::SensingState,
 }
 
 impl FactoryDevelopmentalState {
@@ -191,6 +197,7 @@ impl FactoryDevelopmentalState {
             central_project_links: BTreeMap::new(),
             central_project_link_relocations: Vec::new(),
             work_custody: Vec::new(),
+            sensing: crate::sensing::SensingState::default(),
         };
         state.validate()?;
         Ok(state)
@@ -367,6 +374,11 @@ impl FactoryDevelopmentalState {
         }
         crate::work_custody::validate_custody_collection(&self.work_custody)
             .map_err(FactoryDevelopmentalReadError::InvalidWorkCustody)?;
+        self.sensing
+            .validate()
+            .map_err(FactoryDevelopmentalReadError::InvalidSensing)?;
+        crate::sensing::validate_native_relations(self)
+            .map_err(FactoryDevelopmentalReadError::InvalidSensing)?;
         let compiled_workflows = self.compile_workflows()?;
         self.validate_execution_correlations(&compiled_workflows)?;
         let mut invocation_refs = BTreeSet::new();
@@ -3612,6 +3624,7 @@ pub enum FactoryDevelopmentalReadError {
     InvalidCentralProjectLink(String),
     CentralProjectLinkNotFound(String),
     InvalidWorkCustody(String),
+    InvalidSensing(String),
     Build(FactoryBuildError),
 }
 

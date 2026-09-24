@@ -1,0 +1,13 @@
+{
+  "schema": "central.world-position/v1",
+  "ref": "central:position:project:Factory:factory-sensing-guardian",
+  "revision": "r1",
+  "slug": "factory-sensing-guardian",
+  "label": "Factory sensing guardian",
+  "enclosing_world_ref": "project:Factory",
+  "purpose": "Carry source-qualified, bounded Factory defects through native Commission custody and evidence-backed Return under the Project policy.",
+  "eligible_agent_refs": [
+    "agent/oh-i"
+  ],
+  "handle": "@factory-sensing-guardian"
+}

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,4 +108,26 @@ assert skill["successfulUsePromotesAutomatically"] is False
 assert skill["rollbackPointRequired"] is True
 assert skill["stages"][-2:] == ["native-owner-recognition", "explicit-promotion-or-rejection"]
 
-print("Factory native Skills and self-improvement fixtures: OK")
+builder_manifest = json.loads((ROOT / "skills/factory/provenance/upstream.json").read_text())
+assert builder_manifest["schema"] == "factory.builder-skills-provenance/v1"
+assert builder_manifest["revision"] == "fd8f20a879b507cf09feba08663a1edf7a949353"
+assert len(builder_manifest["skills"]) == 10
+for row in builder_manifest["skills"]:
+    directory = ROOT / "skills" / row["name"]
+    entrypoint = directory / "SKILL.md"
+    body = entrypoint.read_text(encoding="utf-8")
+    frontmatter = body.split("---\n", 2)
+    assert len(frontmatter) == 3 and frontmatter[0] == "", entrypoint
+    assert re.search(rf"(?m)^name: {re.escape(row['name'])}$", frontmatter[1]), entrypoint
+    assert "description:" in frontmatter[1], entrypoint
+    assert "ProjectCentral/user/factory-policy.json" in body, entrypoint
+    assert "references/world.md" in body, entrypoint
+    assert hashlib.sha256(entrypoint.read_bytes()).hexdigest() == row["adapted_sha256"], entrypoint
+    world = directory / "references/world.md"
+    assert world.is_file() and "project_world_ref" in world.read_text(), world
+    license_copy = directory / "provenance/LICENSE.builderio"
+    assert hashlib.sha256(license_copy.read_bytes()).hexdigest() == builder_manifest["license_sha256"], license_copy
+    for relative in re.findall(r"\]\((references/[^)]+)\)", body):
+        assert (directory / relative).is_file(), (entrypoint, relative)
+
+print("Factory native Skills, ten Builder-derived capsules, and self-improvement fixtures: OK")
