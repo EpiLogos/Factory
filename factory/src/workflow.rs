@@ -167,6 +167,11 @@ pub struct WorkflowUnitSource {
     pub contribution: Option<WorkflowContribution>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<crate::workflow_inputs::WorkflowInputSource>,
+    /// Optional C′ lowered from a registered domain adapter (QL Vāk). It is an
+    /// execution-relevant requirement: it enters the semantic digest and unit
+    /// identity. Generic workflows omit it and need no QL lookup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition: Option<crate::vak_orchestration::CPrimeExecutionBinding>,
 }
 
 /// A named join. Runtime fork/join lifecycle remains owned by #198; this is
@@ -225,6 +230,8 @@ pub struct CompiledWorkflowUnit {
     pub contribution: Option<WorkflowContribution>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inputs: Vec<crate::workflow_inputs::CompiledWorkflowInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition: Option<crate::vak_orchestration::CPrimeExecutionBinding>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -267,20 +274,44 @@ pub enum WorkflowError {
     WrongSchemaVersion(String),
     WrongCoordinationContract(String),
     EmptyField(String),
-    InvalidLocator { field: &'static str, value: String },
-    InvalidReference { field: &'static str, value: String },
+    InvalidLocator {
+        field: &'static str,
+        value: String,
+    },
+    InvalidReference {
+        field: &'static str,
+        value: String,
+    },
     InvalidDigest(String),
-    SourceDigestMismatch { declared: String, computed: String },
+    SourceDigestMismatch {
+        declared: String,
+        computed: String,
+    },
     EmptyCollection(&'static str),
-    DuplicateValue { field: &'static str, value: String },
+    DuplicateValue {
+        field: &'static str,
+        value: String,
+    },
     DuplicateUnit(String),
     DuplicateBarrier(String),
-    DanglingUnit { field: &'static str, key: String },
+    DanglingUnit {
+        field: &'static str,
+        key: String,
+    },
     SelfDependency(String),
     DependencyCycle(Vec<String>),
     NestingCycle(Vec<String>),
-    ContradictoryRelations { unit: String, key: String },
+    ContradictoryRelations {
+        unit: String,
+        key: String,
+    },
     InvalidBarrier(String),
+    /// A unit's C′ is invalid for the native Vāk contract, its unit, or the
+    /// compiled topology its thread form requires.
+    InvalidComposition {
+        unit: String,
+        reason: String,
+    },
     Serialization(String),
 }
 
@@ -399,11 +430,12 @@ pub fn compile_workflow(source: WorkflowSource) -> Result<CompiledWorkflow, Work
                         receiving_context_ref: input.receiving_context_ref.clone(),
                     })
                     .collect(),
+                composition: unit.composition,
             },
         );
     }
 
-    Ok(CompiledWorkflow {
+    let compiled = CompiledWorkflow {
         schema_version: COMPILED_WORKFLOW_SCHEMA.to_string(),
         identity_algorithm: WORKFLOW_UNIT_IDENTITY_ALGORITHM.to_string(),
         source: WorkflowSourceProvenance {
@@ -418,7 +450,14 @@ pub fn compile_workflow(source: WorkflowSource) -> Result<CompiledWorkflow, Work
         units,
         barriers: compile_barriers(&canonical.barriers, &unit_refs)?,
         nesting: compile_nesting(&canonical.nesting, &unit_refs)?,
-    })
+    };
+    crate::vak_orchestration::validate_workflow_compositions(&compiled).map_err(|fault| {
+        WorkflowError::InvalidComposition {
+            unit: fault.unit,
+            reason: fault.error.to_string(),
+        }
+    })?;
+    Ok(compiled)
 }
 
 impl CompiledWorkflow {
@@ -601,6 +640,8 @@ struct CanonicalUnit {
     contribution: Option<WorkflowContribution>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     inputs: Vec<crate::workflow_inputs::WorkflowInputSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    composition: Option<crate::vak_orchestration::CPrimeExecutionBinding>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Serialize)]
@@ -751,6 +792,14 @@ fn canonical_unit(unit: &WorkflowUnitSource) -> Result<CanonicalUnit, WorkflowEr
     if verification_obligations.is_empty() {
         return Err(WorkflowError::EmptyCollection("verificationObligations"));
     }
+    if let Some(binding) = &unit.composition {
+        binding
+            .validate_for_unit(unit.subject_ref.as_str(), &agent_requirements)
+            .map_err(|error| WorkflowError::InvalidComposition {
+                unit: unit.key.clone(),
+                reason: error.to_string(),
+            })?;
+    }
 
     Ok(CanonicalUnit {
         key: locator("units.key", &unit.key)?,
@@ -771,6 +820,7 @@ fn canonical_unit(unit: &WorkflowUnitSource) -> Result<CanonicalUnit, WorkflowEr
         escalation_conditions: required("units.escalationConditions", &unit.escalation_conditions)?,
         contribution: unit.contribution.clone(),
         inputs: canonical_inputs(unit)?,
+        composition: unit.composition.clone(),
     })
 }
 

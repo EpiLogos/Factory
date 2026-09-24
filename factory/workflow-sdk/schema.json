@@ -250,6 +250,9 @@
           "items": {
             "$ref": "#/$defs/workflowInputSource"
           }
+        },
+        "composition": {
+          "$ref": "#/$defs/cPrimeExecutionBinding"
         }
       }
     },
@@ -434,6 +437,12 @@
         },
         "successorOf": {
           "$ref": "#/$defs/sourcePointer"
+        },
+        "adapters": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/adapterBasis"
+          }
         }
       }
     },
@@ -545,6 +554,164 @@
         },
         "receivingContextRef": {
           "$ref": "#/$defs/qualifiedRef"
+        }
+      }
+    },
+    "cPrimeExecutionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Native lowered C-prime (Factory vak_orchestration) from a registered domain adapter's authored composition. An authored requirement for conduct, not a grant or observation.",
+      "required": [
+        "contract",
+        "qlBindingRef",
+        "qlBindingRevision",
+        "actorRef",
+        "wholeRef",
+        "subjectRef",
+        "participation",
+        "content",
+        "position",
+        "frame",
+        "thread",
+        "sequence",
+        "direction",
+        "aiKitScopeContract",
+        "aiKitResolvePathRef",
+        "contextResolutionRef",
+        "sourceRefs"
+      ],
+      "properties": {
+        "contract": {
+          "const": "ql.vak-composition.profile/v1"
+        },
+        "qlBindingRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "qlBindingRevision": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "actorRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "wholeRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "subjectRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "participation": {
+          "enum": [
+            "dialogical",
+            "authorised-undertaking"
+          ]
+        },
+        "content": {
+          "enum": [
+            "CT0",
+            "CT1",
+            "CT2",
+            "CT3",
+            "CT4",
+            "CT4b'",
+            "CT5"
+          ]
+        },
+        "position": {
+          "enum": [
+            "4.0",
+            "4.1",
+            "4.2",
+            "4.3",
+            "4.4",
+            "4.5"
+          ]
+        },
+        "frame": {
+          "enum": [
+            "CF1",
+            "CF2",
+            "CF3",
+            "CF4",
+            "CF5",
+            "CF6",
+            "CF7"
+          ]
+        },
+        "thread": {
+          "enum": [
+            "CFP0",
+            "CFP1",
+            "CFP2",
+            "CFP3",
+            "CFP4",
+            "CFP5"
+          ]
+        },
+        "sequence": {
+          "enum": [
+            "CS0",
+            "CS1",
+            "CS2",
+            "CS3",
+            "CS4",
+            "CS5"
+          ]
+        },
+        "direction": {
+          "enum": [
+            "forward",
+            "returning"
+          ]
+        },
+        "aiKitScopeContract": {
+          "const": "aikit.operative-scope/v1"
+        },
+        "aiKitResolvePathRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "contextResolutionRef": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "sourceRefs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmpty"
+          }
+        },
+        "undertakingAuthorityRef": {
+          "$ref": "#/$defs/nonEmpty"
+        }
+      }
+    },
+    "adapterBasis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "typesContract",
+        "declarationsSha256",
+        "unitField",
+        "lowering"
+      ],
+      "properties": {
+        "owner": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "typesContract": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "declarationsSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "unitField": {
+          "$ref": "#/$defs/nonEmpty"
+        },
+        "lowering": {
+          "$ref": "#/$defs/nonEmpty"
         }
       }
     }

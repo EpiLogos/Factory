@@ -1,6 +1,7 @@
 //! Restricted TypeScript data authoring. No submitted JavaScript is executed.
 //! Native workflow compilation, Run topology and attempt admission remain owners.
 pub mod cli;
+pub mod domain;
 pub mod inspect;
 mod parse;
 
@@ -59,6 +60,10 @@ pub struct AuthoredBasis {
     pub locations: BTreeMap<String, SourceLocation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_of: Option<SourcePointer>,
+    /// Registered domain adapters the source imported, by specifier. Their
+    /// declarations are also covered by `compilerDigest`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub adapters: BTreeMap<String, domain::AdapterBasis>,
 }
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -110,8 +115,16 @@ pub fn compiler_digest() -> String {
         include_bytes!("../workflow_inputs.rs").as_slice(),
         include_bytes!("../../workflow-sdk/schema.json").as_slice(),
         include_bytes!("../../workflow-sdk/index.d.ts").as_slice(),
+        include_bytes!("domain.rs").as_slice(),
+        domain::REGISTRY.as_bytes(),
+        include_bytes!("../vak_orchestration/authoring.rs").as_slice(),
+        include_bytes!("../vak_orchestration/model.rs").as_slice(),
     ] {
         frame(&mut h, bytes);
+    }
+    for (path, text) in domain::DECLARATIONS {
+        frame(&mut h, path.as_bytes());
+        frame(&mut h, text.as_bytes());
     }
     h.finalize().to_hex().to_string()
 }
@@ -119,7 +132,12 @@ fn frame(h: &mut blake3::Hasher, bytes: &[u8]) {
     h.update(&(bytes.len() as u64).to_be_bytes());
     h.update(bytes);
 }
-fn bundle_digest(modules: &BTreeMap<String, ModuleBasis>, entry: &str, compiler: &str) -> String {
+fn bundle_digest(
+    modules: &BTreeMap<String, ModuleBasis>,
+    entry: &str,
+    compiler: &str,
+    adapters: &BTreeMap<String, domain::AdapterBasis>,
+) -> String {
     let mut h = blake3::Hasher::new();
     for b in [
         AUTHORING_CONTRACT.as_bytes(),
@@ -131,6 +149,13 @@ fn bundle_digest(modules: &BTreeMap<String, ModuleBasis>, entry: &str, compiler:
     for (path, module) in modules {
         frame(&mut h, path.as_bytes());
         frame(&mut h, module.digest.as_bytes());
+    }
+    // Generic sources keep their prior fingerprint; an imported adapter's
+    // exact declaration identity joins the byte revision.
+    for (specifier, adapter) in adapters {
+        frame(&mut h, specifier.as_bytes());
+        frame(&mut h, adapter.types_contract.as_bytes());
+        frame(&mut h, adapter.declarations_sha256.as_bytes());
     }
     h.finalize().to_hex().to_string()
 }
@@ -152,7 +177,15 @@ impl AuthoredBasis {
     /// stored compiler/source fingerprint, never replace it with today's one.
     pub fn validate_source(&self, source: &WorkflowSource) -> Result<(), Diagnostic> {
         self.validate()?;
-        let mut original = parse::replay(self)?.value;
+        let (replayed, adapters) = parse::replay(self)?;
+        if adapters.iter().collect::<Vec<_>>() != self.adapters.keys().collect::<Vec<_>>() {
+            return Err(error(
+                "authoring.basis_invalid",
+                "Retained adapter imports differ from the retained source",
+            ));
+        }
+        let mut original = replayed.value;
+        domain::lower_units(&mut original, &adapters, &self.locations)?;
         let object = original.as_object_mut().ok_or_else(|| {
             error(
                 "authoring.basis_invalid",
@@ -231,9 +264,28 @@ impl AuthoredBasis {
             }
             bytes += m.bytes;
         }
+        for (specifier, adapter) in &self.adapters {
+            if specifier.is_empty()
+                || specifier.len() > 256
+                || adapter.types_contract.trim().is_empty()
+                || adapter.unit_field.trim().is_empty()
+                || adapter.lowering.trim().is_empty()
+                || !hex(&adapter.declarations_sha256)
+            {
+                return Err(error(
+                    "authoring.basis_invalid",
+                    "Retained domain adapter basis is incomplete",
+                ));
+            }
+        }
         if bytes > MAX_BUNDLE_BYTES
             || self.bundle_digest
-                != bundle_digest(&self.modules, &self.entry, &self.compiler_digest)
+                != bundle_digest(
+                    &self.modules,
+                    &self.entry,
+                    &self.compiler_digest,
+                    &self.adapters,
+                )
             || self.revision != format!("blake3:{}", self.bundle_digest)
         {
             return Err(error(
@@ -287,7 +339,22 @@ pub(crate) fn location(file: &str, text: &str, offset: usize) -> SourceLocation 
 /// Load only explicitly selected source and literal relative imports under root.
 /// npm, tsconfig plugins, JS modules, ambient globals and user code never run.
 pub fn load_workflow(root: &Path, entry: &Path) -> Result<AuthoredWorkflow, Diagnostic> {
-    let (mut parsed, modules, entry_name) = parse::load(root, entry)?;
+    let parse::Loaded {
+        data: mut parsed,
+        modules,
+        entry: entry_name,
+        adapters: imported,
+    } = parse::load(root, entry)?;
+    let mut adapters = BTreeMap::new();
+    for specifier in &imported {
+        let adapter = domain::adapter(specifier)?.ok_or_else(|| {
+            error(
+                "authoring.domain_adapter_unregistered",
+                format!("{specifier} is not a registered domain adapter"),
+            )
+        })?;
+        adapters.insert(specifier.clone(), adapter.basis());
+    }
     let mut basis = AuthoredBasis {
         contract: AUTHORING_CONTRACT.into(),
         compiler: COMPILER.into(),
@@ -298,6 +365,7 @@ pub fn load_workflow(root: &Path, entry: &Path) -> Result<AuthoredWorkflow, Diag
         modules,
         locations: parsed.locations.clone(),
         successor_of: None,
+        adapters,
     };
     let object = parsed.value.as_object_mut().ok_or_else(|| {
         error(
@@ -326,7 +394,12 @@ pub fn load_workflow(root: &Path, entry: &Path) -> Result<AuthoredWorkflow, Diag
         .map(serde_json::from_value)
         .transpose()
         .map_err(|e| error("authoring.predecessor_invalid", e.to_string()))?;
-    basis.bundle_digest = bundle_digest(&basis.modules, &basis.entry, &basis.compiler_digest);
+    basis.bundle_digest = bundle_digest(
+        &basis.modules,
+        &basis.entry,
+        &basis.compiler_digest,
+        &basis.adapters,
+    );
     basis.revision = format!("blake3:{}", basis.bundle_digest);
     basis.validate()?;
     source.insert("digest".into(), "0".repeat(64).into());
@@ -334,6 +407,9 @@ pub fn load_workflow(root: &Path, entry: &Path) -> Result<AuthoredWorkflow, Diag
         "authoring".into(),
         serde_json::to_value(basis).map_err(|e| error("authoring.serialization", e.to_string()))?,
     );
+    // Lower adapter-declared unit fields (e.g. a QL C-prime) into their native
+    // form before native deserialization. Missing adapters refuse here.
+    domain::lower_units(&mut parsed.value, &imported, &parsed.locations)?;
     // Deserialize units individually so a field error in an imported module
     // names that module/unit, not just the first line of the entry file.
     if let Some(units) = parsed
@@ -382,6 +458,7 @@ fn error_field(e: &crate::workflow::WorkflowError) -> Option<&str> {
         | InvalidLocator { field, .. }
         | InvalidReference { field, .. }
         | DuplicateValue { field, .. } => Some(field.strip_prefix("units.").unwrap_or(field)),
+        InvalidComposition { .. } => Some("composition"),
         _ => None,
     }
 }
@@ -479,6 +556,10 @@ fn native_diagnostic(e: &crate::workflow::WorkflowError, source: &WorkflowSource
         NestingCycle(_) => {
             d.field = Some("nesting".into());
             pointer = "/nesting".into();
+        }
+        InvalidComposition { unit, .. } => {
+            d.unit = Some(unit.clone());
+            d.field = Some("composition".into());
         }
         _ => {
             d.field = error_field(e).map(str::to_owned);
