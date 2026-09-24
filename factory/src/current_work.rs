@@ -95,6 +95,9 @@ pub struct WorkNode {
     pub workflow_unit_ref: Option<String>,
     pub work_refs: Vec<String>,
     pub journey_refs: Vec<String>,
+    /// Every Run named by the resolved candidates behind this node: custody
+    /// `run_ref`s and running attempts' runs, sorted and de-duplicated.
+    pub run_refs: Vec<String>,
     pub custody_refs: Vec<String>,
     pub attempt_refs: Vec<String>,
 }
@@ -354,6 +357,7 @@ pub fn decide(
         workflow_unit_ref: unit_backed.and_then(|candidate| candidate.workflow_unit_ref.clone()),
         work_refs: collect(&|candidate| candidate.work_ref.as_ref()),
         journey_refs: collect(&|candidate| candidate.journey_ref.as_ref()),
+        run_refs: collect(&|candidate| candidate.run_ref.as_ref()),
         custody_refs: by_source(CandidateSource::Custody),
         attempt_refs: by_source(CandidateSource::Attempt),
     };
@@ -600,5 +604,103 @@ mod tests {
         );
         assert_eq!(current.attempt_refs, vec!["attempt:1"]);
         assert_eq!(current.run_ref.as_deref(), Some("run:R"));
+        // #263: mixed custody + attempt candidates naming one node contribute
+        // their runs to current.run_refs, sorted and de-duplicated.
+        assert_eq!(current.run_refs, vec!["run:R"]);
+    }
+
+    fn run_node_candidate(
+        source: CandidateSource,
+        source_ref: &str,
+        node_ref: &str,
+        run_ref: Option<&str>,
+    ) -> CurrentWorkCandidate {
+        let unit_backed = node_ref.starts_with("run:");
+        CurrentWorkCandidate {
+            source,
+            source_ref: source_ref.into(),
+            resolution: CandidateResolution::Resolved,
+            node_ref: Some(node_ref.into()),
+            reason: None,
+            work_ref: (source == CandidateSource::Custody).then(|| format!("work:{source_ref}")),
+            run_ref: run_ref.map(str::to_owned),
+            journey_ref: None,
+            workflow_unit_ref: unit_backed.then(|| "workflow-unit:U".to_string()),
+            execution_ref: None,
+            status: "in-progress".into(),
+        }
+    }
+
+    #[test]
+    fn run_refs_come_from_attempts_alone() {
+        let reading = decide(
+            P,
+            "project:X",
+            vec![
+                run_node_candidate(
+                    CandidateSource::Attempt,
+                    "attempt:2",
+                    "run:R/workflow-unit:U",
+                    Some("run:R"),
+                ),
+                run_node_candidate(
+                    CandidateSource::Attempt,
+                    "attempt:1",
+                    "run:R/workflow-unit:U",
+                    Some("run:R"),
+                ),
+            ],
+            2,
+        );
+        assert_eq!(reading.outcome, CurrentWorkOutcome::One);
+        let current = reading.current.unwrap();
+        assert_eq!(current.run_refs, vec!["run:R"]);
+    }
+
+    #[test]
+    fn run_refs_from_custody_are_sorted_and_deduplicated() {
+        let reading = decide(
+            P,
+            "project:X",
+            vec![
+                run_node_candidate(
+                    CandidateSource::Custody,
+                    "factory:custody:b",
+                    "work:w",
+                    Some("run:B"),
+                ),
+                run_node_candidate(
+                    CandidateSource::Custody,
+                    "factory:custody:a",
+                    "work:w",
+                    Some("run:A"),
+                ),
+                run_node_candidate(
+                    CandidateSource::Custody,
+                    "factory:custody:c",
+                    "work:w",
+                    Some("run:A"),
+                ),
+                run_node_candidate(
+                    CandidateSource::Custody,
+                    "factory:custody:d",
+                    "work:w",
+                    None,
+                ),
+            ],
+            4,
+        );
+        assert_eq!(reading.outcome, CurrentWorkOutcome::One);
+        let current = reading.current.unwrap();
+        assert_eq!(current.run_refs, vec!["run:A", "run:B"]);
+    }
+
+    #[test]
+    fn custody_without_a_run_carries_no_run_refs() {
+        let mut state = empty_state();
+        assign(&mut state, P, "work:one");
+        let reading = derive_current_work(&state, P);
+        assert_eq!(reading.outcome, CurrentWorkOutcome::One);
+        assert!(reading.current.unwrap().run_refs.is_empty());
     }
 }
