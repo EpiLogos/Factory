@@ -108,6 +108,34 @@ pub struct CustodyTransition {
     pub at_unix_ms: i64,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reopen: bool,
+    /// The occupant that made this change, when a body occupying a World
+    /// Position made it (`OI_POSITION_REF` / `OI_OCCUPANT_GENERATION`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<CustodyActor>,
+}
+
+/// A body acting on custody from inside a World Position occupancy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyActor {
+    pub position_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_ref: Option<String>,
+}
+
+impl CustodyActor {
+    /// The occupancy stamped into this process by `aikit inhabit`, if any.
+    pub fn from_env() -> Option<Self> {
+        let position_ref = std::env::var("OI_POSITION_REF")
+            .ok()
+            .filter(|value| !value.trim().is_empty())?;
+        Some(Self {
+            position_ref,
+            generation_ref: std::env::var("OI_OCCUPANT_GENERATION")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+        })
+    }
 }
 
 /// `factory.work-custody/v1`. Field names follow the cross-owner contract.
@@ -218,6 +246,9 @@ pub struct UpdateRequest {
     pub reopen: bool,
     pub to_position_ref: Option<String>,
     pub expected_revision: Option<u64>,
+    /// The occupant acting, when the caller is a body occupying a Position.
+    /// Only the Position holding the custody may change it.
+    pub actor: Option<CustodyActor>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -499,6 +530,7 @@ pub fn assign_in(
             reason: request.reason,
             at_unix_ms: now_unix_ms,
             reopen: false,
+            actor: None,
         }],
     };
     if let Some(existing) = state
@@ -587,6 +619,21 @@ pub fn update_in(
             )
         })?;
     let current = state.work_custody[index].clone();
+    if let Some(actor) = &request.actor {
+        if actor.position_ref != current.position_ref {
+            return Err(Refusal::unchanged(
+                "factory.custody.not_holder",
+                format!(
+                    "custody {} is held by {}; this body occupies {}, which holds no standing over it",
+                    current.custody_ref, current.position_ref, actor.position_ref
+                ),
+                format!(
+                    "tell the holder instead: aikit gateway send --to {} --body <what should change and why>",
+                    current.position_ref
+                ),
+            ));
+        }
+    }
     if let Some(expected) = request.expected_revision {
         if expected != current.revision {
             return Err(Refusal::unchanged(
@@ -721,6 +768,7 @@ pub fn update_in(
                 reason: request.reason.clone(),
                 at_unix_ms: now_unix_ms,
                 reopen: false,
+                actor: None,
             }],
         });
     }
@@ -733,6 +781,7 @@ pub fn update_in(
         reason: request.reason,
         at_unix_ms: now_unix_ms,
         reopen: request.reopen,
+        actor: request.actor.clone(),
     });
     record.state = target;
     record.updated_at_unix_ms = now_unix_ms;
@@ -986,6 +1035,40 @@ mod tests {
         assert_eq!(
             update_in(&mut state, pinned, 4).unwrap().custody.revision,
             2
+        );
+    }
+
+    #[test]
+    fn only_the_holding_position_may_change_custody_and_its_change_is_attributed() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let holder = state.work_custody[0].position_ref.clone();
+        let before = state.clone();
+        let mut foreign = update(&reference, CustodyState::Completed);
+        foreign.actor = Some(CustodyActor {
+            position_ref: "central:position:project:O-I:aikit-guardian".into(),
+            generation_ref: Some("actuation:generation:other".into()),
+        });
+        assert_eq!(
+            refusal_code(update_in(&mut state, foreign, 2)),
+            "factory.custody.not_holder"
+        );
+        assert_eq!(state, before, "a foreign occupant writes nothing");
+
+        let mut own = update(&reference, CustodyState::Completed);
+        own.actor = Some(CustodyActor {
+            position_ref: holder.clone(),
+            generation_ref: Some("actuation:generation:holder".into()),
+        });
+        let receipt = update_in(&mut state, own, 3).unwrap();
+        let last = receipt.custody.transitions.last().unwrap();
+        assert_eq!(last.actor.as_ref().unwrap().position_ref, holder);
+        assert_eq!(
+            last.actor.as_ref().unwrap().generation_ref.as_deref(),
+            Some("actuation:generation:holder")
         );
     }
 

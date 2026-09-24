@@ -375,6 +375,7 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                             })
                         })
                         .transpose()?,
+                    actor: work_custody::CustodyActor::from_env(),
                 };
                 let receipt = work_custody::update(&state_path(&parsed)?, request)?;
                 render(&receipt, json, || receipt_text(&receipt))
