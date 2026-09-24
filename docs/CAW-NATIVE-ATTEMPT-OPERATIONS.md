@@ -118,6 +118,13 @@ selected Agent, session, Execution, source basis and current active attempt
 must agree. The actual delegation and situated disposition are included in the
 task packet; an acknowledgement is not task Return or verification.
 
+The configured AIKit binary is the unified `aikit` executable. Factory invokes
+`<binary> -C <cwd> session-space encounter --request-json <request>` for
+addressed delivery and `<binary> -C <cwd> session-space encounter-task-read`
+for protected task admission. An explicit binary override changes only the
+executable path; it does not select a retired standalone companion or weaken
+the owner contract. The supplied executable must support this native route.
+
 Transport has a finite deadline and a four-MiB limit on each output stream.
 Timeout, invalid identity, unreadable output and lost response remain uncertain.
 Stopping a client is not evidence that a remote worker stopped. No fixture

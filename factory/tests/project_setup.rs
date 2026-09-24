@@ -163,6 +163,98 @@ fn typed_first_commission_and_replay_keep_initialized_identity_and_source() {
 }
 
 #[test]
+fn public_attempt_action_addresses_one_run_in_a_two_run_native_state() {
+    let root = tempfile::tempdir().unwrap();
+    let state = setup(root.path(), "source-inspection-example", None).unwrap();
+    let state_path = state["statePath"].as_str().unwrap();
+    let source = include_str!("../workflow-sdk/examples/single.workflow.ts");
+    let base_request: serde_json::Value =
+        serde_json::from_str(include_str!("../workflow-sdk/examples/commission.json")).unwrap();
+    let invoke = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_factory"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let success = |output: std::process::Output| {
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+
+    let mut runs = Vec::new();
+    for index in 1..=2 {
+        let mut request = base_request.clone();
+        request["requestRef"] = format!("commission-request:source-inspection-{index}").into();
+        request["runDestination"] = format!("source-inspection/{index}").into();
+        request["rootAct"]["actRef"] = format!("act:source-inspection-{index}").into();
+        let request_path = root.path().join(format!("commission-{index}.json"));
+        fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let source_path = root.path().join(format!("work-{index}.workflow.ts"));
+        let authored = source
+            .replace(
+                "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                &format!("workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FA{index}"),
+            )
+            .replace("single-development", &format!("single-development-{index}"));
+        fs::write(&source_path, authored).unwrap();
+        let receipt = success(invoke(&[
+            "workflow",
+            "commission",
+            state_path,
+            request_path.to_str().unwrap(),
+            source_path.to_str().unwrap(),
+            "--json",
+        ]));
+        runs.push(
+            receipt["commission"]["commission"]["runRef"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    assert_ne!(runs[0], runs[1]);
+    let first = success(invoke(&["attempt", "read", state_path, &runs[0], "--json"]));
+    let second = success(invoke(&["attempt", "read", state_path, &runs[1], "--json"]));
+    assert_eq!(first["revision"], second["revision"]);
+    assert!(first["sourceCurrent"].as_bool().unwrap());
+    assert!(second["sourceCurrent"].as_bool().unwrap());
+
+    let action = serde_json::json!({
+        "contract":"factory.attempt-action/v1",
+        "projectionRef":"projection:two-run-exact-target",
+        "caller":{"callerRef":"agent:two-run-native-test","projectionKind":"headless",
+            "lineage":["agent:two-run-native-test"]},
+        "runRef":runs[0], "expectedRevision":first["revision"],
+        "authority":{"authorityRef":"authority:two-run-native-test","nativeOwner":"factory",
+            "capabilityRef":"capability/factory/operate-attempt","capabilityGranted":true,
+            "actionAuthorised":true},
+        "operation":{"operation":"advance-subject",
+            "subject_ref":"project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "revision":"two-run-native-observation"}
+    });
+    let action_path = root.path().join("attempt-action.json");
+    fs::write(&action_path, serde_json::to_vec(&action).unwrap()).unwrap();
+    let receipt = success(invoke(&[
+        "attempt",
+        "action",
+        state_path,
+        action_path.to_str().unwrap(),
+        "--json",
+    ]));
+    assert_eq!(receipt["runRef"], runs[0]);
+    assert_eq!(receipt["previousRevision"], first["revision"]);
+    assert_eq!(receipt["operation"], "advance-subject");
+    let after = success(invoke(&["attempt", "read", state_path, &runs[1], "--json"]));
+    assert_eq!(after["runRef"], runs[1]);
+    assert_eq!(after["runRevision"], second["runRevision"]);
+    assert!(after["attempts"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn native_central_source_is_verified_and_existing_files_survive_setup() {
     let root = tempfile::tempdir().unwrap();
     fs::create_dir(root.path().join("ProjectCentral")).unwrap();

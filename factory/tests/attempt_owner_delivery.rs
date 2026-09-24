@@ -34,6 +34,7 @@ const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workfl
 const OWNER: &str = r#"#!/usr/bin/env python3
 import json, pathlib, sys, time
 root = pathlib.Path(__file__).resolve().parent
+assert sys.argv[1] == '-C' and sys.argv[3:5] == ['session-space', 'encounter'], 'Factory did not use the canonical unified AIKit route'
 request = json.loads(sys.argv[sys.argv.index('--request-json') + 1])
 state = json.loads((root / 'state.json').read_text())
 def intents(value):
