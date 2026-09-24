@@ -420,14 +420,20 @@ fn native(
             }
             for leg in attempts.snapshot().legs().values() {
                 for pair in leg.attempts.windows(2) {
-                    let prior = attempts
-                        .attempts()
-                        .values()
-                        .find(|record| record.reserved_execution_ref == pair[0].execution_ref);
-                    let retried = attempts
-                        .attempts()
-                        .values()
-                        .find(|record| record.reserved_execution_ref == pair[1].execution_ref);
+                    let prior = attempts.attempts().values().find(|record| {
+                        record
+                            .execution_ref
+                            .as_deref()
+                            .unwrap_or(&record.reserved_execution_ref)
+                            == pair[0].execution_ref
+                    });
+                    let retried = attempts.attempts().values().find(|record| {
+                        record
+                            .execution_ref
+                            .as_deref()
+                            .unwrap_or(&record.reserved_execution_ref)
+                            == pair[1].execution_ref
+                    });
                     let (Some(prior), Some(retried), Some(grant)) = (
                         prior,
                         retried,
