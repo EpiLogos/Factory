@@ -26,7 +26,10 @@ interval for sensing reads. They cannot be mixed with named Days. These commands
 never write human Day prose or invoke a model to advance the calendar.
 
 The native Factory adapter reads failed Attempts, failed verification receipts,
-blocked custody and incomplete temporal correlations. Each verification retains
+explicit retry ancestry, completed custody without its readable Return, missing
+child NOW joins, blocked custody and incomplete temporal correlations. Blocked
+custody supplies the explicit stalled-work basis; age or silence alone does not.
+Each verification retains
 its own occurrence time. Missing producer timing is disclosed as partial
 temporal coverage. GitHub adapters enumerate issue headers and workflow runs;
 discussion remains linked at GitHub. Workflow-run windows use creation time,
