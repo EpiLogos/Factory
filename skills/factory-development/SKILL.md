@@ -81,6 +81,23 @@ The current QL shape repertoire may structure that aggregate at whatever grain t
 
 This is also the correct continuity for later Vāk/Ta-Onta integration. Vāk can eventually address the same disclosed whole/positions/relations; Anima-like orchestration can traverse selected Run determinations; Aletheia/Recognition-like return can reconcile evidence against the whole. No future module identity is required for the current generic Run/Thought/NOW relation.
 
+## Orientation Methodologies
+
+A developmental undertaking is oriented by two Methodologies that compose in parallel, neither above the other. Factory consumes both from their owners and restates neither:
+
+```text
+Wayfinder                     skill/personal/wayfinder (METHODOLOGY:)
+    developmental topology    destination, scope, dependencies, frontier,
+                              ownership, evidence, closure, map revision
+Documentation Methodology     skill/central/docs-methodology (METHODOLOGY:)
+    representation topology   Vision, Design, Mockup, Architecture, diagrams,
+                              capability relations, source reconciliation
+```
+
+The RunMap is the Wayfinder map: a Decision node is a ticket, the RunMap frontier is the Wayfinder frontier, and `JourneyReturn.wayfinder_refs` carries the map relation back. For a UI or architecture commission, Wayfinder names the undertaking and its frontier; the Documentation Methodology names the source layer the work pressures; knowledge navigation and Jev narrow the context; a Method (a documentation Method such as `skill/central/ui-development`, or `factory-bounded-work`) carries the work; verification returns evidence; the Return revises the map and/or the documentation field through their owners.
+
+An Agent carries these as SkillSets (`central:core-development`, `central:documentation`); membership is repertoire, not a loaded body. A small local repair selects neither Methodology and loads no Vision.
+
 ## Procedure
 
 1. **Receive pressure as evidence, not command truth.** Record the observation/request and its provenance. A relation-field observation, benchmark result or repeated use may open investigation; none automatically creates a backlog item or mutation.
