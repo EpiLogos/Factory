@@ -140,6 +140,12 @@ fn parse(args: &[String]) -> Result<Arguments, CliError> {
     if out.limit == 0 || out.limit > 1000 {
         return Err(err("--limit must be 1..1000; truncation is disclosed"));
     }
+    if seen
+        .iter()
+        .any(|flag| matches!(flag.as_str(), "--since" | "--until"))
+    {
+        out.window_basis = json!({"basis":"explicit timestamp interval","interval":"[since,until)","default_for_unspecified_endpoint":"last 24 hours"});
+    }
     Ok(out)
 }
 
