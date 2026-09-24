@@ -740,7 +740,7 @@ fn admitted_return_authority_cannot_substitute_claimed_evidence_for_native_attem
                 reason: "Owner marked the joined work complete without an Attempt Return".into(),
                 ..Default::default()
             },
-            chrono::Utc::now().timestamp_millis(),
+            chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).timestamp_millis(),
         )
         .unwrap();
         Ok(())
