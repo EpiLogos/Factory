@@ -298,6 +298,8 @@ fn a_running_occupant_and_custody_join_on_one_node_and_distinct_work_is_ambiguou
     assert_eq!(reading["current"]["node_ref"], node);
     assert_eq!(reading["current"]["kind"], "workflow-unit");
     assert_eq!(reading["current"]["attempt_refs"], json!(["attempt:first"]));
+    // #263: the attempt's Run is disclosed on the node itself, not only in candidates.
+    assert_eq!(reading["current"]["run_refs"], json!([RUN]));
     assert_eq!(reading["candidates"][0]["status"], "active");
 
     // Custody naming the same WorkflowUnit is the same node, not a second one.
@@ -324,6 +326,8 @@ fn a_running_occupant_and_custody_join_on_one_node_and_distinct_work_is_ambiguou
     assert_eq!(reading["outcome"], "one", "{reading:#}");
     assert_eq!(reading["current"]["custody_refs"], json!([unit_custody]));
     assert_eq!(reading["current"]["attempt_refs"], json!(["attempt:first"]));
+    // #263: custody and attempt naming the same Run de-duplicate in run_refs.
+    assert_eq!(reading["current"]["run_refs"], json!([RUN]));
     assert_eq!(reading["considered"], 2);
 
     // Distinct in-progress work makes the answer ambiguous, never a guess.
