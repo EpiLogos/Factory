@@ -5,8 +5,10 @@
 //! foreign ref (Central Position, AIKit/Actuation Agent, Agency, AgentSession,
 //! SessionSpace, Workcell, NOW) is carried verbatim from the attempt record that
 //! holds it, as a facet that is either `present` with its value or `absent`
-//! with the reason. Factory's own world facts are only its `project_ref` and the
-//! Central project ref it was explicitly linked to.
+//! with the reason. Sensing work may carry a source-qualified child NOW before
+//! an Attempt exists; that relation is distinct from an Attempt's placement
+//! NOW. Factory's own world facts are only its `project_ref` and the Central
+//! project ref it was explicitly linked to.
 
 use crate::attempt_runtime::FactoryAttemptRecord;
 use crate::core::run::{RunLifecycle, RunRef};
@@ -111,6 +113,8 @@ pub struct PositionCustodySummary {
     pub work_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow_unit_ref: Option<String>,
+    /// The child NOW for this exact native custody/work relation.
+    pub child_now_ref: Facet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,6 +125,9 @@ pub struct PositionInRun {
     pub custody: Vec<PositionCustodySummary>,
     pub attempt_refs: Vec<String>,
     pub current_attempt_refs: Vec<String>,
+    /// The signal work's child NOW, joined to this exact Run/custody/Position.
+    /// An Attempt's separate placement NOW remains under `occupants`.
+    pub child_now_ref: Facet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,15 +249,103 @@ fn position_entry<'a>(
             custody: Vec::new(),
             attempt_refs: Vec::new(),
             current_attempt_refs: Vec::new(),
+            child_now_ref: Facet::optional(
+                None,
+                "no source-qualified sensing work child NOW names this Run and Position",
+                "factory.sensing-state/v1:signal.work",
+            ),
         })
 }
 
-fn summary(record: &FactoryWorkCustody) -> PositionCustodySummary {
+fn sensing_child_now(
+    state: &FactoryDevelopmentalState,
+    run_ref: &RunRef,
+    position_ref: &str,
+    custody: &[FactoryWorkCustody],
+) -> Facet {
+    let source = "factory.sensing-state/v1:signal.work";
+    let mut candidates = Vec::<(String, String)>::new();
+    let mut conflicts = Vec::new();
+    let run = run_ref.to_string();
+    for signal in state.sensing.signals.values() {
+        let Some(work) = signal.work.as_ref().filter(|work| {
+            work.run_ref.as_deref() == Some(run.as_str()) && work.position_ref == position_ref
+        }) else {
+            continue;
+        };
+        if custody.len() == 1 && custody[0].work_ref != work.work_ref {
+            continue;
+        }
+        let identity_matches = state.sensing.project_world_ref.as_deref()
+            == Some(signal.project_world_ref.as_str())
+            && work.work_ref == signal.signal_ref;
+        let custody_matches = custody.iter().any(|record| {
+            record.custody_ref == work.custody_ref
+                && record.work_ref == work.work_ref
+                && record.position_ref == work.position_ref
+                && record.run_ref.as_ref() == Some(run_ref)
+        });
+        if !identity_matches || !custody_matches {
+            conflicts.push(signal.signal_ref.as_str());
+            continue;
+        }
+        if let Some(now_ref) = work.now_ref.as_deref() {
+            let prefix = format!("central:now:{}:", signal.project_world_ref);
+            if !now_ref.starts_with(&prefix) || now_ref.len() == prefix.len() {
+                conflicts.push(signal.signal_ref.as_str());
+                continue;
+            }
+            candidates.push((signal.signal_ref.clone(), now_ref.to_owned()));
+        }
+    }
+    if !conflicts.is_empty() {
+        return Facet {
+            state: FacetState::Unavailable,
+            value: None,
+            reason: Some(format!(
+                "sensing work conflicts with native Project, Run, custody, work or Position for {}",
+                conflicts.join(", ")
+            )),
+            source: source.into(),
+        };
+    }
+    match candidates.len() {
+        0 => Facet::optional(
+            None,
+            "no source-qualified sensing work child NOW names this Run and Position",
+            source,
+        ),
+        1 => {
+            let (signal_ref, now_ref) = candidates.into_iter().next().expect("one candidate");
+            Facet::present(&now_ref, &format!("{source}:{signal_ref}:work"))
+        }
+        count => Facet {
+            state: FacetState::Ambiguous,
+            value: None,
+            reason: Some(format!(
+                "{count} source-qualified work relations name a child NOW for this Run and Position"
+            )),
+            source: source.into(),
+        },
+    }
+}
+
+fn summary(
+    state: &FactoryDevelopmentalState,
+    record: &FactoryWorkCustody,
+    run_ref: &RunRef,
+) -> PositionCustodySummary {
     PositionCustodySummary {
         custody_ref: record.custody_ref.clone(),
         state: record.state.as_str().into(),
         work_ref: record.work_ref.clone(),
         workflow_unit_ref: record.workflow_unit_ref.as_ref().map(ToString::to_string),
+        child_now_ref: sensing_child_now(
+            state,
+            run_ref,
+            &record.position_ref,
+            std::slice::from_ref(record),
+        ),
     }
 }
 
@@ -313,7 +408,7 @@ pub fn inhabitation_reading(
         for record in &run_custody {
             let position = position_entry(&mut positions, &record.position_ref);
             position.in_custody |= !record.state.is_terminal();
-            position.custody.push(summary(record));
+            position.custody.push(summary(state, record, &run_ref));
         }
         for relation in &occupants {
             let Some(position_ref) = relation.participant.position_ref.value.as_deref() else {
@@ -326,6 +421,10 @@ pub fn inhabitation_reading(
                     .current_attempt_refs
                     .push(relation.attempt_ref.clone());
             }
+        }
+        for position in positions.values_mut() {
+            position.child_now_ref =
+                sensing_child_now(state, &run_ref, &position.position_ref, &run_custody);
         }
         let mut journey_refs = state
             .journeys
