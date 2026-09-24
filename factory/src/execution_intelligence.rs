@@ -253,28 +253,67 @@ pub fn explicit_selection_refs(
     )?;
     let composition = &basis["harness_composition"];
     let scope = &basis["composition_scope"];
-    if scope["kind"] != "thin-native-pi"
-        || scope["ambient_components_claimed"] != false
+    if scope["ambient_components_claimed"] != false
         || !scope["selected_components"]
             .as_array()
             .is_some_and(Vec::is_empty)
     {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
-            "explicit selection overstates or changes its thin Pi composition scope".into(),
+            "explicit selection overstates or changes its thin native composition scope".into(),
         ));
     }
     let target_basis = &basis["composition_target_basis"];
     let resident_body = &target_basis["resident_body_basis"];
+    let native_profile = match (
+        scope["kind"].as_str(),
+        target_basis["harness_profile"]["slug"].as_str(),
+        resident_body["harness_profile"].as_str(),
+        resident_body["protocol"].as_str(),
+        harness_ref,
+        route_basis["provider_ref"].as_str(),
+    ) {
+        (Some("thin-native-pi"), Some("pi"), Some("pi"), Some("pi-rpc"), "harness/pi", _) => "pi",
+        (
+            Some("thin-native-codex-acp"),
+            Some("codex"),
+            Some("codex"),
+            Some("acp"),
+            "harness/codex",
+            Some("provider:openai"),
+        ) => "codex",
+        _ => return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection does not identify an admitted native body/profile/protocol tuple"
+                .into(),
+        )),
+    };
     if target_basis["schema"] != "aikit.harness-composition-target-basis/v1"
         || target_basis["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
-        || target_basis["harness_profile"]["slug"] != "pi"
+        || target_basis["harness_profile"]["schema"] != "aikit.harness-profile/v1"
         || resident_body["schema"] != "aikit.resident-body-basis/v1"
-        || resident_body["protocol"] != "pi-rpc"
     {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
-            "explicit selection lacks the exact native Pi body/profile basis".into(),
+            "explicit selection lacks the exact native body/profile basis".into(),
         ));
     }
+    required_selection_text(
+        &target_basis["harness_profile"]["digest"],
+        "harness profile digest",
+    )?;
+    required_selection_text(
+        &route_basis["provider_native_id"],
+        "provider-native model id",
+    )?;
+    required_selection_text(
+        &basis["native"]["model_observation"]["current_model_id"],
+        "native model observation",
+    )?;
+    if basis["native"]["model_observation"]["current_model_id"] != route_basis["provider_native_id"]
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(format!(
+            "native {native_profile} model observation differs from the selected route"
+        )));
+    }
+    required_selection_text(&basis["native"]["native_session_id"], "native session id")?;
     for (field, value) in [
         ("body provider id", &resident_body["provider_id"]),
         (
@@ -581,6 +620,57 @@ mod tests {
         assert!(matches!(
             accept_aikit_selection(demand(), missing, "t3"),
             Err(ExecutionInteropError::InvalidExplicitSelection(_))
+        ));
+    }
+
+    #[test]
+    fn explicit_native_selection_refuses_a_relabelled_body_or_model_observation() {
+        // This fixture was emitted by an actual Pi owner open. Recompute the
+        // outer digest after each mutation so the tuple and native model
+        // guards, rather than only the integrity guard, must reject it.
+        let mut wrong_body = explicit_selection();
+        wrong_body.ranking_explanation["basis"]["composition_scope"]["kind"] =
+            json!("thin-native-codex-acp");
+        wrong_body.ranking_explanation["basis_digest"] =
+            sorted_json_digest(&wrong_body.ranking_explanation["basis"])
+                .unwrap()
+                .into();
+        assert!(matches!(
+            explicit_selection_refs(&wrong_body),
+            Err(ExecutionInteropError::InvalidExplicitSelection(message))
+                if message.contains("body/profile/protocol tuple")
+        ));
+
+        let mut wrong_codex_provider = explicit_selection();
+        wrong_codex_provider.ranking_explanation["harness_ref"] = json!("harness/codex");
+        let basis = &mut wrong_codex_provider.ranking_explanation["basis"];
+        basis["composition_scope"]["kind"] = json!("thin-native-codex-acp");
+        basis["composition_target_basis"]["harness_profile"]["slug"] = json!("codex");
+        basis["composition_target_basis"]["resident_body_basis"]["harness_profile"] =
+            json!("codex");
+        basis["composition_target_basis"]["resident_body_basis"]["protocol"] = json!("acp");
+        basis["harness_composition"]["harness"] = json!("harness/codex");
+        wrong_codex_provider.ranking_explanation["basis_digest"] =
+            sorted_json_digest(&wrong_codex_provider.ranking_explanation["basis"])
+                .unwrap()
+                .into();
+        assert!(matches!(
+            explicit_selection_refs(&wrong_codex_provider),
+            Err(ExecutionInteropError::InvalidExplicitSelection(message))
+                if message.contains("body/profile/protocol tuple")
+        ));
+
+        let mut wrong_model = explicit_selection();
+        wrong_model.ranking_explanation["basis"]["native"]["model_observation"]
+            ["current_model_id"] = json!("another-model");
+        wrong_model.ranking_explanation["basis_digest"] =
+            sorted_json_digest(&wrong_model.ranking_explanation["basis"])
+                .unwrap()
+                .into();
+        assert!(matches!(
+            explicit_selection_refs(&wrong_model),
+            Err(ExecutionInteropError::InvalidExplicitSelection(message))
+                if message.contains("model observation")
         ));
     }
 }
