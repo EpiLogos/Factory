@@ -1,0 +1,75 @@
+{
+  "schema": "factory.sensing-policy/v1",
+  "version": 1,
+  "project_world_ref": "project:Factory",
+  "repositories": [
+    {
+      "id": "factory-repository",
+      "provider": "github",
+      "remote": "EpiLogos/Factory"
+    }
+  ],
+  "sources": [
+    {
+      "id": "factory-native",
+      "provider": "factory",
+      "scope": "project:Factory",
+      "source_ref": "factory:developmental-state:project:Factory",
+      "arguments": { "kind": "all" }
+    },
+    {
+      "id": "github-issues",
+      "provider": "github",
+      "scope": "EpiLogos/Factory",
+      "source_ref": "github:EpiLogos/Factory:issues",
+      "arguments": { "kind": "issues" }
+    },
+    {
+      "id": "github-actions",
+      "provider": "github",
+      "scope": "EpiLogos/Factory",
+      "source_ref": "github:EpiLogos/Factory:actions",
+      "arguments": { "kind": "actions" }
+    },
+    {
+      "id": "sentry-unconnected",
+      "provider": "sentry",
+      "scope": "project:Factory",
+      "source_ref": "provider:sentry:unconnected",
+      "arguments": { "standing": "unavailable-no-connected-provider" }
+    }
+  ],
+  "workflows": {
+    "collect": {
+      "enabled": true,
+      "sources": ["factory-native", "github-issues", "github-actions"],
+      "schedule": "every:3600000",
+      "implement": {
+        "mode": "criteria",
+        "allow": ["bounded-native-defect", "reproduced", "independently-reviewed"],
+        "stop": ["human-policy-change"],
+        "require": ["native-authority-admission", "independent-verification"]
+      },
+      "reply": { "mode": "never" },
+      "close": { "mode": "never" },
+      "review": { "mode": "never" },
+      "approve": { "mode": "never" },
+      "publish": { "mode": "never" },
+      "merge": { "mode": "never" },
+      "deploy": { "mode": "never" },
+      "recover": { "mode": "never" },
+      "notify": { "mode": "never" }
+    },
+    "field-refresh": {
+      "enabled": true,
+      "sources": [],
+      "schedule": "every:300000"
+    },
+    "sentry-optional": {
+      "enabled": false,
+      "sources": ["sentry-unconnected"]
+    }
+  },
+  "skill_prompts": {},
+  "worktree": {}
+}

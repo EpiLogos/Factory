@@ -1,0 +1,112 @@
+{
+  "schema": "factory.builder-skills-provenance/v1",
+  "repository": "https://github.com/BuilderIO/skills",
+  "revision": "fd8f20a879b507cf09feba08663a1edf7a949353",
+  "remote_head_checked": "fd8f20a879b507cf09feba08663a1edf7a949353",
+  "license": "MIT",
+  "license_path": "skills/<name>/provenance/LICENSE.builderio",
+  "license_sha256": "d50194829dc398b96028624dba48eb20c7a51e49d4a20aedf3f8dc24773f4d45",
+  "source_documents": [
+    {
+      "path": "docs/factory/README.md",
+      "sha256": "ba56a0cbdd5f1bff4c16fcd86d39062e56bb394e83f96f96bd08bd4fd32fbe6d"
+    },
+    {
+      "path": "docs/factory/configuration.md",
+      "sha256": "6b15ec822fcae5b7b438639054ffa4e03aec3541ae02b8162c09860dc555b9df"
+    },
+    {
+      "path": "CONTRIBUTING.md",
+      "sha256": "ab400b56065a3e775a7ec3d10d356c10ab5ae21f38cfb756260289c7e01d9267"
+    }
+  ],
+  "skills": [
+    {
+      "name": "factory",
+      "upstream_path": "skills/factory/SKILL.md",
+      "upstream_sha256": "869cf2f14d0468337b65cb8b703ef6e8d6e9b30a4339c5e033b94d60f15a869e",
+      "adapted_sha256": "1f3e5b7331b208cd4400a1f83b40f61d9aaecddd27d0c0238b068dd4740a4007",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-collect",
+      "upstream_path": "skills/factory-collect/SKILL.md",
+      "upstream_sha256": "564f0bff13192d2151e1a02a88ad6665d945cafa389cf4dd973b242d7f841571",
+      "adapted_sha256": "7431f71cbd791dad56dc50b1fe60475edf3c8722fcd8f0245b23c19d5600da53",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-lookback",
+      "upstream_path": "skills/factory-lookback/SKILL.md",
+      "upstream_sha256": "e6828a28328b13cd8076b38613f5f705f9ee56e0396085453cabdd47fc046889",
+      "adapted_sha256": "193fdc665bfd19b86d7748ac1a89dbf437e0ae0278a084af5c6d10f7df413bf7",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "5af08609bb7c0db01c812378d3d4938117f53dce664de3fd8db08c13cee5a3bf"
+    },
+    {
+      "name": "factory-human-digest",
+      "upstream_path": "skills/factory-human-digest/SKILL.md",
+      "upstream_sha256": "3f665cecdb0883017fae2bc58da343c83c68594b4cd0afe255caaf210173c29f",
+      "adapted_sha256": "a0894812c9c97c3bb65a18551417a043084628f8a7222cc5b0353cd17df03bd1",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-review-prs",
+      "upstream_path": "skills/factory-review-prs/SKILL.md",
+      "upstream_sha256": "9ddf8ed8fa549a02368b633ec2453ea551d8d3447ee01b9b3083fee1d93f8bd1",
+      "adapted_sha256": "1042a2905d9024f46619b985bd3203f24a41d266de7ac4cd13a0ccc53b2995a0",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-babysit-pr",
+      "upstream_path": "skills/factory-babysit-pr/SKILL.md",
+      "upstream_sha256": "d34a0922e844baf346258f5d39244dfcf8090a3adbee8956e7d00d129829b0a0",
+      "adapted_sha256": "2b47245e1af4a4ef924f1513091a25d2f0c6e4ae5acd9c692da9a313942af01b",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-ship",
+      "upstream_path": "skills/factory-ship/SKILL.md",
+      "upstream_sha256": "181e7cdd1570fc56af85c87b5d02f510f8f99bc2205516d53fe3b45a9fb6f2fb",
+      "adapted_sha256": "46de0742000dadeff543ca564cdfdbd3cf49a5593262abf6823a079e448e1aff",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "aa62cf0b5d39afd39a4edb5d5ca0c33b12a357b4118ec1f0783b99c91c11e287"
+    },
+    {
+      "name": "factory-watchdog",
+      "upstream_path": "skills/factory-watchdog/SKILL.md",
+      "upstream_sha256": "fa56664ae10e7b52fe7bf48c9c53fa6ad9a4c235e4ed4efe4ce5de7a7e4e9a0d",
+      "adapted_sha256": "eca7c2e9691198d4e825313a42e8f52d3a264626fe3025bd625beb96209818f5",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "factory-recover",
+      "upstream_path": "skills/factory-recover/SKILL.md",
+      "upstream_sha256": "3df2d20682eabd5e7c2fd70afa8bdfac9fc72c74c9c8d1ef01439279873ba91b",
+      "adapted_sha256": "cf47b97cf121275a304daf3418ae8101d057eb7501348c4d77e77404a4f33216",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    },
+    {
+      "name": "agent-watchdog",
+      "upstream_path": "skills/agent-watchdog/SKILL.md",
+      "upstream_sha256": "c0b5d64438de697b3f581e8e6007ee6adace3694e142bb22863dbb8510db3136",
+      "adapted_sha256": "f656de78dd8051dcd10791f5e8642e422119d1ce7f16a3eb2c1d1434def93437",
+      "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
+      "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
+    }
+  ],
+  "notes": [
+    "Original operational sections are preserved in each entrypoint; see Git diff against upstream source for exact text changes.",
+    "ProjectWorld policy, Factory custody, Actuation authority, NOW/DAY and native telemetry binding are O:I additions.",
+    "Each projected capsule carries the upstream MIT text."
+  ],
+  "upstream_diff_path": "skills/factory/provenance/upstream-diff.patch",
+  "upstream_diff_sha256": "c587aeb0e8dd13282ca723494d5ef92bdca104b71a11f7468060260f400e3ac6"
+}

@@ -1,0 +1,307 @@
+--- BuilderIO/skills/skills/factory/SKILL.md
++++ Factory/skills/factory/SKILL.md
+@@ -2,17 +2,16 @@
+ name: factory
+ installer-group: factory
+ description: >-
+-  Experimental workflow for configuring an autonomous software delivery
++  World-rooted workflow for configuring an autonomous software delivery
+   factory. Use when choosing feedback sources, schedules, worktree behavior,
+   autonomy gates, or host automations.
+ ---
+ 
+ # Factory
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+-Read `.agent-factory/config.yaml` and apply the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` and apply the optional
+ `skill_prompts.factory` entry as additional project guidance. Configure the
+ current project to turn selected product or maintenance signals
+ into verified, reviewed changes. Factory coordinates the other modules; it
+@@ -20,9 +19,9 @@
+ 
+ ## Set up
+ 
+-Use the [Factory configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md) for field meanings, examples, and host limitations.
++Use the [World binding](references/world.md) for field meanings, examples, and host limitations.
+ 
+-1. Read `.agent-factory/config.yaml` if it exists. Preserve explicit choices.
++1. Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` if it exists. Preserve explicit choices.
+ 2. Show the read-capable integrations this host exposes. There is no built-in
+    Factory source catalog. Confirm the source scope; add a custom source only
+    when a connected tool can read it.
+@@ -85,3 +84,7 @@
+ jobs were configured, what remains manual, and any unavailable evidence. Never
+ claim that a schedule, integration, merge, or deployment exists without reading
+ back its live state.
++## O:I setup and use
++
++Resolve the selected ProjectWorld and its actual repository first. The canonical authored carrier is `ProjectCentral/user/factory-policy.json` in that Project root; [World binding](references/world.md) describes its source/authority boundary and migration from `.agent-factory/config.yaml`. Carry the supported Builder fields and set `schema: factory.sensing-policy/v1`, `version: 1`, and the exact `project_world_ref`; surface unsupported legacy fields as migration holds. Read available `aikit` source/SkillSet/Routine capabilities and Factory telemetry help; do not promise a source, scheduled job, or installed Skill because policy names it. After any authorized setup, read back policy, promoted AIKit source snapshot, active SkillSet and scheduled Routine separately. Native policy is not an authority grant.
++
+--- BuilderIO/skills/skills/factory-collect/SKILL.md
++++ Factory/skills/factory-collect/SKILL.md
+@@ -2,14 +2,14 @@
+ name: factory-collect
+ installer-group: factory
+ description: >-
+-  Experimental workflow for collecting and triaging product feedback,
++  World-rooted workflow for collecting and triaging product feedback,
+   product telemetry, runtime errors, and issue reports. Use when scanning
+   configured signal sources and applying separate fix, reply, or close rules.
+ ---
+ 
+ # Factory Collect
+ 
+-Read `.agent-factory/config.yaml` and apply the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` and apply the optional
+ `skill_prompts.factory-collect` entry as additional project guidance. Collect
+ only the sources named by `workflows.collect.sources`. For repeated patterns
+ across time or sources, use `factory-lookback`.
+@@ -59,3 +59,7 @@
+ Summarize coverage by source, including unavailable or truncated reads. For each
+ item or related group, give its links, classification, evidence, disposition,
+ checks, any external action, and the exact human decision still needed.
++## O:I signal path
++
++Start in the exact ProjectWorld scope; read the authored policy and [World binding](references/world.md). Resolve every source ID through its real AIKit ContextSource/provider or native owner. For Factory-internal signals, inspect existing telemetry and custody/Attempt evidence; use `factory telemetry collect` only when the installed CLI advertises it and record its state/policy basis. Preserve original signal refs, occurrence/observation times, full coverage, classifier evidence, and any existing Run/NOW/Return relation. Distinguish `needs evidence` and `human decision` from a verified defect. When the independent implementation gate and actual authority hold, create or resume ordinary Factory custody for the correct Position, use a child NOW where the temporal contract calls for one, and return the original signal relation with the verified change. If no safe action exists, retain an unresolved disposition rather than manufacturing a task.
++
+--- BuilderIO/skills/skills/factory-lookback/SKILL.md
++++ Factory/skills/factory-lookback/SKILL.md
+@@ -2,14 +2,14 @@
+ name: factory-lookback
+ installer-group: factory
+ description: >-
+-  Experimental workflow for auditing recurring feedback, telemetry, errors,
++  World-rooted workflow for auditing recurring feedback, telemetry, errors,
+   and brittle delivery paths to find systemic fixes. Use for periodic or
+   requested cross-source lookbacks, not routine single-item intake.
+ ---
+ 
+ # Factory Lookback
+ 
+-Read `.agent-factory/config.yaml` and apply the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` and apply the optional
+ `skill_prompts.factory-lookback` entry as additional project guidance. Use this
+ workflow when asked to look back across a bounded period or when an enabled
+ `workflows.lookback` automation runs. Its purpose is to find patterns that
+@@ -81,3 +81,8 @@
+ 
+ Do not treat unavailable telemetry or an incomplete history as evidence that a
+ pattern does not exist.
++## O:I historical path
++
++Use [World binding](references/world.md). Bound today, last N civil Days, a named Day range, or current versus prior period using Central's actual civil-time policy and owner-native Factory history. Read Day telemetry separately from human Day writing, and reconcile source refs with NOW/Run/Attempt/custody/Return. For each cluster preserve both periods, pages/cursors, counts and denominators; test whether recurrence happened after the claimed fix or through a sibling caller. Return a systemic repair to its owner: code, regression evaluator, Factory workflow, Skill Gotcha, context selection, telemetry coverage, or an explicit human policy proposal. Human-authored governance does not change from a statistical finding alone.
++
++**Observed Gotcha (2026-09-24).** The then-installed `factory telemetry stats --day 2026-09-24 --json` exited successfully while returning whole-provider state instead of a Day-bounded set. Treat an accepted flag or exit status only as command completion: verify the returned window, exact policy revision and enumerated source coverage against the requested Day before drawing a trend or comparison. If any basis is missing, state the limit and use the owner-native bounded `telemetry day|lookback` reading when available; do not infer zero or recurrence from an unbounded result.
+--- BuilderIO/skills/skills/factory-human-digest/SKILL.md
++++ Factory/skills/factory-human-digest/SKILL.md
+@@ -2,17 +2,16 @@
+ name: factory-human-digest
+ installer-group: factory
+ description: >-
+-  Experimental workflow for summarizing work that still needs human judgment
++  World-rooted workflow for summarizing work that still needs human judgment
+   across configured pull requests, issues, feedback, errors, and delivery
+   signals. Use for a human decision queue or bounded review.
+ ---
+ 
+ # Factory Human Digest
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+-Read `.agent-factory/config.yaml` and apply the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` and apply the optional
+ `skill_prompts.factory-human-digest` entry as additional project guidance.
+ Inspect only the repositories and sources it authorizes.
+ 
+@@ -80,3 +79,7 @@
+ its owning Factory workflow and its separate configured policy. Missing or
+ partial source data must remain visible in the report; it is never evidence of
+ an empty queue.
++## O:I decision aperture
++
++Read [World binding](references/world.md), then assemble the read-only decision queue from current source refs, Factory custody/verification, PR live state, and Recognition holds. Present it through the existing Factory human Return or O:I Factory Desk surface when available. Keep each source and its coverage; distinguish record count from affected users/sessions. The digest never grants reply, assignment, approval, merge, issue closure, deployment, policy mutation, or Recognition. If a person decides, hand the action to its owning workflow for a fresh authority/live-state check.
++
+--- BuilderIO/skills/skills/factory-review-prs/SKILL.md
++++ Factory/skills/factory-review-prs/SKILL.md
+@@ -2,18 +2,17 @@
+ name: factory-review-prs
+ installer-group: factory
+ description: >-
+-  Experimental workflow for reviewing configured repositories' pull requests.
++  World-rooted workflow for reviewing configured repositories' pull requests.
+   Use for manual or scheduled PR triage, approval, or merge decisions.
+ ---
+ 
+ # Factory Review PRs
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+ This skill reviews a filtered queue. For one long-lived, explicitly authorized
+ PR, use `factory-babysit-pr`. Read the filters and independent action policies
+-from `.agent-factory/config.yaml`; see the [configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md).
++from `ProjectCentral/user/factory-policy.json`; see the [World binding](references/world.md).
+ Apply the optional `skill_prompts.factory-review-prs` entry as additional
+ project guidance; it does not replace this skill or authorize an action
+ disabled by policy.
+@@ -51,3 +50,7 @@
+ For each PR, state the decision and evidence. List skipped, unavailable, and
+ held PRs with the reason. Keep review findings separate from approvals, replies,
+ and merge decisions.
++## O:I review relation
++
++Use [World binding](references/world.md). Resolve the PR to its ProjectWorld, originating signal and Factory work/Run/Return where present. Read full live diff, required checks, unresolved threads, reviews, owner, mergeability and exact head from the connected code host. Re-read after a head change and before any review write, approval, or merge. Keep each action's policy and actual host/Actuation authority separate; a review finding is not approval and approval is not merge.
++
+--- BuilderIO/skills/skills/factory-babysit-pr/SKILL.md
++++ Factory/skills/factory-babysit-pr/SKILL.md
+@@ -2,23 +2,22 @@
+ name: factory-babysit-pr
+ installer-group: factory
+ description: >-
+-  Experimental workflow for babysitting one explicitly authorized pull or
++  World-rooted workflow for babysitting one explicitly authorized pull or
+   merge request. Use to monitor its live review state and checks, fix actionable
+   in-scope findings, and apply separate reply, approval, merge, and soak gates.
+ ---
+ 
+ # Factory Babysit PR
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+ Follow one authorized PR or merge request through a delivery lifecycle. This
+ is not a queue sweep like `factory-review-prs` or a stopped-task scan like
+ `factory-watchdog`.
+ 
+-Read `.agent-factory/config.yaml`, the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json`, the optional
+ `skill_prompts.factory-babysit-pr` entry, the target repository's instructions,
+-and the [Factory configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md#workflowspr-babysitting).
++and the [World binding](references/world.md).
+ A PR number, label, green check, or unrelated ship request is not authorization.
+ The prompt is additional project guidance, not PR authorization.
+ 
+@@ -64,3 +63,7 @@
+ head, state inspected, fixes and checks, external actions taken or withheld,
+ soak status, and the concrete blocker or next check time. Distinguish read state
+ from unavailable or inferred state.
++## O:I continuing relation
++
++Use [World binding](references/world.md). Bind this one PR to its original commission, ProjectWorld, custody, Run/Attempt, Position generation, child NOW and signal/Return ancestry where available. On every pass, resolve current ownership and complete live host state; uncertain prior effects require readback before retry. Preserve the Builder head/soak rules and the independent fix, publish, reply, approve and merge gates. Update the existing relation rather than minting a second work item when the same obligation continues.
++
+--- BuilderIO/skills/skills/factory-ship/SKILL.md
++++ Factory/skills/factory-ship/SKILL.md
+@@ -2,18 +2,17 @@
+ name: factory-ship
+ installer-group: factory
+ description: >-
+-  Experimental workflow for publishing and completing configured software
++  World-rooted workflow for publishing and completing configured software
+   delivery work. Use when the user or an enabled factory policy asks to ship.
+ ---
+ 
+ # Factory Ship
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+-Read `.agent-factory/config.yaml`, the optional
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json`, the optional
+ `skill_prompts.factory-ship` entry, and the repository's instructions before
+-publishing. See the [Factory configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md). The prompt adds project guidance; editing code does not by itself authorize a PR update, approval, merge, or deployment.
++publishing. See the [World binding](references/world.md). The prompt adds project guidance; editing code does not by itself authorize a PR update, approval, merge, or deployment.
+ 
+ ## Delivery steps
+ 
+@@ -41,3 +40,8 @@
+ Hold the work when ownership, authorization, a required check, or live host
+ state is missing or unclear. State the exact next step; do not turn an
+ inconclusive result into success.
++## O:I delivery proof
++
++Use [World binding](references/world.md). Bind delivery to the actual Factory Claim/VerificationPlan/Evidence/Closure and Return for the commissioned whole. Record changed code, local checks, published PR/head, merge commit/base, installed or deployed revision, and live behavior as separate facts with native refs. Apply issue closure and notification only at their own configured proof points. A passing subset does not establish whole-relative closure, and merge does not establish installed state or live resolution.
++
++**Observed Gotcha (2026-09-24).** A successful installed `factory telemetry stats --day 2026-09-24 --json` once returned whole-provider state rather than the requested Day. Before citing Day telemetry as a ship, soak, or closure gate, check its returned window, exact policy revision and source coverage against the gate's requested basis. A zero exit code or accepted flag does not establish bounded evidence; hold the dependent gate and obtain a correctly bounded native reading if any basis is absent.
+--- BuilderIO/skills/skills/factory-watchdog/SKILL.md
++++ Factory/skills/factory-watchdog/SKILL.md
+@@ -2,17 +2,16 @@
+ name: factory-watchdog
+ installer-group: factory
+ description: >-
+-  Experimental workflow for monitoring explicitly authorized delivery tasks
++  World-rooted workflow for monitoring explicitly authorized delivery tasks
+   and reporting stalled work. Use for scheduled ship follow-through.
+ ---
+ 
+ # Factory Watchdog
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+-Read `.agent-factory/config.yaml`, the optional
+-`skill_prompts.factory-watchdog` entry, and the [Factory configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md). Monitor only configured projects and authorized delivery handoffs. The prompt cannot grant notification or delivery authority. A task title, branch, PR, green check, or agent summary is not authorization.
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json`, the optional
++`skill_prompts.factory-watchdog` entry, and the [World binding](references/world.md). Monitor only configured projects and authorized delivery handoffs. The prompt cannot grant notification or delivery authority. A task title, branch, PR, green check, or agent summary is not authorization.
+ 
+ ## Find actionable stopped work
+ 
+@@ -34,3 +33,7 @@
+ unless the config explicitly assigns those actions elsewhere. If target or
+ state cannot be proven, do not message. Report `DONT_NOTIFY` when nothing
+ meaningful changed.
++## O:I stalled-work reading
++
++Use [World binding](references/world.md). Inspect current Factory custody, Position occupant generation, Run/Attempt, child NOW, PR/head and external state before calling work stalled. A quiet session, vacant Position, or aged NOW alone is insufficient. Distinguish an explicit wait from lost progress and active work elsewhere. Notify or commission recovery only under its independent policy and current authority; de-duplicate unchanged reminders.
++
+--- BuilderIO/skills/skills/factory-recover/SKILL.md
++++ Factory/skills/factory-recover/SKILL.md
+@@ -2,17 +2,16 @@
+ name: factory-recover
+ installer-group: factory
+ description: >-
+-  Experimental workflow for finding and resuming interrupted coding runs. Use
++  World-rooted workflow for finding and resuming interrupted coding runs. Use
+   after an agent host restart or an interrupted automation.
+ ---
+ 
+ # Factory Recover
+ 
+-> Start with the [Factory guide](../../docs/factory/README.md) for workflow
+-> setup and configuration.
++> Read the [World binding](references/world.md) for Project scope and policy.
+ 
+-Read `.agent-factory/config.yaml`, the optional
+-`skill_prompts.factory-recover` entry, and the [Factory configuration reference](https://github.com/BuilderIO/skills/blob/main/docs/factory/configuration.md). Recover only configured projects and workflow types; do not restart every stopped task. The prompt cannot restore canceled work or grant new authorization.
++Read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json`, the optional
++`skill_prompts.factory-recover` entry, and the [World binding](references/world.md). Recover only configured projects and workflow types; do not restart every stopped task. The prompt cannot restore canceled work or grant new authorization.
+ 
+ ## Check a candidate run
+ 
+@@ -33,3 +32,7 @@
+ 
+ List runs resumed, skipped, or held and the evidence for each decision. Follow
+ the separate configured notification policy.
++## O:I Position recovery
++
++Use [World binding](references/world.md). Re-read original authorization, latest user direction, Position and occupant generation, current custody, Run/Attempt, child NOW, branch/worktree, uncertain effects, external state and Return. Preserve original work and Position identity when the obligation is the same; use native handover/release so predecessor authority is invalidated. Never replay an uncertain write without owner-native readback, never clean concurrent material, and hold when authority or ownership is ambiguous.
++
+--- BuilderIO/skills/skills/agent-watchdog/SKILL.md
++++ Factory/skills/agent-watchdog/SKILL.md
+@@ -162,3 +162,7 @@
+ ```
+ 
+ Name exact files, commands, PRs, or thread IDs when they matter.
++## O:I Agent evidence
++
++Use [World binding](references/world.md) when the watched Agent participates in Factory work. In that case read the selected ProjectWorld’s `ProjectCentral/user/factory-policy.json` for source scope and workflow gates. Reconstruct the original commission from authored source, then inspect native Position occupancy/generation, custody, Run/Attempt, child NOW, actual diff, checks, external state and Return. Treat a session summary as a lead. For independent verification, compare the actual requested whole and each material obligation with source-bound evidence. A current occupant or unfinished run remains its own live relation; never take custody merely because another Agent went quiet.
++

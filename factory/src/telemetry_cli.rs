@@ -13,7 +13,7 @@
 //! structured, versioned document on stdout, because a monitoring surface that
 //! dies loudly is useless to the consumers it serves.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -26,6 +26,7 @@ use crate::core::identity::Ref;
 use crate::developmental_read::{
     FactoryDevelopmentalFileProvider, FactoryExecutionUsage, FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER,
 };
+use crate::telemetry_time::{parse_ms, CivilWindow};
 
 pub const FACTORY_TELEMETRY_STATUS_CONTRACT: &str = "factory.telemetry-status/v1";
 pub const FACTORY_TELEMETRY_INSPECT_CONTRACT: &str = "factory.telemetry-inspection/v1";
@@ -45,7 +46,7 @@ const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(120);
 pub fn execute(args: &[String], json: bool) -> Result<String, CliError> {
     let operation = args.first().ok_or_else(|| {
         CliError::new(
-            "missing telemetry operation; expected status|inspect|search|stats|export|doctor",
+            "missing telemetry operation; expected status|inspect|search|stats|watch|compare|export|doctor|collect|signals|classify|commission|return|digest|lookback|day|field|policy",
         )
     })?;
     let rest = &args[1..];
@@ -58,8 +59,10 @@ pub fn execute(args: &[String], json: bool) -> Result<String, CliError> {
         "compare" => compare(rest, json),
         "export" => export(rest, json),
         "doctor" => doctor(rest, json),
+        "collect" | "signals" | "signal" | "classify" | "commission" | "return" | "digest"
+        | "lookback" | "day" | "field" | "policy" => crate::sensing_cli::execute(args, json),
         other => Err(CliError::new(format!(
-            "unknown telemetry operation `{other}`; expected status|inspect|search|stats|watch|compare|export|doctor"
+            "unknown telemetry operation `{other}`; expected status|inspect|search|stats|watch|compare|export|doctor|collect|signals|classify|commission|return|digest|lookback|day|field|policy"
         ))),
     }
 }
@@ -686,12 +689,137 @@ fn run_command_with_timeout(argv: &[String], timeout: Duration) -> Result<String
 // stats — deterministic aggregates with explicit denominators
 // ---------------------------------------------------------------------------
 
+fn attempt_has_any_time(record: &crate::attempt_runtime::FactoryAttemptRecord) -> bool {
+    record.attempt_recorded_at.is_some()
+        || record.return_recorded_at.is_some()
+        || record.failure_recorded_at.is_some()
+        || !record.verification_recorded_at.is_empty()
+}
+
+fn untimed_attempts(state: &crate::developmental_read::FactoryDevelopmentalState) -> usize {
+    let mut by_ref = BTreeMap::<&str, bool>::new();
+    for record in state
+        .attempt_states
+        .values()
+        .flat_map(|r| r.attempts().values())
+    {
+        *by_ref.entry(record.attempt_ref.as_str()).or_default() |= attempt_has_any_time(record);
+    }
+    by_ref.values().filter(|has_time| !**has_time).count()
+}
+
+fn attempt_in_window(
+    record: &crate::attempt_runtime::FactoryAttemptRecord,
+    window: &CivilWindow,
+) -> bool {
+    record
+        .attempt_recorded_at
+        .as_deref()
+        .and_then(|t| window.contains_rfc3339(t))
+        .unwrap_or(false)
+        || record
+            .return_recorded_at
+            .as_deref()
+            .and_then(|t| window.contains_rfc3339(t))
+            .unwrap_or(false)
+        || record
+            .failure_recorded_at
+            .as_deref()
+            .and_then(|t| window.contains_rfc3339(t))
+            .unwrap_or(false)
+        || record
+            .verification_recorded_at
+            .values()
+            .any(|t| window.contains_rfc3339(t) == Some(true))
+}
+
+fn correlation_has_any_time(c: &crate::developmental_read::FactoryExecutionCorrelation) -> bool {
+    [
+        &c.temporal.started,
+        &c.temporal.updated,
+        &c.temporal.completed,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|fact| parse_ms(&fact.value).is_some())
+}
+
+fn correlation_in_window(
+    c: &crate::developmental_read::FactoryExecutionCorrelation,
+    window: &CivilWindow,
+) -> bool {
+    let started = c.temporal.started.as_ref().and_then(|f| parse_ms(&f.value));
+    let completed = c
+        .temporal
+        .completed
+        .as_ref()
+        .and_then(|f| parse_ms(&f.value));
+    if let (Some(start), Some(end)) = (started, completed) {
+        if window.overlaps_ms(start, end) {
+            return true;
+        }
+    }
+    [
+        &c.temporal.started,
+        &c.temporal.updated,
+        &c.temporal.completed,
+    ]
+    .into_iter()
+    .flatten()
+    .any(|fact| parse_ms(&fact.value).is_some_and(|t| window.contains_ms(t)))
+}
+
+fn window_counts(
+    state: &crate::developmental_read::FactoryDevelopmentalState,
+    window: &CivilWindow,
+) -> Value {
+    let mut attempts = BTreeSet::new();
+    let mut returns = BTreeSet::new();
+    let mut verifications = BTreeSet::new();
+    for runs in state.attempt_states.values() {
+        for record in runs.attempts().values() {
+            if !attempt_in_window(record, window) {
+                continue;
+            }
+            attempts.insert(record.attempt_ref.as_str());
+            if record
+                .return_recorded_at
+                .as_deref()
+                .and_then(|t| window.contains_rfc3339(t))
+                == Some(true)
+            {
+                returns.insert(record.attempt_ref.as_str());
+            }
+            for verification in &record.verifications {
+                if record
+                    .verification_recorded_at
+                    .get(&verification.verification_ref)
+                    .and_then(|t| window.contains_rfc3339(t))
+                    == Some(true)
+                {
+                    verifications.insert(verification.verification_ref.as_str());
+                }
+            }
+        }
+    }
+    json!({
+        "window": window.as_json(), "uniqueAttempts": attempts.len(), "returns": returns.len(),
+        "verifications": verifications.len(),
+        "correlations": state.execution_correlations.iter().filter(|c| correlation_in_window(c, window)).count(),
+        "timingUnavailable": {
+            "attempts": untimed_attempts(state),
+            "correlations": state.execution_correlations.iter().filter(|c| !correlation_has_any_time(c)).count(),
+        },
+    })
+}
+
 fn stats(args: &[String], json: bool) -> Result<String, CliError> {
     stats_inner(args, json)
 }
 
 fn stats_inner(args: &[String], json: bool) -> Result<String, CliError> {
     let state_path = require_state_path(args)?;
+    let (window, remaining) = CivilWindow::from_args(&args[1..], &state_path)?;
     let provider = FactoryDevelopmentalFileProvider::open(&state_path)
         .map_err(|error| CliError::new(error.to_string()))?;
     let state = provider.state();
@@ -700,24 +828,79 @@ fn stats_inner(args: &[String], json: bool) -> Result<String, CliError> {
     let mut observations = 0usize;
     let mut verifications = 0usize;
     let mut returned = 0usize;
+    let mut seen_observations = BTreeSet::new();
+    let mut seen_verifications = BTreeSet::new();
+    let mut seen_returns = BTreeSet::new();
+    let unknown_attempt_time = if window.is_some() {
+        untimed_attempts(state)
+    } else {
+        0
+    };
+    let mut seen_attempts = BTreeSet::new();
     for run_attempts in state.attempt_states.values() {
         for record in run_attempts.attempts().values() {
-            // A readable grouping key: the situated Agency on its harness,
-            // not the whole serialised disposition.
-            let key = format!(
-                "{} @ {}",
-                record.disposition.participant.agency_ref, record.disposition.body.harness_ref
-            );
-            *dispositions.entry(key).or_default() += 1;
-            observations += record.observations.len();
-            verifications += record.verifications.len();
-            if record.readable_return.is_some() {
+            if let Some(window) = &window {
+                if !attempt_in_window(record, window) {
+                    continue;
+                }
+            }
+            if seen_attempts.insert(record.attempt_ref.clone()) {
+                // Group the stable attempt once, even if replay yields another view.
+                let key = format!(
+                    "{} @ {}",
+                    record.disposition.participant.agency_ref, record.disposition.body.harness_ref
+                );
+                *dispositions.entry(key).or_default() += 1;
+            }
+            if window.is_none() {
+                for observation in &record.observations {
+                    if seen_observations.insert(observation.receipt_ref.as_str()) {
+                        observations += 1;
+                    }
+                }
+            }
+            for verification in &record.verifications {
+                if window.as_ref().is_none_or(|w| {
+                    record
+                        .verification_recorded_at
+                        .get(&verification.verification_ref)
+                        .and_then(|t| w.contains_rfc3339(t))
+                        == Some(true)
+                }) && seen_verifications.insert(verification.verification_ref.as_str())
+                {
+                    verifications += 1;
+                }
+            }
+            if record.readable_return.is_some()
+                && window.as_ref().is_none_or(|w| {
+                    record
+                        .return_recorded_at
+                        .as_deref()
+                        .and_then(|t| w.contains_rfc3339(t))
+                        .unwrap_or(false)
+                })
+                && seen_returns.insert(record.attempt_ref.as_str())
+            {
                 returned += 1;
             }
         }
     }
     let attempt_total: usize = dispositions.values().sum();
-    let correlation_total = state.execution_correlations.len();
+    let correlations: Vec<_> = state
+        .execution_correlations
+        .iter()
+        .filter(|c| window.as_ref().is_none_or(|w| correlation_in_window(c, w)))
+        .collect();
+    let correlation_total = correlations.len();
+    let unknown_correlation_time = if window.is_some() {
+        state
+            .execution_correlations
+            .iter()
+            .filter(|c| !correlation_has_any_time(c))
+            .count()
+    } else {
+        0
+    };
 
     // Saved analysis templates (§6): deterministic aggregates over the real
     // records, each able to name its included occasions. A template that
@@ -725,12 +908,14 @@ fn stats_inner(args: &[String], json: bool) -> Result<String, CliError> {
     // denominator.
     let mut template_name = String::new();
     let mut drill_down = false;
-    let mut iterator = args.iter().cloned();
+    let mut compare_previous = false;
+    let mut iterator = remaining.iter().cloned();
     let mut positional: Vec<String> = Vec::new();
     while let Some(arg) = iterator.next() {
         match arg.as_str() {
             "--template" => template_name = iterator.next().unwrap_or_default(),
             "--drill-down" => drill_down = true,
+            "--compare-previous" => compare_previous = true,
             other => positional.push(other.to_string()),
         }
     }
@@ -739,30 +924,61 @@ fn stats_inner(args: &[String], json: bool) -> Result<String, CliError> {
         // by require_state_path; keep the positional list as the argument tail.
     }
     if !template_name.is_empty() {
-        return stats_template(state, &state_path, &template_name, drill_down, json);
+        if compare_previous {
+            return Err(CliError::new(
+                "--compare-previous applies to aggregate stats, not a saved template",
+            ));
+        }
+        return stats_template(
+            state,
+            &state_path,
+            &template_name,
+            drill_down,
+            window.as_ref(),
+            json,
+        );
     }
+    let comparison = if compare_previous {
+        let current = window
+            .as_ref()
+            .ok_or_else(|| CliError::new("--compare-previous requires a civil Day window"))?;
+        let previous = current.previous(&state_path)?;
+        Some(
+            json!({"current": window_counts(state, current), "previous": window_counts(state, &previous)}),
+        )
+    } else {
+        None
+    };
     let document = json!({
         "contract": FACTORY_TELEMETRY_STATS_CONTRACT,
         "state": state_path.to_string_lossy(),
-        "windows": "the whole provider state; no time filtering is implemented yet",
+        "window": window.as_ref().map(CivilWindow::as_json).unwrap_or(json!("whole provider state")),
+        "timingUnavailable": {"attempts": unknown_attempt_time, "correlations": unknown_correlation_time},
+        "periodComparison": comparison,
         "attemptsByDisposition": dispositions,
         "attempts": {
             "total": attempt_total,
             "withReadableReturn": returned,
-            "observations": observations,
+            "observations": if window.is_some() { Value::Null } else { json!(observations) },
+            "observationTimeAvailability": if window.is_some() { "unavailable: owner observation receipts have no admission timestamp" } else { "whole-state count" },
             "verifications": verifications,
         },
         "correlations": {
             "total": correlation_total,
-            "withChildNowRef": state.execution_correlations.iter().filter(|c| c.temporal.child_now_ref.is_some()).count(),
-            "withDayRefs": state.execution_correlations.iter().filter(|c| !c.temporal.day_refs.is_empty()).count(),
-            "withGitBasis": state.execution_correlations.iter().filter(|c| c.git_basis.is_some()).count(),
+            "withChildNowRef": correlations.iter().filter(|c| c.temporal.child_now_ref.is_some()).count(),
+            "withDayRefs": correlations.iter().filter(|c| !c.temporal.day_refs.is_empty()).count(),
+            "withGitBasis": correlations.iter().filter(|c| c.git_basis.is_some()).count(),
             "denominator": correlation_total,
         },
     });
     render(&document, json, || {
+        let observations_label = if window.is_some() {
+            "unavailable".to_string()
+        } else {
+            observations.to_string()
+        };
         let mut text = format!(
-            "{}\nAttempts: {attempt_total} (returned {returned}, observations {observations}, verifications {verifications})\nBy disposition:",
+            "{}\nAttempts: {attempt_total} (returned {returned}, observations {observations_label}, verifications {verifications})\nBy disposition:",
             FACTORY_TELEMETRY_STATS_CONTRACT
         );
         for (disposition, count) in &dispositions {
@@ -787,6 +1003,7 @@ fn stats_template(
     state_path: &Path,
     template: &str,
     drill_down: bool,
+    window: Option<&CivilWindow>,
     json: bool,
 ) -> Result<String, CliError> {
     let mut included = 0usize;
@@ -797,14 +1014,20 @@ fn stats_template(
         "attempts-by-agency" => {
             let mut groups: BTreeMap<String, Value> = BTreeMap::new();
             let mut total = 0usize;
+            let mut seen = BTreeSet::new();
+            let mut agency_for_attempt = BTreeMap::<&str, String>::new();
+            let mut verified_attempts = BTreeSet::new();
+            let mut returned_attempts = BTreeSet::new();
+            let mut failed_attempts = BTreeSet::new();
             for run_attempts in state.attempt_states.values() {
                 for (attempt_ref, record) in run_attempts.attempts() {
-                    total += 1;
-                    let key = format!(
-                        "{} @ {}",
-                        record.disposition.participant.agency_ref,
+                    if window.is_some_and(|w| !attempt_in_window(record, w)) { continue; }
+                    let key = agency_for_attempt.entry(attempt_ref.as_str()).or_insert_with(|| format!(
+                        "{} @ {}", record.disposition.participant.agency_ref,
                         record.disposition.body.harness_ref
-                    );
+                    )).clone();
+                    let first_view = seen.insert(attempt_ref.as_str());
+                    if first_view { total += 1; included += 1; }
                     let group = groups.entry(key.clone()).or_insert_with(|| {
                         json!({
                             "attempts": 0,
@@ -814,29 +1037,33 @@ fn stats_template(
                             "occasions": [],
                         })
                     });
-                    group["attempts"] = json!(group["attempts"].as_u64().unwrap_or(0) + 1);
-                    if !record.verifications.is_empty() {
+                    if first_view { group["attempts"] = json!(group["attempts"].as_u64().unwrap_or(0) + 1); }
+                    if record.verifications.iter().any(|v| window.is_none_or(|w| record.verification_recorded_at.get(&v.verification_ref).and_then(|t| w.contains_rfc3339(t)) == Some(true))) && verified_attempts.insert(attempt_ref.as_str()) {
                         group["verified"] = json!(group["verified"].as_u64().unwrap_or(0) + 1);
                     }
-                    if record.readable_return.is_some() {
+                    if record.readable_return.is_some() && window.is_none_or(|w| record.return_recorded_at.as_deref().and_then(|t| w.contains_rfc3339(t)) == Some(true)) && returned_attempts.insert(attempt_ref.as_str()) {
                         group["returned"] = json!(group["returned"].as_u64().unwrap_or(0) + 1);
                     }
-                    if !record.failure_evidence_refs.is_empty() {
+                    if (!record.failure_evidence_refs.is_empty()
+                        || record.dispatch.as_ref().is_some_and(|receipt| receipt.phase == crate::attempt_runtime::OwnerOperationPhase::Failed)
+                        || record.observations.iter().any(|receipt| receipt.phase == crate::attempt_runtime::OwnerOperationPhase::Failed))
+                        && window.is_none_or(|w| record.failure_recorded_at.as_deref()
+                            .and_then(|t| w.contains_rfc3339(t)) == Some(true))
+                        && failed_attempts.insert(attempt_ref.as_str()) {
                         group["withFailureEvidence"] =
                             json!(group["withFailureEvidence"].as_u64().unwrap_or(0) + 1);
                     }
-                    if drill_down {
+                    if drill_down && first_view {
                         group["occasions"]
                             .as_array_mut()
                             .expect("occasions array")
                             .push(json!(attempt_ref));
                     }
-                    included += 1;
                 }
             }
             json!({
                 "template": template,
-                "denominator": {"attempts": total, "window": "whole provider state"},
+                "denominator": {"attempts": total, "window": window.map(CivilWindow::as_json).unwrap_or(json!("whole provider state"))},
                 "groups": groups,
             })
         }
@@ -844,8 +1071,9 @@ fn stats_template(
         // Git basis was never recorded.
         "correlation-completeness" => {
             let mut incomplete: Vec<Value> = Vec::new();
-            let total = state.execution_correlations.len();
+            let total = state.execution_correlations.iter().filter(|c| window.is_none_or(|w| correlation_in_window(c, w))).count();
             for correlation in &state.execution_correlations {
+                if window.is_some_and(|w| !correlation_in_window(correlation, w)) { continue; }
                 let mut gaps: Vec<&str> = Vec::new();
                 if correlation.temporal.child_now_ref.is_none() {
                     gaps.push("childNowRef");
@@ -874,50 +1102,59 @@ fn stats_template(
                 "incomplete": incomplete,
             })
         }
-        // §6: return-to-verification delay. Verification receipts carry the
-        // owner revision they verified against, not a clock, so a duration
-        // cannot be computed from these records today. The template counts
-        // and names that gap instead of inventing a number.
+        // A later verification can measure Return-to-verification latency.
+        // The initial verification precedes Return by contract; older records
+        // and attempts without a later receipt remain unavailable.
         "return-to-verification" => {
             let mut attempts = 0usize;
             let mut with_verification = 0usize;
+            let mut timed = 0usize;
+            let mut total_ms: i128 = 0;
             let mut named: Vec<Value> = Vec::new();
+            let mut views: BTreeMap<&str, Vec<(&crate::core::run::RunRef, &crate::attempt_runtime::FactoryAttemptRecord)>> = BTreeMap::new();
             for (run_ref, run_attempts) in &state.attempt_states {
                 for (attempt_ref, record) in run_attempts.attempts() {
+                    if window.is_some_and(|w| !attempt_in_window(record, w)) { continue; }
+                    views.entry(attempt_ref.as_str()).or_default().push((run_ref, record));
+                }
+            }
+            for (attempt_ref, records) in &views {
                     attempts += 1;
-                    match record.verifications.last() {
-                        Some(verification) => {
-                            with_verification += 1;
-                            if drill_down {
-                                named.push(json!({
-                                    "attemptRef": attempt_ref,
-                                    "runRef": run_ref.to_string(),
-                                    "verificationRef": verification.verification_ref,
-                                    "verifiedOwnerRevision": verification.source_revision,
-                                }));
-                            }
-                        }
-                        None => {
-                            if drill_down {
-                                named.push(json!({
-                                    "attemptRef": attempt_ref,
-                                    "runRef": run_ref.to_string(),
-                                    "verificationRef": null,
-                                }));
-                            }
-                        }
+                    if records.iter().any(|(_, record)| record.verifications.iter().any(|v| window.is_none_or(|w| record.verification_recorded_at.get(&v.verification_ref).and_then(|t| w.contains_rfc3339(t)) == Some(true)))) { with_verification += 1; }
+                    let later = records.iter().filter_map(|(run_ref, record)| {
+                    let returned_at = record.return_recorded_at.as_deref().and_then(parse_ms);
+                    returned_at.zip(record.verification_count_at_return).and_then(|(return_ms, prior_count)| {
+                        record.verifications.iter().skip(prior_count).filter_map(|v| {
+                            let at = record.verification_recorded_at.get(&v.verification_ref).and_then(|t| parse_ms(t))?;
+                            (at >= return_ms && window.is_none_or(|w| w.contains_ms(at)))
+                                .then_some((at, v))
+                        }).min_by_key(|(at, _)| *at).map(|(at, v)| (at - return_ms, v, *run_ref, *record))
+                    })
+                    }).min_by_key(|(duration, _, _, _)| *duration);
+                    if let Some((duration, _, _, _)) = later { timed += 1; total_ms += i128::from(duration); }
+                    if drill_down {
+                        let (first_run, first_record) = records[0];
+                        named.push(json!({
+                            "attemptRef": attempt_ref, "runRef": later.map(|(_, _, r, _)| r.to_string()).unwrap_or_else(|| first_run.to_string()),
+                            "returnRecordedAt": later.map(|(_, _, _, record)| &record.return_recorded_at).unwrap_or(&first_record.return_recorded_at),
+                            "laterVerificationRef": later.map(|(_, v, _, _)| &v.verification_ref),
+                            "durationMs": later.map(|(duration, _, _, _)| duration),
+                            "availability": if later.is_some() { "available" } else { "unavailable" },
+                        }));
                     }
                     included += 1;
-                }
             }
             json!({
                 "template": template,
                 "denominator": {
                     "attempts": attempts,
                     "withVerification": with_verification,
+                    "withTimedLaterVerification": timed,
+                    "timingUnavailable": attempts - timed,
                 },
                 "verificationTargets": if drill_down { json!(named) } else { json!([]) },
-                "disclosure": "verification receipts record the owner revision they verified, not a time; a true return-to-verification duration needs time-stamped verification facts, which is a named producer gap — not a zero",
+                "meanDurationMs": if timed == 0 { Value::Null } else { json!(total_ms / timed as i128) },
+                "disclosure": "Only Factory-admitted verification receipts after a readable Return establish this duration. Initial verification precedes Return; old or missing times remain unavailable.",
             })
         }
         other => {
@@ -931,6 +1168,9 @@ fn stats_template(
     full["state"] = json!(state_path.to_string_lossy());
     full["drillDown"] = json!(drill_down);
     full["includedOccasions"] = json!(included);
+    full["window"] = window
+        .map(CivilWindow::as_json)
+        .unwrap_or(json!("whole provider state"));
     render(&full, json, || {
         format!(
             "{}\ntemplate {} — {} occasion(s) in scope; drill-down: {}",
@@ -1595,6 +1835,57 @@ mod tests {
         assert_eq!(document["contract"], FACTORY_TELEMETRY_STATS_CONTRACT);
         assert_eq!(document["correlations"]["total"], 1);
         assert_eq!(document["correlations"]["denominator"], 1);
+    }
+
+    #[test]
+    fn public_cli_day_stats_exclude_untimed_native_records() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("Control/user")).unwrap();
+        std::fs::create_dir_all(temp.path().join("Work")).unwrap();
+        std::fs::write(temp.path().join("Control/user/civil-time-policy.json"),
+            r#"{"schema":"central.civil-time-policy/v1","scope_ref":"control:root","timezone":"Europe/London","day_boundary_minutes":0,"automatic_day_rollover":true}"#).unwrap();
+        let state = temp.path().join("Work/native-state.json");
+        create_developmental_conformance_state(&state).unwrap();
+        let output = crate::cli::execute_cli(
+            &[
+                "telemetry".into(),
+                "stats".into(),
+                state.display().to_string(),
+                "--day".into(),
+                "2026-03-29".into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let document = parse(&output);
+        assert_eq!(document["window"]["timezone"], "Europe/London");
+        assert_eq!(document["correlations"]["total"], 0);
+        assert_eq!(document["timingUnavailable"]["correlations"], 1);
+        assert!(document["attempts"]["observations"].is_null());
+
+        let compared = crate::cli::execute_cli(
+            &[
+                "telemetry".into(),
+                "stats".into(),
+                state.display().to_string(),
+                "--day".into(),
+                "2026-03-29".into(),
+                "--compare-previous".into(),
+                "--json".into(),
+            ],
+            None,
+        )
+        .unwrap();
+        let compared = parse(&compared);
+        assert_eq!(
+            compared["periodComparison"]["current"]["window"]["fromDay"],
+            "2026-03-29"
+        );
+        assert_eq!(
+            compared["periodComparison"]["previous"]["window"]["throughDay"],
+            "2026-03-28"
+        );
     }
 
     #[test]
