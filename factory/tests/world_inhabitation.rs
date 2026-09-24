@@ -732,9 +732,18 @@ fn source_qualified_work_child_now_is_visible_before_attempt_and_refuses_conflic
         .as_array()
         .unwrap()
         .iter()
-        .map(|custody| custody["child_now_ref"]["value"].as_str().unwrap().to_owned())
+        .map(|custody| {
+            custody["child_now_ref"]["value"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(each.len(), 2, "each exact custody retains its own child NOW");
+    assert_eq!(
+        each.len(),
+        2,
+        "each exact custody retains its own child NOW"
+    );
 }
 
 #[test]
