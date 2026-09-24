@@ -46,6 +46,7 @@ export type WorkflowUnitSource = {
   readonly escalationConditions: NonEmpty;
   readonly contribution?: Contribution;
   readonly inputs?: ReadonlyArray<WorkflowInputSource>;
+  readonly composition?: CPrimeExecutionBinding;
 };
 
 export type WorkflowBarrierSource = {
@@ -89,6 +90,7 @@ export type AuthoredBasis = {
   readonly modules: Readonly<Record<string, ModuleBasis>>;
   readonly locations: Readonly<Record<string, SourceLocation>>;
   readonly successorOf?: SourcePointer;
+  readonly adapters?: Readonly<Record<string, AdapterBasis>>;
 };
 
 export type RoleSource = {
@@ -117,6 +119,35 @@ export type WorkflowInputSource = {
   readonly receivingContextRef: QualifiedRef;
 };
 
+export type CPrimeExecutionBinding = {
+  readonly contract: "ql.vak-composition.profile/v1";
+  readonly qlBindingRef: NonEmpty;
+  readonly qlBindingRevision: NonEmpty;
+  readonly actorRef: NonEmpty;
+  readonly wholeRef: NonEmpty;
+  readonly subjectRef: NonEmpty;
+  readonly participation: "dialogical" | "authorised-undertaking";
+  readonly content: "CT0" | "CT1" | "CT2" | "CT3" | "CT4" | "CT4b'" | "CT5";
+  readonly position: "4.0" | "4.1" | "4.2" | "4.3" | "4.4" | "4.5";
+  readonly frame: "CF1" | "CF2" | "CF3" | "CF4" | "CF5" | "CF6" | "CF7";
+  readonly thread: "CFP0" | "CFP1" | "CFP2" | "CFP3" | "CFP4" | "CFP5";
+  readonly sequence: "CS0" | "CS1" | "CS2" | "CS3" | "CS4" | "CS5";
+  readonly direction: "forward" | "returning";
+  readonly aiKitScopeContract: "aikit.operative-scope/v1";
+  readonly aiKitResolvePathRef: NonEmpty;
+  readonly contextResolutionRef: NonEmpty;
+  readonly sourceRefs: ReadonlyArray<NonEmpty>;
+  readonly undertakingAuthorityRef?: NonEmpty;
+};
+
+export type AdapterBasis = {
+  readonly owner: NonEmpty;
+  readonly typesContract: NonEmpty;
+  readonly declarationsSha256: string;
+  readonly unitField: NonEmpty;
+  readonly lowering: NonEmpty;
+};
+
 export type WorkflowSource = {
   readonly schemaVersion: "factory.agent-workflow-source/v1";
   readonly coordinationContract: "factory.bounded-coordination/v1";
@@ -127,13 +158,24 @@ export type WorkflowSource = {
   readonly nesting?: ReadonlyArray<WorkflowNestingSource>;
 };
 
+/**
+ * A registered domain adapter's authored composition (e.g. `CPrime` from
+ * "@epilogos/ql-vak", checked with `satisfies`). Factory lowers it to the native
+ * CPrimeExecutionBinding; an unregistered or unimported adapter is refused.
+ */
+export type DomainComposition = { readonly [field: string]: unknown };
+/** A unit as authored: native fields plus an optional adapter-authored composition. */
+export type WorkflowUnitDefinition = Omit<WorkflowUnitSource, "composition"> & {
+  readonly composition?: DomainComposition;
+};
 /** Native exact-edition revision is explicit. Factory computes digest and byte provenance. */
-export type WorkflowDefinition = Omit<WorkflowSource, "schemaVersion" | "coordinationContract" | "source"> & {
+export type WorkflowDefinition = Omit<WorkflowSource, "schemaVersion" | "coordinationContract" | "source" | "units"> & {
   readonly source: Omit<WorkflowSourceProvenance, "digest" | "authoring"> & { readonly successorOf?: SourcePointer };
+  readonly units: ReadonlyArray<WorkflowUnitDefinition>;
   readonly schemaVersion?: WorkflowSource["schemaVersion"];
   readonly coordinationContract?: WorkflowSource["coordinationContract"];
 };
 export declare function defineWorkflow<const T extends WorkflowDefinition>(value: T): T;
-export declare function unit<const T extends WorkflowUnitSource>(value: T): T;
+export declare function unit<const T extends WorkflowUnitDefinition>(value: T): T;
 export declare function barrier<const T extends WorkflowBarrierSource>(value: T): T;
 export declare function nesting<const T extends WorkflowNestingSource>(value: T): T;

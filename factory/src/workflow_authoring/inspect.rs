@@ -19,7 +19,7 @@ pub(crate) fn summary(source: &WorkflowSource) -> Value {
             .collect::<BTreeMap<_, _>>();
         json!({"contract":a.contract,"compiler":a.compiler,"compilerDigest":a.compiler_digest,
             "entry":a.entry,"revision":a.revision,"bundleDigest":a.bundle_digest,"modules":modules,
-            "fieldLocationCount":a.locations.len(),"successorOf":a.successor_of})
+            "fieldLocationCount":a.locations.len(),"successorOf":a.successor_of,"domainAdapters":a.adapters})
     });
     json!({"ref":source.source.reference,"revision":source.source.revision,"semanticDigest":source.source.digest,
         "temporalRef":source.source.temporal_ref,"flowRef":source.source.flow_ref,"authoring":authored})
@@ -200,6 +200,9 @@ pub fn inspect(
             )
             .map_err(failure)?;
             value["sourceLocation"] = json!(source_location(source, &u.key));
+            // The authored C-prime requirement travels with the compiled unit;
+            // it is intent, not an observation of how the attempt was conducted.
+            value["composition"] = json!(u.composition);
             Ok(value)
         })
         .collect::<Result<Vec<_>, Diagnostic>>()?;

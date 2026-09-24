@@ -8,13 +8,16 @@ pub const VAK_ORCHESTRATION_CONTRACT: &str = "factory.vak-orchestration/v1";
 pub const QL_C_PRIME_PROFILE_CONTRACT: &str = "ql.vak-composition.profile/v1";
 pub const AIKIT_OPERATIVE_SCOPE_CONTRACT: &str = "aikit.operative-scope/v1";
 
-const PARTICIPATION: [&str; 2] = ["dialogical", "authorised-undertaking"];
-const CONTENT: [&str; 7] = ["CT0", "CT1", "CT2", "CT3", "CT4", "CT4b′", "CT5"];
-const POSITION: [&str; 6] = ["4.0", "4.1", "4.2", "4.3", "4.4", "4.5"];
-const FRAME: [&str; 7] = ["CF1", "CF2", "CF3", "CF4", "CF5", "CF6", "CF7"];
-const THREAD: [&str; 6] = ["CFP0", "CFP1", "CFP2", "CFP3", "CFP4", "CFP5"];
-const SEQUENCE: [&str; 6] = ["CS0", "CS1", "CS2", "CS3", "CS4", "CS5"];
-const DIRECTION: [&str; 2] = ["forward", "returning"];
+// QL owns these values (`ql.vak-composition.profile/v1`). They are QL's exact
+// serde spellings, contract-checked against the vendored QL workflow types in
+// factory/tests/workflow_domain_adapter.rs. CT4b' is ASCII on QL's wire.
+pub const C_PRIME_PARTICIPATION: [&str; 2] = ["dialogical", "authorised-undertaking"];
+pub const C_PRIME_CONTENT: [&str; 7] = ["CT0", "CT1", "CT2", "CT3", "CT4", "CT4b'", "CT5"];
+pub const C_PRIME_POSITION: [&str; 6] = ["4.0", "4.1", "4.2", "4.3", "4.4", "4.5"];
+pub const C_PRIME_FRAME: [&str; 7] = ["CF1", "CF2", "CF3", "CF4", "CF5", "CF6", "CF7"];
+pub const C_PRIME_THREAD: [&str; 6] = ["CFP0", "CFP1", "CFP2", "CFP3", "CFP4", "CFP5"];
+pub const C_PRIME_SEQUENCE: [&str; 6] = ["CS0", "CS1", "CS2", "CS3", "CS4", "CS5"];
+pub const C_PRIME_DIRECTION: [&str; 2] = ["forward", "returning"];
 
 pub(crate) fn required(value: &str, field: &'static str) -> Result<(), VakOrchestrationError> {
     if value.trim().is_empty() || value.len() > 16_384 || value.contains('\0') {
@@ -69,13 +72,13 @@ impl CPrimeExecutionBinding {
         ] {
             required(value, field)?;
         }
-        if !PARTICIPATION.contains(&self.participation.as_str())
-            || !CONTENT.contains(&self.content.as_str())
-            || !POSITION.contains(&self.position.as_str())
-            || !FRAME.contains(&self.frame.as_str())
-            || !THREAD.contains(&self.thread.as_str())
-            || !SEQUENCE.contains(&self.sequence.as_str())
-            || !DIRECTION.contains(&self.direction.as_str())
+        if !C_PRIME_PARTICIPATION.contains(&self.participation.as_str())
+            || !C_PRIME_CONTENT.contains(&self.content.as_str())
+            || !C_PRIME_POSITION.contains(&self.position.as_str())
+            || !C_PRIME_FRAME.contains(&self.frame.as_str())
+            || !C_PRIME_THREAD.contains(&self.thread.as_str())
+            || !C_PRIME_SEQUENCE.contains(&self.sequence.as_str())
+            || !C_PRIME_DIRECTION.contains(&self.direction.as_str())
         {
             return Err(VakOrchestrationError::InvalidCPrimeProfile);
         }
@@ -113,7 +116,7 @@ impl CPrimeExecutionBinding {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ThreadForm {
     Single,
@@ -149,6 +152,8 @@ pub enum VakOrchestrationError {
     UnknownUnit(String),
     UnknownPerformanceUnit(String),
     SubjectMismatch(String),
+    /// A unit-carried C′ names an actor that is not one of the unit's declared participants.
+    UndeclaredActor(String),
     SourceScopeWidening(String),
     NotIndependent {
         left: String,

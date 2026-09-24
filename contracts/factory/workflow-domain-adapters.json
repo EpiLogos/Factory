@@ -1,0 +1,22 @@
+{
+  "contract": "factory.workflow-domain-adapters/v1",
+  "description": "Domain type modules a Factory workflow source may import. An adapter supplies types only; Factory lowers its declared unit field through a native lowering. Unregistered domain imports are refused.",
+  "adapters": [
+    {
+      "specifier": "@epilogos/ql-vak",
+      "owner": "ql-mef",
+      "typesContract": "ql.vak-workflow-types/v1",
+      "declarations": "contracts/factory/upstream/ql-vak-workflow-types.d.ts",
+      "declarationsSha256": "047c20b98b44890245c076b707cba71e1dccef7d9aa8769037ff36892c2037d8",
+      "upstream": {
+        "repository": "EpiLogos/QL-MEF",
+        "path": "adapters/factory-workflow/index.d.ts",
+        "gitBlob": "ba022adffc728fe4ad62939994e5080ab6e37b11",
+        "generator": "ql vak workflow-types"
+      },
+      "unitField": "composition",
+      "lowering": "factory.vak-orchestration/v1#c-prime-execution-binding",
+      "standing": "vendored owner declaration pinned by content; QL regenerates it from its Rust contract"
+    }
+  ]
+}

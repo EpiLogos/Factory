@@ -4,6 +4,7 @@
 //! owns commissioned WorkflowUnit/Run/Attempt/barrier/Return conduct. This module
 //! correlates those identities to existing owners. It is not a parser, scheduler,
 //! Method store, permission system or second Run model.
+mod authoring;
 mod lineage;
 mod model;
 mod plan;
@@ -11,6 +12,7 @@ mod return_path;
 mod runtime;
 mod z;
 
+pub use authoring::*;
 pub use lineage::*;
 pub use model::*;
 pub use plan::*;
