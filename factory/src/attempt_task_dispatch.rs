@@ -22,6 +22,7 @@ pub(super) fn prepare(
         Command::new(binary).args([
             "-C",
             cwd.to_str().ok_or("Task cwd is not UTF-8")?,
+            "session-space",
             "encounter-task-read",
             "--agent-session",
             &attempt.disposition.body.agent_session_ref,

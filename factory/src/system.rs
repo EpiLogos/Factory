@@ -96,7 +96,7 @@ fn build_descriptor() -> Result<Value, crate::cli::CliError> {
         }),
     ];
 
-    let actions = vec![
+    let mut actions = vec![
         json!({
             "action_ref": REQUEST_MORE_EVIDENCE_ACTION_REF,
             "title": "Request more evidence",
@@ -177,6 +177,54 @@ fn build_descriptor() -> Result<Value, crate::cli::CliError> {
             "history": { "ref": "factory development inhabitation", "command": ["factory", "development", "inhabitation", "<state>"] },
         }),
     ];
+
+    for operation in [
+        "signals",
+        "signal",
+        "field",
+        "digest",
+        "lookback",
+        "day",
+        "policy",
+        "collect",
+        "classify",
+        "commission",
+        "return",
+    ] {
+        let mutation = matches!(operation, "classify" | "commission" | "return");
+        let mut command = vec!["factory", "telemetry", operation, "<state>"];
+        if operation == "signal" {
+            command.push("<signal-ref>");
+        }
+        if mutation {
+            command.extend(["--request", "<request.json>"]);
+        }
+        if matches!(operation, "collect" | "commission" | "policy") {
+            command.extend(["--policy", "<policy.json>"]);
+        }
+        command.push("--json");
+        let mut args = vec![json!({"name":"state","kind":"reference"})];
+        if operation == "signal" {
+            args.push(json!({"name":"signal_ref","kind":"reference"}));
+        }
+        if mutation {
+            args.push(json!({"name":"request_file","kind":"reference"}));
+        }
+        if matches!(operation, "collect" | "commission" | "policy") {
+            args.push(json!({"name":"policy_file","kind":"reference"}));
+        }
+        actions.push(json!({
+            "action_ref":format!("factory.telemetry.{operation}"),
+            "title":format!("Factory telemetry {operation}"),
+            "args":args,
+            "availability":"disclosed","unavailable_reason":null,
+            "subject_kinds":["software-factory.project"],
+            "authority":{"requires":if mutation{vec!["actuation.local-authority/v1","exact-sensing-revision","action-specific-bound"]}else if operation=="collect"{vec!["enabled-project-collection-policy"]}else{vec![]},"granted_by":if mutation{"actuation"}else{"caller"},"evidence_ref":null},
+            "exposure":{"ui":true,"agent":true,"headless":true},
+            "explain":{"ref":format!("factory telemetry {operation}"),"command":command},
+            "history":{"ref":"factory telemetry lookback","command":["factory","telemetry","lookback","<state>","--json"]}
+        }));
+    }
 
     let body = json!({
         "schema": SCHEMA,
@@ -369,7 +417,7 @@ mod tests {
     fn canonical_actions_are_disclosed_with_authority() {
         let value = descriptor();
         let actions = value["actions"].as_array().unwrap();
-        assert_eq!(actions.len(), 5);
+        assert_eq!(actions.len(), 16);
         let request_evidence = &actions[0];
         assert_eq!(
             request_evidence["action_ref"],
@@ -408,7 +456,7 @@ mod tests {
             actions[4]["explain"]["command"],
             json!(["factory", "development", "inhabitation", "<state>"])
         );
-        for action in &actions[2..] {
+        for action in &actions[2..5] {
             assert_eq!(action["availability"], "disclosed");
             assert_eq!(action["authority"]["requires"], json!([]));
         }
@@ -421,9 +469,51 @@ mod tests {
     }
 
     #[test]
-    fn disclosure_does_not_invent_the_actuation_seam() {
-        let output = system_command(true).unwrap();
-        assert!(!output.contains("actuation"));
-        assert!(!output.contains("Actuation"));
+    fn telemetry_mutations_disclose_the_native_actuation_gate() {
+        let value = descriptor();
+        for operation in ["classify", "commission", "return"] {
+            let reference = format!("factory.telemetry.{operation}");
+            let action = value["actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|action| action["action_ref"] == reference)
+                .unwrap();
+            assert_eq!(action["authority"]["granted_by"], "actuation");
+            assert!(action["authority"]["requires"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|requirement| requirement == "action-specific-bound"));
+        }
+    }
+
+    #[test]
+    fn telemetry_descriptors_name_required_public_arguments() {
+        let value = descriptor();
+        let actions = value["actions"].as_array().unwrap();
+        for (operation, required) in [
+            ("signal", vec!["state", "signal_ref"]),
+            ("collect", vec!["state", "policy_file"]),
+            ("classify", vec!["state", "request_file"]),
+            ("commission", vec!["state", "request_file", "policy_file"]),
+            ("return", vec!["state", "request_file"]),
+        ] {
+            let reference = format!("factory.telemetry.{operation}");
+            let action = actions
+                .iter()
+                .find(|action| action["action_ref"] == reference)
+                .unwrap();
+            let names = action["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|argument| argument["name"].as_str().unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                names, required,
+                "{reference} must describe its executable arguments"
+            );
+        }
     }
 }

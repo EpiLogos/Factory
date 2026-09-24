@@ -44,6 +44,13 @@ Domain adapters must use the same native source/attempt route. Unrecognised doma
 syntax or a required interpretation without an implemented binding is refused;
 a type declaration is not an available execution capability.
 
+Registered domain type modules are the one exception to "no packages". The
+registry (`factory workflow help --json` → `domainAdapters`) currently admits
+QL's `@epilogos/ql-vak`: `import type { CPrime } from "@epilogos/ql-vak"` lets a
+unit carry `composition: {...} satisfies CPrime`, which Factory lowers to its
+native `CPrimeExecutionBinding` and validates against the unit and the compiled
+topology. Adapters supply types only; any other domain import is refused.
+
 ## Source, compilation and execution are different
 
 `source.ref` identifies the authored workflow and `source.revision` its explicit

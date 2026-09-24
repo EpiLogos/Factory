@@ -267,6 +267,7 @@ fn invoke_aikit(
     command
         .arg("-C")
         .arg(cwd)
+        .arg("session-space")
         .arg("encounter")
         .arg("--request-json")
         .arg(serde_json::to_string(request)?);

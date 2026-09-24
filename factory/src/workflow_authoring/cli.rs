@@ -35,7 +35,7 @@ pub const CONTRACTS: &[&str] = &[
     "factory.workflow-sdk-install/v1",
     "factory.workflow-diagnostic/v1",
 ];
-pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module.";
+pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  (registered domain type adapters, e.g. @epilogos/ql-vak, are listed as domainAdapters in help --json)\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module.";
 fn failure(e: impl fmt::Display) -> Diagnostic {
     error("workflow.operation", e.to_string())
 }
@@ -123,7 +123,15 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
     match op.as_str() {
         "help" | "--help" | "-h" => {
             require_len(&args, 0)?;
-            Ok(json!({"help":HELP,"commands":COMMANDS,"contracts":CONTRACTS}))
+            let adapters = super::domain::adapters()?
+                .iter()
+                .map(|a| json!({"specifier":a.specifier,"owner":a.owner,"typesContract":a.types_contract,
+                    "unitField":a.unit_field,"lowering":a.lowering,"declarationsSha256":a.declarations_sha256,
+                    "upstream":a.upstream}))
+                .collect::<Vec<_>>();
+            Ok(
+                json!({"help":HELP,"commands":COMMANDS,"contracts":CONTRACTS,"domainAdapters":adapters}),
+            )
         }
         "check" | "compile" => {
             let root = take_option(&mut args, "--root")?;
@@ -134,7 +142,16 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
             } else {
                 Ok(
                     json!({"contract":"factory.workflow-check/v1","valid":true,"source":summary(&loaded.source),
-                "units":loaded.compiled.units.values().map(|u|json!({"key":u.key,"ref":u.reference})).collect::<Vec<_>>(),"execution":"not-requested"}),
+                "units":loaded.compiled.units.values().map(|u|{
+                    let mut unit=json!({"key":u.key,"ref":u.reference});
+                    if let Some(c)=&u.composition {
+                        unit["composition"]=json!({"contract":c.contract,"actorRef":c.actor_ref,"frame":c.frame,
+                            "thread":c.thread,"threadForm":c.thread_form().musical_role(),"sequence":c.sequence,
+                            "direction":c.direction,"participation":c.participation,"content":c.content,"position":c.position,
+                            "qlBindingRef":c.ql_binding_ref,"qlBindingRevision":c.ql_binding_revision,"wholeRef":c.whole_ref});
+                    }
+                    unit
+                }).collect::<Vec<_>>(),"execution":"not-requested"}),
                 )
             }
         }

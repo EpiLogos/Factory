@@ -72,6 +72,8 @@ struct Loader {
     nodes: usize,
     expanded_bytes: usize,
     expanded_nodes: usize,
+    /// Registered domain adapters whose types the module graph imported.
+    adapters: BTreeSet<String>,
 }
 fn token_error(file: &str, text: &str, at: usize, message: impl Into<String>) -> Diagnostic {
     let mut d = error("authoring.syntax", message);
@@ -303,6 +305,11 @@ impl Parser<'_> {
     fn err(&self, message: impl Into<String>) -> Diagnostic {
         token_error(self.file, self.text, self.current().at, message)
     }
+    fn err_code(&self, code: &str, message: impl Into<String>) -> Diagnostic {
+        let mut d = self.err(message);
+        d.code = code.into();
+        d
+    }
     fn word_is(&self, s: &str) -> bool {
         matches!(&self.current().kind,Kind::Word(w) if w==s)
     }
@@ -449,9 +456,36 @@ impl Parser<'_> {
                 };
                 self.insert(local, b)?;
             }
+        } else if let Some(adapter) = super::domain::adapter(&specifier)? {
+            // A registered domain adapter supplies types only. Its values are
+            // never loaded; Factory lowers the declared unit field natively.
+            if !(type_only || names.iter().all(|(_, _, t)| *t)) {
+                return Err(self.err_code(
+                    "authoring.domain_adapter",
+                    format!("{specifier} supplies types only; use import type (Factory builders stay the only callable data)"),
+                ));
+            }
+            for (original, local, _) in names {
+                if !adapter.exports_type(&original) {
+                    return Err(self.err_code(
+                        "authoring.domain_adapter",
+                        format!(
+                            "The registered {specifier} declarations do not export type {original}"
+                        ),
+                    ));
+                }
+                self.insert(local, Binding::Type)?;
+            }
+            self.loader.adapters.insert(specifier);
         } else {
             if !specifier.starts_with("./") && !specifier.starts_with("../") {
-                return Err(self.err("Only the Factory SDK and literal relative .ts data imports are permitted; no packages, URLs or ambient modules"));
+                if type_only || names.iter().any(|(_, _, t)| *t) {
+                    return Err(self.err_code(
+                        "authoring.domain_adapter_unregistered",
+                        format!("Domain type imports need a registered native adapter; {specifier} is not registered (see domainAdapters in factory workflow help)"),
+                    ));
+                }
+                return Err(self.err("Only the Factory SDK, registered domain type adapters and literal relative .ts data imports are permitted; no packages, URLs or ambient modules"));
             }
             if type_only || names.iter().any(|(_, _, t)| *t) {
                 return Err(self.err("Domain type imports need their native adapter; only Factory types are accepted by this frontend"));
@@ -597,10 +631,13 @@ impl Parser<'_> {
         Ok(result)
     }
 }
-pub(super) fn load(
-    root: &Path,
-    entry: &Path,
-) -> Result<(Data, BTreeMap<String, ModuleBasis>, String), Diagnostic> {
+pub(super) struct Loaded {
+    pub data: Data,
+    pub modules: BTreeMap<String, ModuleBasis>,
+    pub entry: String,
+    pub adapters: BTreeSet<String>,
+}
+pub(super) fn load(root: &Path, entry: &Path) -> Result<Loaded, Diagnostic> {
     let root = root
         .canonicalize()
         .map_err(|e| error("authoring.root", e.to_string()))?;
@@ -629,6 +666,7 @@ pub(super) fn load(
         nodes: 0,
         expanded_bytes: 0,
         expanded_nodes: 0,
+        adapters: BTreeSet::new(),
     };
     let module = loader.load(&name)?;
     let default = module.default.ok_or_else(|| {
@@ -647,7 +685,12 @@ pub(super) fn load(
             ));
         }
     }
-    Ok(((*default).clone(), loader.modules, name))
+    Ok(Loaded {
+        data: (*default).clone(),
+        modules: loader.modules,
+        entry: name,
+        adapters: loader.adapters,
+    })
 }
 
 // Same bounded source reader for initial loading and TOCTOU recheck. Imported
@@ -761,7 +804,7 @@ fn read_module(root: &Path, path: &str) -> Result<Vec<u8>, Diagnostic> {
 
 /// Pure replay over immutable native source bytes. A caller cannot attach valid
 /// hashes for unrelated source text to a different semantic workflow document.
-pub(super) fn replay(basis: &AuthoredBasis) -> Result<Data, Diagnostic> {
+pub(super) fn replay(basis: &AuthoredBasis) -> Result<(Data, BTreeSet<String>), Diagnostic> {
     let mut loader = Loader {
         root: PathBuf::new(),
         retained: Some(basis.modules.clone()),
@@ -772,6 +815,7 @@ pub(super) fn replay(basis: &AuthoredBasis) -> Result<Data, Diagnostic> {
         nodes: 0,
         expanded_bytes: 0,
         expanded_nodes: 0,
+        adapters: BTreeSet::new(),
     };
     let module = loader.load(&basis.entry)?;
     if loader.modules != basis.modules {
@@ -792,5 +836,5 @@ pub(super) fn replay(basis: &AuthoredBasis) -> Result<Data, Diagnostic> {
             "Retained locations do not identify the actual source fields",
         ));
     }
-    Ok((*data).clone())
+    Ok(((*data).clone(), loader.adapters))
 }

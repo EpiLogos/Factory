@@ -29,6 +29,12 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;
+use std::time::SystemTime;
+
+fn factory_admission_time() -> String {
+    let instant: chrono::DateTime<chrono::Utc> = SystemTime::now().into();
+    instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
 
 pub const FACTORY_ATTEMPT_STATE: &str = "factory.attempt-state/v1";
 pub const FACTORY_ATTEMPT_ACTION: &str = "factory.attempt-action/v1";
@@ -254,6 +260,9 @@ pub struct ReadableReturn {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct FactoryAttemptRecord {
     pub attempt_ref: String,
+    /// Factory's admission time for this exact attempt identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt_recorded_at: Option<String>,
     pub task_ref: String,
     pub workflow_unit_ref: WorkflowUnitRef,
     pub reserved_execution_ref: String,
@@ -266,14 +275,28 @@ pub struct FactoryAttemptRecord {
     pub observations: Vec<OwnerOperationReceipt>,
     #[serde(default)]
     pub verifications: Vec<VerificationReceipt>,
+    /// Factory's admission time for each verification, keyed by its stable
+    /// receipt ref. Old states legitimately have no timing evidence.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub verification_recorded_at: BTreeMap<String, String>,
     #[serde(default)]
     pub tracking: Vec<AttemptTrackingFact>,
     #[serde(default)]
     pub reresolutions: Vec<ReresolutionRecord>,
     #[serde(default)]
     pub failure_evidence_refs: BTreeSet<String>,
+    /// First Factory admission of native failure evidence for this attempt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_recorded_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub readable_return: Option<ReadableReturn>,
+    /// Factory's admission time for the readable Return, not a claimant clock.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_recorded_at: Option<String>,
+    /// The verification frontier when Return was admitted, so earlier
+    /// prerequisite receipts cannot masquerade as later regression checks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_count_at_return: Option<usize>,
     /// Workcell room grant, recorded as material provenance only. A place is
     /// a room, not a self: no run/attempt identity is derived from it, and a
     /// place outliving the attempt is disclosure, never continuation.
@@ -590,6 +613,11 @@ pub(crate) fn apply_operation(
                 &record.reserved_execution_ref,
                 &execution_ref,
             )?;
+            if receipt.phase == OwnerOperationPhase::Failed {
+                record
+                    .failure_recorded_at
+                    .get_or_insert_with(factory_admission_time);
+            }
             record.execution_ref = Some(execution_ref);
             record.dispatch = Some(receipt);
             attempt_refs.push(attempt_ref);
@@ -623,6 +651,11 @@ pub(crate) fn apply_operation(
                 .map_err(FactoryAttemptError::InvalidDisposition)?;
             }
             ensure_no_duplicate_receipt(record, &receipt.receipt_ref)?;
+            if receipt.phase == OwnerOperationPhase::Failed {
+                record
+                    .failure_recorded_at
+                    .get_or_insert_with(factory_admission_time);
+            }
             record.observations.push(receipt);
             attempt_refs.push(attempt_ref);
             "record-observation"
@@ -651,6 +684,10 @@ pub(crate) fn apply_operation(
                     attempt_ref.clone(),
                 ));
             }
+            record.verification_recorded_at.insert(
+                verification.verification_ref.clone(),
+                factory_admission_time(),
+            );
             record.verifications.push(verification);
             attempt_refs.push(attempt_ref);
             "record-verification"
@@ -724,9 +761,11 @@ pub(crate) fn apply_operation(
             }
             let unit = attempt_unit(state, &attempt_ref)?;
             engine.fail(&unit, reason)?;
-            attempt_mut(state, &attempt_ref)?
-                .failure_evidence_refs
-                .extend(evidence_refs);
+            let record = attempt_mut(state, &attempt_ref)?;
+            record
+                .failure_recorded_at
+                .get_or_insert_with(factory_admission_time);
+            record.failure_evidence_refs.extend(evidence_refs);
             attempt_refs.push(attempt_ref);
             "fail"
         }
@@ -795,7 +834,10 @@ pub(crate) fn apply_operation(
                 }
             }
             engine.return_artifact(&unit, artifact)?;
-            attempt_mut(state, &attempt_ref)?.readable_return = Some(readable_return);
+            let record = attempt_mut(state, &attempt_ref)?;
+            record.return_recorded_at = Some(factory_admission_time());
+            record.verification_count_at_return = Some(record.verifications.len());
+            record.readable_return = Some(readable_return);
             attempt_refs.push(attempt_ref);
             "return-artifact"
         }
@@ -992,6 +1034,7 @@ fn prepare_start(
         launch,
         FactoryAttemptRecord {
             attempt_ref: start.attempt_ref.clone(),
+            attempt_recorded_at: Some(factory_admission_time()),
             task_ref: start.task_ref.clone(),
             workflow_unit_ref: start.workflow_unit_ref.clone(),
             reserved_execution_ref,
@@ -1000,10 +1043,14 @@ fn prepare_start(
             dispatch: None,
             observations: Vec::new(),
             verifications: Vec::new(),
+            verification_recorded_at: BTreeMap::new(),
             tracking: start.tracking.clone(),
             reresolutions: Vec::new(),
             failure_evidence_refs: BTreeSet::new(),
+            failure_recorded_at: None,
             readable_return: None,
+            return_recorded_at: None,
+            verification_count_at_return: None,
             place_grant: start.place_grant.clone(),
         },
     ))
@@ -1506,6 +1553,20 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
             }
         }
         unique_tracking(&record.tracking)?;
+        if let Some(timestamp) = &record.attempt_recorded_at {
+            if chrono::DateTime::parse_from_rfc3339(timestamp).is_err() {
+                return Err(FactoryAttemptError::CorruptState(
+                    "attempt admission time is invalid".into(),
+                ));
+            }
+        }
+        if let Some(timestamp) = &record.failure_recorded_at {
+            if chrono::DateTime::parse_from_rfc3339(timestamp).is_err() {
+                return Err(FactoryAttemptError::CorruptState(
+                    "failure admission time is invalid".into(),
+                ));
+            }
+        }
         for fact in &record.tracking {
             validate_tracking(fact)?;
         }
@@ -1517,6 +1578,34 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
         }
         for verification in &record.verifications {
             validate_verification(verification)?;
+        }
+        for (reference, timestamp) in &record.verification_recorded_at {
+            if !record
+                .verifications
+                .iter()
+                .any(|v| &v.verification_ref == reference)
+                || chrono::DateTime::parse_from_rfc3339(timestamp).is_err()
+            {
+                return Err(FactoryAttemptError::CorruptState(
+                    "verification admission time has no matching receipt or is invalid".into(),
+                ));
+            }
+        }
+        if let Some(timestamp) = &record.return_recorded_at {
+            if record.readable_return.is_none()
+                || chrono::DateTime::parse_from_rfc3339(timestamp).is_err()
+            {
+                return Err(FactoryAttemptError::CorruptState(
+                    "Return admission time has no Return or is invalid".into(),
+                ));
+            }
+        }
+        if let Some(count) = record.verification_count_at_return {
+            if record.readable_return.is_none() || count > record.verifications.len() {
+                return Err(FactoryAttemptError::CorruptState(
+                    "Return verification frontier is invalid".into(),
+                ));
+            }
         }
         for resolution in &record.reresolutions {
             validate_reresolution(resolution)?;

@@ -13,6 +13,7 @@ use epilogos_factory::execution_intelligence::{
 };
 use epilogos_factory::orchestration::RetryGrant;
 use epilogos_factory::project_development_store::transact_developmental_state;
+use epilogos_factory::sensing::{self, Observation, Signal, WorkRelation};
 use epilogos_factory::work_custody::{self, AssignRequest, CustodyState, UpdateRequest};
 use epilogos_factory::workflow::{compile_workflow, CompiledWorkflow, WorkflowSource};
 use serde_json::{json, Value};
@@ -120,6 +121,14 @@ impl World {
     /// A native attempt field with one running attempt whose participant
     /// occupies the Position `P`.
     fn new() -> Self {
+        Self::new_with_attempt(true)
+    }
+
+    fn new_without_attempt() -> Self {
+        Self::new_with_attempt(false)
+    }
+
+    fn new_with_attempt(start_attempt: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let run = Run::new(
             RUN.parse::<RunRef>().unwrap(),
@@ -226,16 +235,18 @@ impl World {
                 .unwrap(),
             ),
         ));
-        world.act(FactoryAttemptOperation::StartSerial {
-            attempt_ref: "attempt:first".into(),
-            task_ref: "task:guardian".into(),
-            parent_journey_ref: "journey:test".into(),
-            workflow_unit_ref: world.unit(),
-            disposition: world.disposition.clone(),
-            retry_grant: Some(RetryGrant::new("grant:guardian", 2).unwrap()),
-            tracking: vec![],
-            place_grant: None,
-        });
+        if start_attempt {
+            world.act(FactoryAttemptOperation::StartSerial {
+                attempt_ref: "attempt:first".into(),
+                task_ref: "task:guardian".into(),
+                parent_journey_ref: "journey:test".into(),
+                workflow_unit_ref: world.unit(),
+                disposition: world.disposition.clone(),
+                retry_grant: Some(RetryGrant::new("grant:guardian", 2).unwrap()),
+                tracking: vec![],
+                place_grant: None,
+            });
+        }
         world
     }
 
@@ -516,6 +527,222 @@ fn the_inhabitation_reading_carries_occupant_relations_verbatim_and_marks_absenc
             None,
         ),
         "factory.inhabitation.unknown_run",
+    );
+}
+
+fn insert_native_sensing_work(
+    state_path: &str,
+    source_ref: &str,
+    custody_ref: &str,
+    now_ref: &str,
+) -> String {
+    let world = PROJECT;
+    let signal_ref = sensing::signal_ref(world, source_ref);
+    transact_developmental_state(Path::new(state_path), |state| {
+        state.sensing.project_world_ref = Some(world.into());
+        state.sensing.signals.insert(
+            signal_ref.clone(),
+            Signal {
+                signal_ref: signal_ref.clone(),
+                project_world_ref: world.into(),
+                observation: Observation {
+                    source_ref: source_ref.into(),
+                    provider_ref: "github".into(),
+                    source_revision: "source-revision:inhabitation-test".into(),
+                    occurred_at_unix_ms: Some(1_790_270_000_000),
+                    observed_at_unix_ms: 1_790_270_000_000,
+                    summary: "Native source-qualified work already has a child NOW".into(),
+                    dimension: "product".into(),
+                    standing: "provider-reported".into(),
+                    relation_refs: vec![],
+                },
+                prior_source_revisions: vec![],
+                prior_observations: vec![],
+                first_observed_at_unix_ms: 1_790_270_000_000,
+                decisions: vec![],
+                work: Some(WorkRelation {
+                    custody_ref: custody_ref.into(),
+                    work_ref: signal_ref.clone(),
+                    run_ref: Some(RUN.into()),
+                    position_ref: P.into(),
+                    now_ref: Some(now_ref.into()),
+                    authority_ref: "authority:test".into(),
+                    created_at_unix_ms: 1_790_270_000_000,
+                }),
+                returns: vec![],
+            },
+        );
+        Ok(())
+    })
+    .unwrap();
+    signal_ref
+}
+
+#[test]
+fn source_qualified_work_child_now_is_visible_before_attempt_and_refuses_conflicts() {
+    let world = World::new_without_attempt();
+    let state = world.state();
+    let source = "https://github.com/EpiLogos/Factory/issues/199";
+    let signal_ref = sensing::signal_ref(PROJECT, source);
+    let custody = assign(
+        &state,
+        &[
+            "--position",
+            P,
+            "--work",
+            &signal_ref,
+            "--run",
+            RUN,
+            "--reason",
+            "source-qualified defect work before the first Attempt",
+        ],
+    );
+    let custody_ref = custody["custody"]["custody_ref"].as_str().unwrap();
+    let child = "central:now:project:01ARZ3NDEKTSV4RRFFQ69G5FAW:original-child";
+    assert_eq!(
+        insert_native_sensing_work(&state, source, custody_ref, child),
+        signal_ref
+    );
+    let read = || {
+        ok(factory(
+            &[
+                "development",
+                "inhabitation",
+                &state,
+                "--run",
+                RUN,
+                "--position",
+                P,
+                "--json",
+            ],
+            None,
+            None,
+        ))
+    };
+    let reading = read();
+    assert_eq!(reading["runs"][0]["occupants"], json!([]));
+    assert_eq!(
+        reading["runs"][0]["positions"][0]["child_now_ref"]["state"],
+        "present"
+    );
+    assert_eq!(
+        reading["runs"][0]["positions"][0]["child_now_ref"]["value"],
+        child
+    );
+    assert_eq!(
+        reading["runs"][0]["positions"][0]["custody"][0]["child_now_ref"]["value"],
+        child
+    );
+    assert!(
+        reading["runs"][0]["positions"][0]["child_now_ref"]["source"]
+            .as_str()
+            .unwrap()
+            .contains(&signal_ref)
+    );
+
+    // The native developmental store refuses broken custody and Run links
+    // before an inhabitation reading can promote them.
+    for (bad_custody, bad_run) in [(true, false), (false, true)] {
+        let result = transact_developmental_state(Path::new(&state), |native| {
+            let work = native
+                .sensing
+                .signals
+                .get_mut(&signal_ref)
+                .unwrap()
+                .work
+                .as_mut()
+                .unwrap();
+            if bad_custody {
+                work.custody_ref = "factory:custody:foreign".into();
+            }
+            if bad_run {
+                work.run_ref = Some("run:other".into());
+            }
+            Ok(())
+        });
+        assert!(
+            result.is_err(),
+            "broken native work relation must be refused"
+        );
+        assert_eq!(
+            read()["runs"][0]["positions"][0]["child_now_ref"]["value"],
+            child
+        );
+    }
+    // A foreign Project NOW ref is syntactically retained but cannot be
+    // presented as this Project's child.
+    transact_developmental_state(Path::new(&state), |native| {
+        native
+            .sensing
+            .signals
+            .get_mut(&signal_ref)
+            .unwrap()
+            .work
+            .as_mut()
+            .unwrap()
+            .now_ref = Some("central:now:project:Other:foreign-child".into());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        read()["runs"][0]["positions"][0]["child_now_ref"]["state"],
+        "unavailable"
+    );
+    transact_developmental_state(Path::new(&state), |native| {
+        native
+            .sensing
+            .signals
+            .get_mut(&signal_ref)
+            .unwrap()
+            .work
+            .as_mut()
+            .unwrap()
+            .now_ref = Some(child.into());
+        Ok(())
+    })
+    .unwrap();
+
+    let other_source = "https://github.com/EpiLogos/Factory/issues/200";
+    let other_signal = sensing::signal_ref(PROJECT, other_source);
+    let other_custody = assign(
+        &state,
+        &[
+            "--position",
+            P,
+            "--work",
+            &other_signal,
+            "--run",
+            RUN,
+            "--reason",
+            "another independently held source-qualified work item",
+        ],
+    );
+    let other_custody_ref = other_custody["custody"]["custody_ref"].as_str().unwrap();
+    insert_native_sensing_work(
+        &state,
+        other_source,
+        other_custody_ref,
+        "central:now:project:01ARZ3NDEKTSV4RRFFQ69G5FAW:other-child",
+    );
+    assert_eq!(
+        read()["runs"][0]["positions"][0]["child_now_ref"]["state"],
+        "ambiguous"
+    );
+    let each = read()["runs"][0]["positions"][0]["custody"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|custody| {
+            custody["child_now_ref"]["value"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        each.len(),
+        2,
+        "each exact custody retains its own child NOW"
     );
 }
 

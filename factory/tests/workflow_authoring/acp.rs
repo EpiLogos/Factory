@@ -82,6 +82,7 @@ impl Native {
             self.process(&self.aikit)
                 .arg("-C")
                 .arg(self.work.dir.path())
+                .arg("session-space")
                 .args(args)
                 .output()
                 .unwrap(),
@@ -137,6 +138,7 @@ impl Native {
             self.process(&self.aikit)
                 .arg("-C")
                 .arg(self.work.dir.path())
+                .arg("session-space")
                 .arg("encounter-serve")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
@@ -152,6 +154,7 @@ impl Native {
                 .process(&self.aikit)
                 .arg("-C")
                 .arg(self.work.dir.path())
+                .arg("session-space")
                 .args(["encounter", "--request-json", r#"{"action":"health"}"#])
                 .output()
                 .unwrap();

@@ -2,6 +2,9 @@
 
 This is the working documentation surface for the QL Software Factory.
 
+- [Factory sensing operations](FACTORY-SENSING.md) — native collection, Project
+  policy, Day/lookback reads, authority gates and signal-to-Run/Return relations.
+
 ## `canon/`
 
 - `QL-SOFTWARE-FACTORY-CONSTITUTIONAL-INDEX.md` — governing precedence map.

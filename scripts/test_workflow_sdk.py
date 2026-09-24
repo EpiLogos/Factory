@@ -75,10 +75,41 @@ def main() -> None:
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
         if bad.returncode == 0 or b'bad.ts' not in bad.stdout:
             raise SystemExit('Malformed workflow did not fail the actual TypeScript compiler as expected')
+        # A registered domain adapter composes the same packed SDK: the QL Vāk
+        # workflows typecheck against the vendored declarations Factory pins,
+        # and a C-prime outside QL's vocabulary fails the actual compiler.
+        registry = json.loads((ROOT / 'contracts/factory/workflow-domain-adapters.json').read_text())
+        for adapter in registry['adapters']:
+            installed = world / 'node_modules' / adapter['specifier']
+            installed.mkdir(parents=True)
+            shutil.copyfile(ROOT / adapter['declarations'], installed / 'index.d.ts')
+            (installed / 'package.json').write_text(json.dumps({
+                'name': adapter['specifier'], 'types': './index.d.ts',
+                'exports': {'.': {'types': './index.d.ts'}}}))
+        domain = world / 'domain'
+        domain.mkdir()
+        (domain / 'package.json').write_text('{"type":"module"}\n')
+        (domain / 'tsconfig.json').write_text(json.dumps({'compilerOptions': {
+            'strict': True, 'noEmit': True, 'module': 'NodeNext', 'moduleResolution': 'NodeNext',
+            'target': 'ES2022', 'skipLibCheck': False}, 'include': ['*.ts']}))
+        fixtures = sorted((ROOT / 'factory/tests/fixtures/ql-vak-workflows').glob('*.workflow.ts'))
+        if len(fixtures) != 3:
+            raise SystemExit('Expected the three QL-authored workflow fixtures')
+        for fixture in fixtures:
+            shutil.copyfile(fixture, domain / fixture.name)
+        run([compiler, '-p', str(domain / 'tsconfig.json')], domain)
+        wrong = fixtures[0].read_text().replace('CF: "CF2"', 'CF: "CF9"', 1)
+        if wrong == fixtures[0].read_text():
+            raise SystemExit('Negative C-prime fixture was not produced')
+        (domain / 'wrong-frame.ts').write_text(wrong)
+        bad = subprocess.run([compiler, '-p', str(domain / 'tsconfig.json')], cwd=domain,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+        if bad.returncode == 0 or b'wrong-frame.ts' not in bad.stdout:
+            raise SystemExit('A C-prime outside the QL vocabulary did not fail the TypeScript compiler')
         # An installed ECMAScript consumer imports through the public exports.
         (world / 'consumer.mjs').write_text("import {unit} from '@epilogos/factory-workflow'; const x={key:'native-source'}; if(unit(x)!==x || !Object.isFrozen(x)) process.exit(1);\n")
         run(['node', 'consumer.mjs'], world)
-        print(f'Packed SDK: {len(files)} resources checked; installed imports, positive and negative typechecks passed')
+        print(f'Packed SDK: {len(files)} resources checked; installed imports, positive and negative typechecks passed, including {len(fixtures)} domain-adapter workflows')
 
 
 if __name__ == '__main__':
