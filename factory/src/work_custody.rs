@@ -208,7 +208,11 @@ impl Refusal {
         }
     }
 
-    pub(crate) fn unchanged(code: &str, fact: impl Into<String>, action: impl Into<String>) -> Self {
+    pub(crate) fn unchanged(
+        code: &str,
+        fact: impl Into<String>,
+        action: impl Into<String>,
+    ) -> Self {
         Self::new(code, fact, NOTHING_PERSISTED, action)
     }
 }
