@@ -25,7 +25,8 @@ use crate::project_development_store::{
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fmt::{Display, Formatter};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 pub const FACTORY_WORK_CUSTODY: &str = "factory.work-custody/v1";
 pub const FACTORY_WORK_CUSTODY_RECEIPT: &str = "factory.work-custody-receipt/v1";
@@ -247,7 +248,9 @@ pub struct UpdateRequest {
     pub to_position_ref: Option<String>,
     pub expected_revision: Option<u64>,
     /// The occupant acting, when the caller is a body occupying a Position.
-    /// Only the Position holding the custody may change it.
+    /// The published `update` command requires this, and Actuation must still
+    /// call the generation current. In-process Factory transitions pass
+    /// `None`; a missing stamp is not operator authority on the command.
     pub actor: Option<CustodyActor>,
 }
 
@@ -620,6 +623,22 @@ pub fn update_in(
         })?;
     let current = state.work_custody[index].clone();
     if let Some(actor) = &request.actor {
+        if actor
+            .generation_ref
+            .as_deref()
+            .map(str::trim)
+            .filter(|generation| !generation.is_empty())
+            .is_none()
+        {
+            return Err(Refusal::unchanged(
+                "factory.custody.generation_required",
+                format!(
+                    "custody {} is held by {}; a position stamp without the current occupant generation is not authority",
+                    current.custody_ref, current.position_ref
+                ),
+                "inhabit the holding Position so this process carries OI_POSITION_REF and OI_OCCUPANT_GENERATION, then retry",
+            ));
+        }
         if actor.position_ref != current.position_ref {
             return Err(Refusal::unchanged(
                 "factory.custody.not_holder",
@@ -843,9 +862,117 @@ pub fn assign(path: &Path, request: AssignRequest) -> Result<CustodyReceipt, Ref
     transact(path, |state| assign_in(state, request, now))
 }
 
+/// The published custody command. A missing occupancy stamp is a refusal,
+/// not an operator. The generation has to be the one Actuation still calls current.
 pub fn update(path: &Path, request: UpdateRequest) -> Result<CustodyReceipt, Refusal> {
+    let actor = published_actor(request.actor.as_ref())?;
+    confirm_current_generation(actor)?;
     let now = now_unix_ms();
     transact(path, |state| update_in(state, request, now))
+}
+
+fn published_actor(actor: Option<&CustodyActor>) -> Result<&CustodyActor, Refusal> {
+    let Some(actor) = actor else {
+        return Err(Refusal::unchanged(
+            "factory.custody.actor_required",
+            "a custody change with no occupancy stamp is not an operator",
+            "inhabit the holding Position and retry from that body",
+        ));
+    };
+    if actor
+        .generation_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|generation| !generation.is_empty())
+        .is_none()
+    {
+        return Err(Refusal::unchanged(
+            "factory.custody.generation_required",
+            format!(
+                "this body names {} but carries no occupant generation",
+                actor.position_ref
+            ),
+            "inhabit so OI_OCCUPANT_GENERATION is set, then retry",
+        ));
+    }
+    Ok(actor)
+}
+
+fn actuation_binary() -> PathBuf {
+    for key in [
+        "ACTUATION_BIN",
+        "OI_ACTUATION_BIN",
+        "FACTORY_NATIVE_ACTUATION_BIN",
+    ] {
+        if let Some(value) = std::env::var(key)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+        {
+            return PathBuf::from(value);
+        }
+    }
+    PathBuf::from("actuation")
+}
+
+fn confirm_current_generation(actor: &CustodyActor) -> Result<(), Refusal> {
+    let generation = actor
+        .generation_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|generation| !generation.is_empty())
+        .expect("published_actor already required a generation");
+    let binary = actuation_binary();
+    let output = Command::new(&binary)
+        .args([
+            "occupancy",
+            "verify",
+            "--position",
+            &actor.position_ref,
+            "--generation",
+            generation,
+            "--json",
+        ])
+        .output();
+    let output = match output {
+        Ok(output) => output,
+        Err(error) => {
+            return Err(Refusal::unchanged(
+                "factory.custody.occupancy_unverified",
+                format!(
+                    "Actuation could not be run at {} to verify {} @ {generation}: {error}",
+                    binary.display(),
+                    actor.position_ref
+                ),
+                "set ACTUATION_BIN to the actuation executable and retry from the holding body",
+            ));
+        }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let current = output.status.success()
+        && serde_json::from_str::<serde_json::Value>(&stdout)
+            .ok()
+            .and_then(|value| value.get("ok").and_then(|ok| ok.as_bool()))
+            == Some(true);
+    if current {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let detail = if stdout.trim().is_empty() {
+        stderr.trim().to_string()
+    } else {
+        stdout.trim().to_string()
+    };
+    Err(Refusal::unchanged(
+        "factory.custody.occupancy_unverified",
+        format!(
+            "{} @ {generation} is not Actuation's current occupant ({detail})",
+            actor.position_ref
+        ),
+        format!(
+            "read the tenure with `actuation occupancy read --position {}` and retry as that generation",
+            actor.position_ref
+        ),
+    ))
 }
 
 pub(crate) fn state_refusal(path: &Path, error: &ProjectDevelopmentStoreError) -> Refusal {
@@ -1069,6 +1196,72 @@ mod tests {
         assert_eq!(
             last.actor.as_ref().unwrap().generation_ref.as_deref(),
             Some("actuation:generation:holder")
+        );
+    }
+
+    #[test]
+    fn a_position_stamp_without_a_generation_writes_nothing() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let holder = state.work_custody[0].position_ref.clone();
+        let before = state.clone();
+        let mut bare = update(&reference, CustodyState::Completed);
+        bare.actor = Some(CustodyActor {
+            position_ref: holder,
+            generation_ref: None,
+        });
+        assert_eq!(
+            refusal_code(update_in(&mut state, bare, 2)),
+            "factory.custody.generation_required"
+        );
+        assert_eq!(state, before);
+        assert_eq!(
+            published_actor(None).unwrap_err().code,
+            "factory.custody.actor_required"
+        );
+    }
+
+    #[test]
+    fn custody_update_accepts_only_the_generation_actuation_calls_current() {
+        let actor = CustodyActor {
+            position_ref: "central:position:project:O-I:factory-guardian".into(),
+            generation_ref: Some("actuation:generation:holder".into()),
+        };
+        let dir =
+            std::env::temp_dir().join(format!("factory-custody-verify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let binary = dir.join("actuation");
+        std::fs::write(
+            &binary,
+            "#!/bin/sh\ncase \"$*\" in\n  *actuation:generation:holder*) echo '{\"ok\":true,\"verb\":\"verify\"}' ;;\n  *) echo '{\"ok\":false}' >&2; exit 2 ;;\nesac\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let prior = std::env::var("ACTUATION_BIN").ok();
+        std::env::set_var("ACTUATION_BIN", &binary);
+        let accepted = confirm_current_generation(&actor);
+        let stale = CustodyActor {
+            generation_ref: Some("actuation:generation:old".into()),
+            ..actor
+        };
+        let refused = confirm_current_generation(&stale);
+        match prior {
+            Some(value) => std::env::set_var("ACTUATION_BIN", value),
+            None => std::env::remove_var("ACTUATION_BIN"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(accepted.is_ok(), "{accepted:?}");
+        assert_eq!(
+            refused.unwrap_err().code,
+            "factory.custody.occupancy_unverified"
         );
     }
 
