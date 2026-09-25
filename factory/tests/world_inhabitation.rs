@@ -27,10 +27,25 @@ const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const P: &str = "central:position:project:O-I:factory-guardian";
 const OTHER: &str = "central:position:project:O-I:reviewer";
 
+fn occupancy_stub() -> PathBuf {
+    let path = std::env::temp_dir().join("factory-test-occupancy-ok");
+    if !path.exists() {
+        std::fs::write(&path, "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true}'\n").unwrap();
+        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
+        use std::os::unix::fs::PermissionsExt;
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions).unwrap();
+    }
+    path
+}
+
 fn factory(args: &[&str], cwd: Option<&Path>, body: Option<Value>) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_factory"));
     command
         .args(args)
+        .env("OI_POSITION_REF", P)
+        .env("OI_OCCUPANT_GENERATION", "generation:test")
+        .env("ACTUATION_BIN", occupancy_stub())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

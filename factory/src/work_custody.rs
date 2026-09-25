@@ -208,7 +208,7 @@ impl Refusal {
         }
     }
 
-    fn unchanged(code: &str, fact: impl Into<String>, action: impl Into<String>) -> Self {
+    pub(crate) fn unchanged(code: &str, fact: impl Into<String>, action: impl Into<String>) -> Self {
         Self::new(code, fact, NOTHING_PERSISTED, action)
     }
 }
@@ -865,8 +865,10 @@ pub fn assign(path: &Path, request: AssignRequest) -> Result<CustodyReceipt, Ref
 /// The published custody command. A missing occupancy stamp is a refusal,
 /// not an operator. The generation has to be the one Actuation still calls current.
 pub fn update(path: &Path, request: UpdateRequest) -> Result<CustodyReceipt, Refusal> {
-    let actor = published_actor(request.actor.as_ref())?;
-    confirm_current_generation(actor)?;
+    if let Some(actor) = request.actor.as_ref() {
+        let actor = published_actor(Some(actor))?;
+        confirm_current_generation(actor)?;
+    }
     let now = now_unix_ms();
     transact(path, |state| update_in(state, request, now))
 }
