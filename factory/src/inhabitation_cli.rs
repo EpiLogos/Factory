@@ -358,6 +358,29 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                     UPDATE_USAGE,
                 )?;
                 parsed.required("--state")?;
+                let actor = work_custody::CustodyActor::from_env().ok_or_else(|| {
+                    work_custody::Refusal::unchanged(
+                        "factory.custody.actor_required",
+                        "a custody change with no occupancy stamp is not an operator",
+                        "inhabit the holding Position and retry from that body",
+                    )
+                })?;
+                if actor
+                    .generation_ref
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|generation| !generation.is_empty())
+                    .is_none()
+                {
+                    return Err(work_custody::Refusal::unchanged(
+                        "factory.custody.generation_required",
+                        format!(
+                            "this body names {} but carries no occupant generation",
+                            actor.position_ref
+                        ),
+                        "inhabit so OI_OCCUPANT_GENERATION is set, then retry",
+                    ));
+                }
                 let request = UpdateRequest {
                     custody_ref: parsed.required("--custody")?,
                     state: parsed.custody_state("--state")?,
@@ -375,7 +398,7 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                             })
                         })
                         .transpose()?,
-                    actor: work_custody::CustodyActor::from_env(),
+                    actor: Some(actor),
                 };
                 let receipt = work_custody::update(&state_path(&parsed)?, request)?;
                 render(&receipt, json, || receipt_text(&receipt))
