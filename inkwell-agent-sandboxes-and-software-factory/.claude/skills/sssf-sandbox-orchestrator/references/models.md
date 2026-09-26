@@ -26,7 +26,7 @@ model**. Nothing else changes between N runs.
 | planner | `openrouter/google/gemini-3.6-flash` | high | $1.50 / $7.50 |
 | builder | *(inherits the default)* `deepseek/deepseek-v4-flash-0731` | medium | $0.09 / $0.18 |
 | scout | *(inherits the default)* `deepseek/deepseek-v4-flash-0731` | medium | $0.09 / $0.18 |
-| reviewer | `openrouter/z-ai/glm-5.2` | high | $0.76 / $2.42 |
+| reviewer | `zai/glm-5.3-flash` | high | owner's GLM coding plan (was `openrouter/z-ai/glm-5.2`, $0.76 / $2.42 — amended 2026-09-26) |
 | documenter | `openrouter/openai/gpt-5.6-luna` | medium | $0.10 / $0.60 |
 
 ### `adws/adw_sssf_config/sssf.frontier.config.yaml` — the frontier roster

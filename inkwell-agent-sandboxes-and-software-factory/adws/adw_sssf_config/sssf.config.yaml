@@ -104,7 +104,7 @@ agents:
   # phase over adw_modules/quality.py. See SKILL.md hard rule 8.
 
   - name: reviewer
-    model: openrouter/z-ai/glm-5.2
+    model: zai/glm-5.3-flash
     thinking: high
     color: "#fb7185"
     purpose: Confirm that what was built is what was asked for; change nothing.
