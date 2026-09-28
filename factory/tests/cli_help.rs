@@ -19,11 +19,7 @@ fn run_factory(args: &[&str]) -> (String, i32) {
 
 #[test]
 fn bare_and_help_print_the_task_oriented_reference_without_side_effects() {
-    for args in [
-        vec!["--help"],
-        vec!["help"],
-        vec!["-h"],
-    ] {
+    for args in [vec!["--help"], vec!["help"], vec!["-h"]] {
         let (stdout, code) = run_factory(&args);
         assert_eq!(code, 0, "help never fails: {args:?}");
         assert!(stdout.contains("Software Factory"), "{args:?}: {stdout}");
