@@ -17,6 +17,7 @@ const cprime = { ref: "ql/interpretation/c-prime", revision: "09f7d29ad6262f85bc
 const wayfinder = "central:source:project:quaternal-logic:docs/integrations/epi-logos/VAK-EXPRESSION-WORKFLOW-WAYFINDER.md";
 const oikonomia = "central:source:project:quaternal-logic:docs/kernel-rebuild/VAK-OIKONOMIA-KNOWLEDGE-RETURN.md";
 const field = "central:source:project:O-I:docs/experience/EXPRESSION-FIELD.md";
+const actContract = "central:source:project:O-I:docs/contracts/EXPRESSION-ACT-MATERIAL-V1.md";
 const placement = "central:source:control:root:Control/user/placement.json";
 const returnDoor = "central:source:control:root:Control/agents/governance/field-and-now/session-work-placement.md";
 const anima = ["agent-set/anima"];
@@ -24,7 +25,7 @@ const anima = ["agent-set/anima"];
 export default defineWorkflow({
   source: {
     ref: "workflow-source:01M399B671QTQYNWQ02B8NM941",
-    revision: "expression-development-v1",
+    revision: "expression-development-v2",
   },
   workflowKey: "expression-development",
   units: [
@@ -84,7 +85,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/anima-eros"], agentSetRefs: anima },
-      praxisRefs: ["skill/ql/vak-evaluate", "skill/personal/verification-before-completion"],
+      praxisRefs: ["skill/ql/vak-evaluate", "skill/ql/anima-expressive-composition", "skill/personal/verification-before-completion"],
       capabilityRefs: ["capability/expression-inspect", "capability/expression-compose", "capability/expression-observe"],
       dependencies: ["logos-articulate"],
       independenceFrom: ["mythos-image"],
@@ -100,7 +101,7 @@ export default defineWorkflow({
         actor: "agent/anima-eros", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/eros",
         contextResolution: "context-resolution:expression-development/eros",
-        sources: [wayfinder, field],
+        sources: [wayfinder, field, actContract],
       } satisfies CPrime,
     }),
     unit({
@@ -111,7 +112,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/anima-mythos"], agentSetRefs: anima },
-      praxisRefs: ["skill/ql/thought-distil", "skill/personal/brainstorming"],
+      praxisRefs: ["skill/ql/thought-distil", "skill/ql/anima-expressive-composition", "skill/personal/brainstorming"],
       capabilityRefs: ["capability/expression-inspect", "capability/knowledge-search"],
       dependencies: ["logos-articulate"],
       independenceFrom: ["eros-exchange"],
@@ -137,7 +138,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/anima"], agentSetRefs: anima },
-      praxisRefs: ["skill/ql/anima-orchestration", "skill/personal/subagent-driven-development", "skill/personal/dispatching-parallel-agents"],
+      praxisRefs: ["skill/ql/anima-orchestration", "skill/ql/anima-expressive-composition", "skill/personal/subagent-driven-development", "skill/personal/dispatching-parallel-agents"],
       capabilityRefs: ["capability/expression-compose", "capability/expression-perform", "capability/expression-observe"],
       dependencies: ["logos-articulate", "eros-exchange", "mythos-image"],
       inputs: [
@@ -156,7 +157,7 @@ export default defineWorkflow({
         actor: "agent/anima", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/anima",
         contextResolution: "context-resolution:expression-development/anima",
-        sources: [wayfinder, oikonomia, field],
+        sources: [wayfinder, oikonomia, field, actContract],
       } satisfies CPrime,
     }),
     unit({
@@ -167,7 +168,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/anima-psyche"], agentSetRefs: anima },
-      praxisRefs: ["skill/ql/day-night-pass", "skill/personal/executing-plans"],
+      praxisRefs: ["skill/ql/day-night-pass", "skill/ql/chronos-act-continuity", "skill/personal/executing-plans"],
       capabilityRefs: ["capability/now-read", "capability/expression-inspect"],
       dependencies: ["anima-conduct"],
       inputs: [{ predecessor: "anima-conduct", receivingContextRef: "context:expression-development/psyche-from-anima" }],
@@ -181,7 +182,7 @@ export default defineWorkflow({
         actor: "agent/anima-psyche", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/psyche",
         contextResolution: "context-resolution:expression-development/psyche",
-        sources: [oikonomia, returnDoor],
+        sources: [oikonomia, returnDoor, actContract],
       } satisfies CPrime,
     }),
     unit({
@@ -217,7 +218,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/aletheia"], agentSetRefs: ["agent-set/aletheia"] },
-      praxisRefs: ["skill/ql/aletheia-stack-traverse", "skill/personal/verification-before-completion"],
+      praxisRefs: ["skill/ql/aletheia-stack-traverse", "skill/ql/aletheia-expressive-return", "skill/ql/chronos-act-continuity", "skill/personal/verification-before-completion"],
       capabilityRefs: ["capability/now-return", "capability/expression-observe"],
       dependencies: ["sophia-integrate"],
       inputs: [{ predecessor: "sophia-integrate", receivingContextRef: "context:expression-development/aletheia-from-sophia" }],
@@ -232,7 +233,7 @@ export default defineWorkflow({
         actor: "agent/aletheia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/aletheia",
         contextResolution: "context-resolution:expression-development/aletheia",
-        sources: [oikonomia, returnDoor],
+        sources: [oikonomia, returnDoor, actContract],
       } satisfies CPrime,
     }),
   ],
