@@ -278,15 +278,7 @@ fn validate_operation(
                     "uncertain outcome cannot become a completed Return",
                 ));
             }
-            let verification = record
-                .verifications
-                .last()
-                .ok_or_else(|| invalid("Return needs current verification"))?;
-            if verification.outcome != VerificationOutcome::Passed
-                || !verification
-                    .obligations
-                    .is_superset(&record.disposition.verification_obligations)
-            {
+            if !has_passing_verification(record) {
                 return Err(invalid(
                     "a later failed/unknown verification supersedes an earlier pass",
                 ));

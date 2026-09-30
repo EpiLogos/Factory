@@ -30,6 +30,152 @@ const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
 #[test]
+fn rejected_return_reopens_its_unit_and_blocks_dependents_after_restart() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    let unit = workflow.unit("inspect-source").unwrap().reference.clone();
+    let grant = RetryGrant::new("grant:rejection-repair", 2).unwrap();
+    let selected = disposition(&fixture.run, &workflow, "inspect-source", Some(&grant));
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:rejected".into(),
+            task_ref: "task:rejected".into(),
+            parent_journey_ref: "journey:rejection".into(),
+            workflow_unit_ref: unit.clone(),
+            disposition: selected.clone(),
+            retry_grant: Some(grant.clone()),
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:rejected",
+        "inspect-source",
+        "execution:rejected",
+    );
+    let mut rejection = verification(
+        &workflow,
+        "inspect-source",
+        "verification:independent-rejection",
+    );
+    rejection.outcome = VerificationOutcome::Failed;
+    fixture
+        .action(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "attempt:rejected".into(),
+            verification: rejection,
+        })
+        .unwrap();
+    // Every invocation is a fresh native CLI process over the retained owner state.
+    let reopened = fixture.reading();
+    assert_eq!(reopened.legs[&unit].status, LegStatus::Failed);
+    assert_eq!(reopened.legs[&unit].artifacts.len(), 1);
+    assert!(reopened.attempts[0].readable_return.is_some());
+    assert!(
+        fixture
+            .action(FactoryAttemptOperation::StartSerial {
+                attempt_ref: "attempt:blocked".into(),
+                task_ref: "task:blocked".into(),
+                parent_journey_ref: "journey:rejection".into(),
+                workflow_unit_ref: workflow
+                    .unit("implement-compiler")
+                    .unwrap()
+                    .reference
+                    .clone(),
+                disposition: disposition(&fixture.run, &workflow, "implement-compiler", None),
+                retry_grant: None,
+                tracking: vec![],
+                place_grant: None,
+            })
+            .is_err(),
+        "rejected predecessor must not admit dependent work"
+    );
+    // Correction needs a fresh, bounded attempt. A later assessment of the
+    // rejected predecessor must not downgrade that replacement execution.
+    fixture
+        .action(FactoryAttemptOperation::Retry {
+            attempt_ref: "attempt:corrected".into(),
+            task_ref: "task:rejected".into(),
+            parent_journey_ref: "journey:rejection".into(),
+            workflow_unit_ref: unit.clone(),
+            grant_ref: grant.grant_ref,
+            disposition: selected,
+            tracking: vec![],
+            reresolution: None,
+            place_grant: None,
+        })
+        .unwrap();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:corrected",
+        "inspect-source",
+        "execution:corrected",
+    );
+    let mut historical = verification(
+        &workflow,
+        "inspect-source",
+        "verification:historical-unknown",
+    );
+    historical.outcome = VerificationOutcome::Unknown;
+    historical.source_revision = "aikit-journal:historical-attempt:19".into();
+    fixture
+        .action(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "attempt:rejected".into(),
+            verification: historical,
+        })
+        .unwrap();
+    let corrected = fixture.reading();
+    assert_eq!(corrected.legs[&unit].status, LegStatus::Returned);
+    assert_eq!(corrected.legs[&unit].execution_ref, "execution:corrected");
+    assert_eq!(corrected.legs[&unit].attempts.len(), 2);
+    assert_eq!(corrected.legs[&unit].attempts[0].artifacts.len(), 1);
+    assert_eq!(corrected.legs[&unit].attempts[0].status, LegStatus::Failed);
+}
+
+#[test]
+fn subject_advance_reopens_returned_owner_state_and_preserves_its_bytes() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    let unit = workflow.unit("inspect-source").unwrap();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:old-subject".into(),
+            task_ref: "task:subject".into(),
+            parent_journey_ref: "journey:subject".into(),
+            workflow_unit_ref: unit.reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:old-subject",
+        "inspect-source",
+        "execution:old-subject",
+    );
+    let original = fixture.reading().legs[&unit.reference].artifacts.clone();
+    fixture
+        .action(FactoryAttemptOperation::AdvanceSubject {
+            subject_ref: unit.subject_ref.to_string(),
+            revision: "subject:new-candidate".into(),
+        })
+        .unwrap();
+    let restarted = fixture.reading();
+    assert!(
+        restarted.source_current,
+        "workflow freshness is distinct from subject currency"
+    );
+    assert_eq!(restarted.legs[&unit.reference].status, LegStatus::Failed);
+    assert_eq!(restarted.legs[&unit.reference].artifacts, original);
+    assert!(restarted.attempts[0].readable_return.is_some());
+}
+
+#[test]
 fn failed_owner_dispatch_remains_the_same_signal_after_later_verification() {
     let fixture = Fixture::new(source());
     let workflow = fixture.workflow();

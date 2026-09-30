@@ -664,11 +664,7 @@ impl ExecutableOrchestration {
     ) -> Result<(), OrchestrationError> {
         let compiled = self.unit(unit)?;
         for dependency in &compiled.dependencies {
-            if !self
-                .legs
-                .get(dependency)
-                .is_some_and(|leg| leg.status == LegStatus::Returned)
-            {
+            if !self.is_current_return(dependency) {
                 return Err(OrchestrationError::DependencyNotSatisfied(
                     dependency.to_string(),
                 ));
@@ -763,7 +759,11 @@ impl ExecutableOrchestration {
         self.transition(
             unit,
             LegStatus::CancelRequested,
-            &[LegStatus::Active, LegStatus::Detached],
+            &[
+                LegStatus::Active,
+                LegStatus::Detached,
+                LegStatus::LateResult,
+            ],
         )
     }
 
@@ -818,6 +818,26 @@ impl ExecutableOrchestration {
         leg.failure_reason = Some(reason.clone());
         leg.attempts.last_mut().unwrap().failure_reason = Some(reason);
         self.release_writer(unit);
+        self.set_unit_state(unit, NodeState::Abandoned)
+    }
+
+    /// Reopen the work whose current Return no longer meets verification.
+    /// Its output remains testimony; retry still needs the existing finite grant.
+    pub(crate) fn reject_return(
+        &mut self,
+        unit: &WorkflowUnitRef,
+        reason: String,
+    ) -> Result<(), OrchestrationError> {
+        let leg = self.leg_mut(unit)?;
+        if leg.status != LegStatus::Returned {
+            return Err(OrchestrationError::InvalidTransition {
+                unit: unit.clone(),
+                status: leg.status,
+            });
+        }
+        set_current_status(leg, LegStatus::Failed);
+        leg.failure_reason = Some(reason.clone());
+        leg.attempts.last_mut().unwrap().failure_reason = Some(reason);
         self.set_unit_state(unit, NodeState::Abandoned)
     }
 
@@ -877,8 +897,11 @@ impl ExecutableOrchestration {
         if artifact.producing_execution_ref != expected_execution {
             return self.record_historical_late_artifact(unit, artifact);
         }
-        let leg = self.leg_mut(unit)?;
-        if !matches!(leg.status, LegStatus::Active | LegStatus::Detached) {
+        let current_basis = self.current_subject_revision(&expected_subject);
+        let status = self.leg(unit).unwrap().status;
+        if !matches!(status, LegStatus::Active | LegStatus::Detached)
+            || current_basis != Some(expected_basis.as_str())
+        {
             return self.return_late_artifact(
                 unit,
                 artifact,
@@ -893,6 +916,7 @@ impl ExecutableOrchestration {
         {
             return Err(OrchestrationError::InvalidArtifact(artifact.artifact_ref));
         }
+        let leg = self.leg_mut(unit)?;
         leg.artifacts.push(artifact.clone());
         set_current_status(leg, LegStatus::Returned);
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
@@ -947,10 +971,16 @@ impl ExecutableOrchestration {
             .cloned()
             .unwrap_or_default();
         let leg = self.leg_mut(unit)?;
-        if !matches!(
-            leg.status,
-            LegStatus::Quiescent | LegStatus::ProcessTerminated | LegStatus::CancellationAccepted
-        ) {
+        let stale_active = matches!(leg.status, LegStatus::Active | LegStatus::Detached)
+            && current_revision != expected_basis;
+        if !stale_active
+            && !matches!(
+                leg.status,
+                LegStatus::Quiescent
+                    | LegStatus::ProcessTerminated
+                    | LegStatus::CancellationAccepted
+            )
+        {
             return Err(OrchestrationError::InvalidTransition {
                 unit: unit.clone(),
                 status: leg.status,
@@ -969,9 +999,6 @@ impl ExecutableOrchestration {
             .unwrap()
             .late_artifacts
             .push(artifact);
-        if current_revision != leg.delegation.basis_revision {
-            return Ok(());
-        }
         Ok(())
     }
 
@@ -1019,6 +1046,22 @@ impl ExecutableOrchestration {
     pub fn advance_subject(&mut self, subject_ref: impl Into<String>, revision: impl Into<String>) {
         self.subject_revisions
             .insert(subject_ref.into(), revision.into());
+    }
+
+    /// A Returned status retains what happened. Only this exact execution's
+    /// evidence at the current subject revision can release dependent work.
+    pub fn is_current_return(&self, unit: &WorkflowUnitRef) -> bool {
+        self.legs.get(unit).is_some_and(|leg| {
+            leg.status == LegStatus::Returned
+                && self.current_subject_revision(&leg.delegation.subject_ref)
+                    == Some(leg.delegation.basis_revision.as_str())
+                && !leg.artifacts.is_empty()
+                && leg.artifacts.iter().all(|artifact| {
+                    artifact.producing_execution_ref == leg.execution_ref
+                        && artifact.subject_ref == leg.delegation.subject_ref
+                        && artifact.subject_revision == leg.delegation.basis_revision
+                })
+        })
     }
 
     pub fn open_retry_grant(&mut self, grant: RetryGrant) -> Result<(), OrchestrationError> {
@@ -1100,7 +1143,7 @@ impl ExecutableOrchestration {
         let mut failed_units = BTreeSet::new();
         for unit in &barrier.waits_for {
             match self.legs.get(unit).map(|leg| leg.status) {
-                Some(LegStatus::Returned) => {
+                Some(LegStatus::Returned) if self.is_current_return(unit) => {
                     returned_units.insert(unit.clone());
                 }
                 Some(
@@ -1139,7 +1182,7 @@ impl ExecutableOrchestration {
         let mut complete = true;
         for unit in self.workflow.units.values() {
             match self.legs.get(&unit.reference).map(|leg| leg.status) {
-                Some(LegStatus::Returned) => {}
+                Some(LegStatus::Returned) if self.is_current_return(&unit.reference) => {}
                 Some(
                     LegStatus::Failed
                     | LegStatus::CancellationAccepted

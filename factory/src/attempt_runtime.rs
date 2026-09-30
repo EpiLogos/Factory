@@ -689,6 +689,21 @@ pub(crate) fn apply_operation(
                 factory_admission_time(),
             );
             record.verifications.push(verification);
+            if !has_passing_verification(record)
+                && engine.leg(&record.workflow_unit_ref).is_some_and(|leg| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && record.execution_ref.as_deref() == Some(leg.execution_ref.as_str())
+                })
+            {
+                engine.reject_return(
+                    &record.workflow_unit_ref,
+                    format!(
+                        "current Return no longer verified: {} ({:?})",
+                        record.verifications.last().unwrap().verification_ref,
+                        record.verifications.last().unwrap().outcome,
+                    ),
+                )?;
+            }
             attempt_refs.push(attempt_ref);
             "record-verification"
         }
@@ -896,6 +911,18 @@ pub(crate) fn apply_operation(
                 ));
             }
             engine.advance_subject(subject_ref, revision);
+            let stale_returns = engine
+                .legs()
+                .iter()
+                .filter(|(unit, leg)| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && !engine.is_current_return(unit)
+                })
+                .map(|(unit, _)| unit.clone())
+                .collect::<Vec<_>>();
+            for unit in stale_returns {
+                engine.reject_return(&unit, "Return is historical after subject advance".into())?;
+            }
             "advance-subject"
         }
         FactoryAttemptOperation::AttachReceiving {
@@ -1313,8 +1340,8 @@ fn ensure_retry_protection(
     Ok(())
 }
 
-fn has_passing_verification(record: &FactoryAttemptRecord) -> bool {
-    record.verifications.iter().any(|verification| {
+pub(crate) fn has_passing_verification(record: &FactoryAttemptRecord) -> bool {
+    record.verifications.last().is_some_and(|verification| {
         verification.outcome == VerificationOutcome::Passed
             && verification
                 .obligations

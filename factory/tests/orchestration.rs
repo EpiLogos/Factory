@@ -385,6 +385,89 @@ fn cancellation_and_quiescence_are_distinct_and_block_the_barrier() {
 }
 
 #[test]
+fn changed_subject_keeps_active_return_as_late_evidence_until_quiescent() {
+    let mut orchestration = engine();
+    let inspect = unit(orchestration.workflow(), "inspect-source");
+    let original = artifact(
+        &orchestration,
+        &inspect,
+        "artifact:old-cut",
+        "execution:inspect",
+        "evidence:old-cut",
+    );
+    let first_launch = launch(&orchestration, &inspect, "execution:inspect");
+    orchestration
+        .start_serial("journey:source-change", &inspect, first_launch)
+        .unwrap();
+    orchestration.advance_subject(original.subject_ref.clone(), "new-cut");
+    orchestration
+        .return_artifact(&inspect, original.clone())
+        .unwrap();
+    let leg = orchestration.leg(&inspect).unwrap();
+    assert_eq!(leg.status, LegStatus::LateResult);
+    assert!(leg.artifacts.is_empty());
+    assert_eq!(leg.late_artifacts, vec![original]);
+    assert_ne!(orchestration.whole_run_state(), WholeRunState::Complete);
+    let successor = unit(orchestration.workflow(), "implement-compiler");
+    let next = launch(&orchestration, &successor, "execution:successor");
+    assert!(matches!(
+        orchestration.start_serial("journey:source-change", &successor, next),
+        Err(OrchestrationError::DependencyNotSatisfied(_))
+    ));
+    // Late bytes do not establish process quiescence or release its writer.
+    orchestration.request_cancellation(&inspect).unwrap();
+    orchestration.accept_cancellation(&inspect).unwrap();
+    orchestration.mark_quiescent(&inspect).unwrap();
+    assert!(orchestration.incorporate_late_result(&inspect).is_err());
+}
+
+#[test]
+fn advancing_a_returned_subject_recloses_dependencies_and_the_barrier() {
+    let mut orchestration = engine();
+    let (implementation, review) = start_fork(&mut orchestration);
+    for (unit, execution) in [
+        (&implementation, "execution:implement"),
+        (&review, "execution:review"),
+    ] {
+        let returned = artifact(
+            &orchestration,
+            unit,
+            &format!("artifact:{execution}"),
+            execution,
+            "evidence:returned",
+        );
+        orchestration.return_artifact(unit, returned).unwrap();
+    }
+    assert_eq!(
+        orchestration
+            .barrier_reading("implementation-reviewed")
+            .unwrap()
+            .state,
+        BarrierState::Complete
+    );
+    let subject = orchestration
+        .leg(&implementation)
+        .unwrap()
+        .delegation
+        .subject_ref
+        .clone();
+    orchestration.advance_subject(subject, "new-cut");
+    assert_eq!(
+        orchestration
+            .barrier_reading("implementation-reviewed")
+            .unwrap()
+            .state,
+        BarrierState::Pending
+    );
+    assert_ne!(orchestration.whole_run_state(), WholeRunState::Complete);
+    let successor = unit(orchestration.workflow(), "integrate-return");
+    let next = launch(&orchestration, &successor, "execution:successor");
+    assert!(orchestration
+        .start_serial("journey:source-change", &successor, next)
+        .is_err());
+}
+
+#[test]
 fn accepted_cancellation_can_quiesce_without_a_termination_receipt() {
     let mut orchestration = engine();
     let (_, review) = start_fork(&mut orchestration);

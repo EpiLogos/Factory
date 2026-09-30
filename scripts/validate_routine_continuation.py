@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import hashlib
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -55,7 +56,7 @@ output_validator = Draft202012Validator(output_schema, registry=registry)
 developmental_schema = json.loads(DEVELOPMENTAL_SCHEMA.read_text())
 Draft202012Validator.check_schema(developmental_schema)
 developmental_validator = Draft202012Validator(developmental_schema, registry=registry)
-binary = ROOT / "target/debug/factory"
+binary = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/factory"
 assert binary.is_file(), "build the native Factory binary before validating output contracts"
 with tempfile.TemporaryDirectory() as directory:
     state = Path(directory) / "state.json"

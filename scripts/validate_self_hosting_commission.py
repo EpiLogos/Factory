@@ -2,6 +2,7 @@
 """Validate Factory Commission contracts through the real native provider."""
 
 import json
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -69,7 +70,7 @@ invalid_mutation = json.loads(json.dumps(mutation))
 invalid_mutation["mutation"]["runRef"] = "run:not-a-factory-ref"
 assert list(Draft202012Validator(mutation_schema, registry=registry).iter_errors(invalid_mutation))
 
-binary = ROOT / "target/debug/factory"
+binary = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/factory"
 assert binary.is_file(), "build the native Factory binary before validating Commission"
 commission_validator = Draft202012Validator(commission_schema, registry=registry)
 mutation_validator = Draft202012Validator(mutation_schema, registry=registry)
