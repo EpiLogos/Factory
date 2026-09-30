@@ -57,7 +57,7 @@
       "name": "factory-review-prs",
       "upstream_path": "skills/factory-review-prs/SKILL.md",
       "upstream_sha256": "9ddf8ed8fa549a02368b633ec2453ea551d8d3447ee01b9b3083fee1d93f8bd1",
-      "adapted_sha256": "1042a2905d9024f46619b985bd3203f24a41d266de7ac4cd13a0ccc53b2995a0",
+      "adapted_sha256": "db4e98256b1c662e6422b7e76df3bd6a2c1d87ea15649e9b3fd0f8b730ac1739",
       "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
       "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
     },
@@ -65,7 +65,7 @@
       "name": "factory-babysit-pr",
       "upstream_path": "skills/factory-babysit-pr/SKILL.md",
       "upstream_sha256": "d34a0922e844baf346258f5d39244dfcf8090a3adbee8956e7d00d129829b0a0",
-      "adapted_sha256": "2b47245e1af4a4ef924f1513091a25d2f0c6e4ae5acd9c692da9a313942af01b",
+      "adapted_sha256": "f9b6c0ffb028199b86a4ff5645dc87ccf41ce2250d35352ff38b3691c30ea614",
       "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
       "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
     },
@@ -89,7 +89,7 @@
       "name": "factory-recover",
       "upstream_path": "skills/factory-recover/SKILL.md",
       "upstream_sha256": "3df2d20682eabd5e7c2fd70afa8bdfac9fc72c74c9c8d1ef01439279873ba91b",
-      "adapted_sha256": "cf47b97cf121275a304daf3418ae8101d057eb7501348c4d77e77404a4f33216",
+      "adapted_sha256": "8c9b989edd4601a9bde4fe705795a28bcd709f7a285fae3acf3377ebec653018",
       "adaptation": "Full upstream procedure retained; ProjectWorld JSON policy and local world reference substituted; O:I owner-specific section appended.",
       "world_reference_sha256": "ea8eb0c6f29fbfb838a18f4c334f53ecab11b97dae588f8888b9bfb452fb1516"
     },
