@@ -3,7 +3,7 @@ name: factory-recover
 installer-group: factory
 description: >-
   World-rooted workflow for finding and resuming interrupted coding runs. Use
-  after an agent host restart or an interrupted automation.
+  when resuming after an agent host restart or an interrupted automation.
 ---
 
 # Factory Recover
@@ -36,3 +36,9 @@ the separate configured notification policy.
 
 Use [World binding](references/world.md). Re-read original authorization, latest user direction, Position and occupant generation, current custody, Run/Attempt, child NOW, branch/worktree, uncertain effects, external state and Return. Preserve original work and Position identity when the obligation is the same; use native handover/release so predecessor authority is invalidated. Never replay an uncertain write without owner-native readback, never clean concurrent material, and hold when authority or ownership is ambiguous.
 
+## Verify
+
+After resuming a run, verify it from live state rather than from the resume
+command's exit: re-read the run's branch, worktree status and the external
+effects it touches, and confirm no completed write was repeated. Report a run
+whose readback differs from the expected state as held, with the evidence.

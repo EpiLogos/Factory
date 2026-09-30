@@ -54,3 +54,9 @@ and merge decisions.
 
 Use [World binding](references/world.md). Resolve the PR to its ProjectWorld, originating signal and Factory work/Run/Return where present. Read full live diff, required checks, unresolved threads, reviews, owner, mergeability and exact head from the connected code host. Re-read after a head change and before any review write, approval, or merge. Keep each action's policy and actual host/Actuation authority separate; a review finding is not approval and approval is not merge.
 
+## Verify
+
+After each review, reply, approval or merge, verify it took effect by re-reading
+the PR's live state on the exact head: the review or comment is present, the
+approval is recorded, or the merge commit exists. A write the host did not
+record is reported as not done, never as done.

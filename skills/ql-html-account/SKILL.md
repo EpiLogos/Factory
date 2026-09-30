@@ -1,6 +1,6 @@
 ---
 name: ql-html-account
-description: Create clear, research-grounded, self-contained HTML accounts for explanation, analysis, design intent, review, reference, documentation, and interactive dissemination. Use a canonical QL account structure, adaptive depth, ASD-STE100 writing discipline, and task-appropriate diagrams, data views, mockups, images, links, and interactions.
+description: Create clear, research-grounded, self-contained HTML accounts for explanation, analysis, design intent, review, reference, documentation, and interactive dissemination. Use a canonical QL account structure, adaptive depth, ASD-STE100 writing discipline, and task-appropriate diagrams, data views, mockups, images, links, and interactions. Use when a subject needs a readable, self-contained HTML account for a reader rather than notes or a chat reply.
 argument-hint: Describe the subject, audience, sources, purpose, desired depth, and any required surfaces or interactions.
 ---
 
