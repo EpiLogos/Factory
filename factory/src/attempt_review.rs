@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 fn invalid(message: impl Into<String>) -> FactoryAttemptError {
     FactoryAttemptError::InvalidOperation(message.into())
 }
-fn settled<'a>(
+pub(crate) fn settled<'a>(
     state: &'a StoredAttemptState,
     engine: &ExecutableOrchestration,
     id: &str,

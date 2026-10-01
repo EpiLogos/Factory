@@ -314,6 +314,10 @@ fn validate_operation(
             current_attempt(reading, reviewer_attempt_ref)?;
         }
         RecordTracking { fact, .. } => validate_fact(fact)?,
+        TransitionRun { .. }
+        | RequestUnitDecision { .. }
+        | ResolveUnitDecision { .. }
+        | RetireUnitDecision { .. } => {}
         RecordObservation { .. }
         | RecordVerification { .. }
         | RecordReresolution { .. }

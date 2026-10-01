@@ -6,7 +6,7 @@ The Factory owns a reduced developmental **METHOD-classified Skill** in `skills/
 
 [Factory Mode](../../agents/factory-mode/README.md) supplies the source expression and native `profile/factory-mode` for this foundation. Commissioned profiles derive from it with explicit lineage and situated bounds. Future QL–MEF Anima and Aletheia expressions can build on the same Method and source relations.
 
-[Circuit diagram](bounded-agency-circuit.svg) · [Mermaid source](bounded-agency-circuit.mmd). This is the implemented composition/acceptance route; dated receipts determine which passages were observed together. The human Recognition node is an authored return, never a test-generated verdict.
+[Circuit diagram](bounded-agency-circuit.svg) · [Mermaid source](bounded-agency-circuit.mmd). This is the implemented composition/acceptance route; dated receipts determine which passages were observed together. The human Recognition node is an authored return, never a test-generated verdict. The 30 September diagram correction names the actual AIKit resident owner and labels each relation. Its dashed human passages are desired reception, not an observed Recognition receipt. This dated circuit is narrower than the [current Commission/custody/attempt navigation](../ARCHITECTURE-NAVIGATION.md).
 
 ## The law in its operative form
 

@@ -484,9 +484,13 @@ mod tests {
     fn ambiguity_beyond_any_display_cap_is_still_refused() {
         let mut state = empty_state();
         let mut in_progress = Vec::new();
+        let mut early_custody = None;
         for index in 0..152 {
             let work = format!("work:{index:03}");
             let reference = assign(&mut state, P, &work);
+            if index == 3 {
+                early_custody = Some(reference.clone());
+            }
             match index {
                 3 | 147 => in_progress.push(reference),
                 _ if index % 2 == 0 => set(&mut state, &reference, CustodyState::Blocked),
@@ -515,7 +519,7 @@ mod tests {
         assert_eq!(listed, in_progress);
 
         // With the early one closed, the late one alone is found, not dropped.
-        set(&mut state, &in_progress[0].clone(), CustodyState::Completed);
+        set(&mut state, &early_custody.unwrap(), CustodyState::Completed);
         let reading = derive_current_work(&state, P);
         assert_eq!(reading.outcome, CurrentWorkOutcome::One);
         assert_eq!(reading.current.unwrap().node_ref, "work:147");

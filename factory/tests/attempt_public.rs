@@ -30,6 +30,954 @@ const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
 #[test]
+fn unit_decision_survives_fresh_clients_and_role_labels_cannot_resume_it() {
+    use epilogos_factory::core::run::{RunLifecycle, RunLifecycleCommand};
+    use epilogos_factory::run_lifecycle::{
+        UnitDecisionBasis, UnitDecisionOutcome, UnitDecisionRequest, UnitDecisionResponse,
+    };
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    let unit = workflow.unit("inspect-source").unwrap();
+    let current = read_developmental_state(&fixture.state).unwrap();
+    let run = current.build.run(fixture.run.reference()).unwrap();
+    fixture
+        .action(FactoryAttemptOperation::TransitionRun {
+            command: RunLifecycleCommand {
+                command_id: "actual-owner-activate".into(),
+                expected_revision: run.revision(),
+                lifecycle: RunLifecycle::Active,
+            },
+            authority: run.mutation_authority(),
+            closure: None,
+        })
+        .unwrap();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:decision-unit".into(),
+            task_ref: "task:decision-unit".into(),
+            parent_journey_ref: "journey:decision-case".into(),
+            workflow_unit_ref: unit.reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    let basis = UnitDecisionBasis {
+        workflow_unit_ref: unit.reference.clone(),
+        attempt_ref: "attempt:decision-unit".into(),
+        execution_ref: fixture.reading().legs[&unit.reference]
+            .execution_ref
+            .clone(),
+        subject_ref: unit.subject_ref.to_string(),
+        subject_revision: unit.basis_revision.clone(),
+        workflow_source_ref: workflow.source.reference.to_string(),
+        workflow_source_revision: workflow.source.revision.clone(),
+        workflow_source_digest: workflow.source.digest.clone(),
+        resolver_ref: "human:controlled-owner".into(),
+        controlled: true,
+    };
+    fixture
+        .action(FactoryAttemptOperation::RequestUnitDecision {
+            request: UnitDecisionRequest {
+                human_request_ref: "human-request:unit-controlled".into(),
+                decision_ref: "decision:unit-controlled".into(),
+                question: "Resume this bounded controlled unit?".into(),
+                why_human: "Controlled protocol verification explicitly requires a human response."
+                    .into(),
+                basis,
+                evidence_refs: BTreeSet::from(["evidence:decision-cut".into()]),
+            },
+        })
+        .unwrap();
+    let waiting = fixture.reading();
+    assert_eq!(waiting.lifecycle, RunLifecycle::WaitingHuman);
+    assert_ne!(
+        waiting.whole_run_state,
+        epilogos_factory::orchestration::WholeRunState::Complete
+    );
+    let response = UnitDecisionResponse {
+        response_ref: "response:human-actual-channel".into(),
+        resolver_ref: "human:controlled-owner".into(),
+        channel_receipt_ref: "channel:controlled-test-human-reply".into(),
+        source_revision: "reply-source:1".into(),
+        outcome: UnitDecisionOutcome::Resume,
+        evidence_refs: BTreeSet::from(["evidence:reply".into()]),
+        controlled: true,
+    };
+    let operation = FactoryAttemptOperation::ResolveUnitDecision {
+        human_request_ref: "human-request:unit-controlled".into(),
+        response,
+    };
+    assert!(
+        fixture.action(operation.clone()).is_err(),
+        "an Agent role label cannot answer a human request"
+    );
+    let mut human = request(fixture.run.reference().clone(), waiting.revision, operation);
+    human.caller.caller_ref = "human:controlled-owner".into();
+    human.caller.lineage = vec!["human:controlled-owner".into()];
+    human.caller.projection_kind = FactoryActionProjectionKind::DesktopHuman;
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(!fixture.raw_action(&human).status.success());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    let after = fixture.reading();
+    assert_eq!(after.lifecycle, RunLifecycle::WaitingHuman);
+    let revision = after.revision;
+    assert!(!fixture.raw_action(&human).status.success());
+    assert_eq!(
+        fixture.reading().revision,
+        revision,
+        "repeating an unadmitted response must not change native state"
+    );
+    let canonical = read_developmental_state(&fixture.state).unwrap();
+    let reading = canonical.run_reading(fixture.run.reference()).unwrap();
+    assert!(reading.human_requests[0].unit_decision_response.is_none());
+    assert_eq!(reading.native_attempts.as_ref().unwrap(), &after);
+    let build = canonical.build_snapshot(fixture.run.reference()).unwrap();
+    assert_eq!(build.view.native_attempts.as_ref().unwrap(), &after);
+    assert_eq!(
+        fixture.reading().legs[&unit.reference].status,
+        LegStatus::Active
+    );
+}
+
+#[test]
+fn owner_lifecycle_cannot_complete_from_the_present_subset_of_units() {
+    use epilogos_factory::core::run::{RunLifecycle, RunLifecycleCommand};
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:subset".into(),
+            task_ref: "task:subset".into(),
+            parent_journey_ref: "journey:subset".into(),
+            workflow_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:subset",
+        "inspect-source",
+        "execution:subset",
+    );
+    let current = read_developmental_state(&fixture.state).unwrap();
+    let run = current.build.run(fixture.run.reference()).unwrap();
+    fixture
+        .action(FactoryAttemptOperation::TransitionRun {
+            command: RunLifecycleCommand {
+                command_id: "activate-subset".into(),
+                expected_revision: run.revision(),
+                lifecycle: RunLifecycle::Active,
+            },
+            authority: run.mutation_authority(),
+            closure: None,
+        })
+        .unwrap();
+    let current = read_developmental_state(&fixture.state).unwrap();
+    let run = current.build.run(fixture.run.reference()).unwrap();
+    let before = std::fs::read(&fixture.state).unwrap();
+    assert!(fixture
+        .action(FactoryAttemptOperation::TransitionRun {
+            command: RunLifecycleCommand {
+                command_id: "false-finish".into(),
+                expected_revision: run.revision(),
+                lifecycle: RunLifecycle::Finishing,
+            },
+            authority: run.mutation_authority(),
+            closure: None
+        })
+        .is_err());
+    assert_eq!(
+        std::fs::read(&fixture.state).unwrap(),
+        before,
+        "refused closure cannot partially write"
+    );
+    let reading = fixture.reading();
+    assert!(reading.required_units.len() > reading.current_returned_units.len());
+    assert_eq!(
+        reading.whole_run_state,
+        epilogos_factory::orchestration::WholeRunState::Incomplete
+    );
+}
+
+fn controlled_decision(fixture: &Fixture, workflow: &CompiledWorkflow, bound: bool) {
+    use epilogos_factory::run_lifecycle::{UnitDecisionBasis, UnitDecisionRequest};
+    owner_transition(
+        fixture,
+        "decision-activate",
+        epilogos_factory::core::run::RunLifecycle::Active,
+        None,
+    )
+    .unwrap();
+    let unit = workflow.unit("inspect-source").unwrap();
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:pending-decision".into(),
+            task_ref: "task:pending-decision".into(),
+            parent_journey_ref: "journey:controlled-decision".into(),
+            workflow_unit_ref: unit.reference.clone(),
+            disposition: disposition(&fixture.run, workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    if bound {
+        fixture
+            .action(FactoryAttemptOperation::BindDispatch {
+                attempt_ref: "attempt:pending-decision".into(),
+                execution_ref: "execution:decision-bound".into(),
+                receipt: owner_receipt(
+                    "aikit/session-space",
+                    "delivery:pending-decision",
+                    "receipt:pending-decision",
+                    OwnerOperationPhase::Returned,
+                    set(["evidence:controlled-owner-returned"]),
+                    BTreeSet::new(),
+                ),
+            })
+            .unwrap();
+        fixture
+            .action(FactoryAttemptOperation::RecordVerification {
+                attempt_ref: "attempt:pending-decision".into(),
+                verification: verification(
+                    workflow,
+                    "inspect-source",
+                    "verification:decision-bound",
+                ),
+            })
+            .unwrap();
+    }
+    let basis = UnitDecisionBasis {
+        workflow_unit_ref: unit.reference.clone(),
+        attempt_ref: "attempt:pending-decision".into(),
+        execution_ref: fixture.reading().legs[&unit.reference]
+            .execution_ref
+            .clone(),
+        subject_ref: unit.subject_ref.to_string(),
+        subject_revision: unit.basis_revision.clone(),
+        workflow_source_ref: workflow.source.reference.to_string(),
+        workflow_source_revision: workflow.source.revision.clone(),
+        workflow_source_digest: workflow.source.digest.clone(),
+        resolver_ref: "human:controlled-owner".into(),
+        controlled: true,
+    };
+    fixture
+        .action(FactoryAttemptOperation::RequestUnitDecision {
+            request: UnitDecisionRequest {
+                human_request_ref: "human-request:pending-decision".into(),
+                decision_ref: "decision:pending-decision".into(),
+                question: "Resume this controlled unit?".into(),
+                why_human: "Controlled human protocol exercise".into(),
+                basis,
+                evidence_refs: set(["evidence:decision-cut"]),
+            },
+        })
+        .unwrap();
+}
+
+fn controlled_human_response(fixture: &Fixture) -> FactoryAttemptActionRequest {
+    use epilogos_factory::run_lifecycle::{UnitDecisionOutcome, UnitDecisionResponse};
+    let mut response = request(
+        fixture.run.reference().clone(),
+        fixture.reading().revision,
+        FactoryAttemptOperation::ResolveUnitDecision {
+            human_request_ref: "human-request:pending-decision".into(),
+            response: UnitDecisionResponse {
+                response_ref: "response:controlled-human".into(),
+                resolver_ref: "human:controlled-owner".into(),
+                channel_receipt_ref: "channel:controlled-human-reply".into(),
+                source_revision: "reply:1".into(),
+                outcome: UnitDecisionOutcome::Resume,
+                evidence_refs: set(["evidence:controlled-reply"]),
+                controlled: true,
+            },
+        },
+    );
+    response.caller.caller_ref = "human:controlled-owner".into();
+    response.caller.lineage = vec!["human:controlled-owner".into()];
+    response.caller.projection_kind = FactoryActionProjectionKind::DesktopHuman;
+    response
+}
+
+#[test]
+fn pending_decision_blocks_binding_and_an_otherwise_verified_return_without_losing_bytes() {
+    for bound in [false, true] {
+        let fixture = Fixture::new(source());
+        let workflow = fixture.workflow();
+        controlled_decision(&fixture, &workflow, bound);
+        let operation = if bound {
+            return_operation(
+                &workflow,
+                "attempt:pending-decision",
+                "inspect-source",
+                "execution:decision-bound",
+                "artifact:decision-bound",
+            )
+        } else {
+            FactoryAttemptOperation::BindDispatch {
+                attempt_ref: "attempt:pending-decision".into(),
+                execution_ref: "execution:decision-bound".into(),
+                receipt: owner_receipt(
+                    "aikit/session-space",
+                    "delivery:pending-decision",
+                    "receipt:pending-decision",
+                    OwnerOperationPhase::Returned,
+                    set(["evidence:controlled-owner-returned"]),
+                    BTreeSet::new(),
+                ),
+            }
+        };
+        let before = std::fs::read(&fixture.state).unwrap();
+        assert!(fixture
+            .action(operation)
+            .unwrap_err()
+            .contains("awaits its canonical human decision"));
+        assert_eq!(std::fs::read(&fixture.state).unwrap(), before);
+        assert!(!fixture
+            .raw_action(&controlled_human_response(&fixture))
+            .status
+            .success());
+        assert_eq!(std::fs::read(&fixture.state).unwrap(), before);
+        assert_eq!(
+            fixture.reading().legs[&workflow.unit("inspect-source").unwrap().reference].status,
+            LegStatus::Active
+        );
+    }
+}
+
+#[test]
+fn human_response_cannot_resume_an_affected_unit_after_its_subject_has_changed() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    controlled_decision(&fixture, &workflow, true);
+    let original = read_developmental_state(&fixture.state)
+        .unwrap()
+        .run_reading(fixture.run.reference())
+        .unwrap()
+        .human_requests[0]
+        .clone();
+    fixture
+        .action(FactoryAttemptOperation::AdvanceSubject {
+            subject_ref: workflow
+                .unit("inspect-source")
+                .unwrap()
+                .subject_ref
+                .to_string(),
+            revision: "explicit-new-candidate".into(),
+        })
+        .unwrap();
+    let before = std::fs::read(&fixture.state).unwrap();
+    assert!(!fixture
+        .raw_action(&controlled_human_response(&fixture))
+        .status
+        .success());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), before);
+    let retained = read_developmental_state(&fixture.state)
+        .unwrap()
+        .run_reading(fixture.run.reference())
+        .unwrap();
+    assert_eq!(retained.human_requests[0], original);
+    assert!(retained.human_requests[0].unit_decision_response.is_none());
+}
+
+#[test]
+fn a_human_request_cannot_substitute_another_workflow_source_digest() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    controlled_decision(&fixture, &workflow, false);
+    let retained = read_developmental_state(&fixture.state)
+        .unwrap()
+        .run_reading(fixture.run.reference())
+        .unwrap()
+        .human_requests[0]
+        .clone();
+    let mut basis = retained.unit_decision_basis.unwrap();
+    basis.workflow_source_digest = "0".repeat(64);
+    let before = std::fs::read(&fixture.state).unwrap();
+    assert!(fixture
+        .action(FactoryAttemptOperation::RequestUnitDecision {
+            request: epilogos_factory::run_lifecycle::UnitDecisionRequest {
+                human_request_ref: "human-request:foreign-source".into(),
+                decision_ref: "decision:foreign-source".into(),
+                question: "A different source cannot substitute for this unit".into(),
+                why_human: "Controlled negative case".into(),
+                basis,
+                evidence_refs: set(["evidence:foreign-source-declaration"]),
+            }
+        })
+        .unwrap_err()
+        .contains("different workflow basis"));
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), before);
+}
+
+fn owner_transition(
+    fixture: &Fixture,
+    id: &str,
+    lifecycle: epilogos_factory::core::run::RunLifecycle,
+    closure: Option<epilogos_factory::run_lifecycle::RunClosureBasis>,
+) -> Result<Value, String> {
+    let state = read_developmental_state(&fixture.state).unwrap();
+    let run = state.build.run(fixture.run.reference()).unwrap();
+    fixture.action(FactoryAttemptOperation::TransitionRun {
+        command: epilogos_factory::core::run::RunLifecycleCommand {
+            command_id: id.into(),
+            expected_revision: run.revision(),
+            lifecycle,
+        },
+        authority: run.mutation_authority(),
+        closure,
+    })
+}
+
+#[test]
+fn obsolete_unit_decision_retirement_retains_its_basis_and_refuses_late_human_reply() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    controlled_decision(&fixture, &workflow, true);
+    let retire = FactoryAttemptOperation::RetireUnitDecision {
+        human_request_ref: "human-request:pending-decision".into(),
+        reason: "Affected subject changed under explicit owner advance".into(),
+        replacement_basis_refs: set(["source:explicit-new-candidate"]),
+    };
+    let before = std::fs::read(&fixture.state).unwrap();
+    assert!(
+        fixture.action(retire.clone()).is_err(),
+        "current decisions cannot be retired as bookkeeping"
+    );
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), before);
+    fixture
+        .action(FactoryAttemptOperation::AdvanceSubject {
+            subject_ref: workflow
+                .unit("inspect-source")
+                .unwrap()
+                .subject_ref
+                .to_string(),
+            revision: "explicit-new-candidate".into(),
+        })
+        .unwrap();
+    let old_basis = read_developmental_state(&fixture.state)
+        .unwrap()
+        .run_reading(fixture.run.reference())
+        .unwrap()
+        .human_requests[0]
+        .unit_decision_basis
+        .clone();
+    fixture.action(retire).unwrap();
+    let retired = read_developmental_state(&fixture.state)
+        .unwrap()
+        .run_reading(fixture.run.reference())
+        .unwrap();
+    assert_eq!(retired.human_requests[0].unit_decision_basis, old_basis);
+    assert!(retired.human_requests[0].unit_decision_response.is_none());
+    assert!(retired.human_requests[0].unit_decision_retirement.is_some());
+    assert_eq!(
+        fixture.reading().lifecycle,
+        epilogos_factory::core::run::RunLifecycle::Active
+    );
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(!fixture
+        .raw_action(&controlled_human_response(&fixture))
+        .status
+        .success());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+}
+
+#[test]
+fn one_unit_decision_keeps_an_independent_ready_frontier_active() {
+    let mut source = source();
+    source.units[2].dependencies.clear();
+    source.units[2].independence_from.clear();
+    source.source.digest = workflow_source_digest(&source).unwrap();
+    let fixture = Fixture::new(source);
+    let workflow = fixture.workflow();
+    controlled_decision(&fixture, &workflow, false);
+    assert_eq!(
+        fixture.reading().lifecycle,
+        epilogos_factory::core::run::RunLifecycle::Active
+    );
+    let next = start(
+        &fixture,
+        &workflow,
+        "review-adversarially",
+        "attempt:independent-ready",
+    );
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: next.attempt_ref,
+            task_ref: next.task_ref,
+            parent_journey_ref: "journey:controlled-decision".into(),
+            workflow_unit_ref: next.workflow_unit_ref,
+            disposition: next.disposition,
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    assert_eq!(
+        fixture.reading().legs[&workflow.unit("review-adversarially").unwrap().reference].status,
+        LegStatus::Active
+    );
+    let before = fixture.reading();
+    complete(
+        &fixture,
+        &workflow,
+        "attempt:independent-ready",
+        "review-adversarially",
+        "execution:independent-ready",
+    );
+    let after = fixture.reading();
+    assert_eq!(
+        after.lifecycle,
+        epilogos_factory::core::run::RunLifecycle::WaitingHuman
+    );
+    assert_eq!(
+        after.legs[&workflow.unit("review-adversarially").unwrap().reference].status,
+        LegStatus::Returned
+    );
+    assert!(after.run_revision > before.run_revision);
+    assert!(after.topology_revision > before.topology_revision);
+    let native = read_developmental_state(&fixture.state).unwrap();
+    assert_eq!(
+        native
+            .run_reading(fixture.run.reference())
+            .unwrap()
+            .native_attempts
+            .as_ref(),
+        Some(&after)
+    );
+}
+
+#[test]
+fn a_controlled_cancel_label_without_native_review_cannot_change_cancellation_or_lifecycle() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    controlled_decision(&fixture, &workflow, true);
+    let mut human = controlled_human_response(&fixture);
+    if let FactoryAttemptOperation::ResolveUnitDecision { response, .. } = &mut human.operation {
+        response.outcome = epilogos_factory::run_lifecycle::UnitDecisionOutcome::Cancel;
+    }
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(!fixture.raw_action(&human).status.success());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    let after = fixture.reading();
+    assert_eq!(
+        after.lifecycle,
+        epilogos_factory::core::run::RunLifecycle::WaitingHuman
+    );
+    assert_eq!(
+        after.legs[&workflow.unit("inspect-source").unwrap().reference].status,
+        LegStatus::Active
+    );
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(!fixture.raw_action(&human).status.success());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    let native = read_developmental_state(&fixture.state).unwrap();
+    assert!(native
+        .run_reading(fixture.run.reference())
+        .unwrap()
+        .human_requests[0]
+        .unit_decision_response
+        .is_none());
+}
+
+fn closure_source() -> WorkflowSource {
+    use epilogos_factory::workflow::WorkflowBarrierSource;
+    use epilogos_factory::workflow_inputs::WorkflowInputSource;
+    let mut source = source();
+    source.units.retain(|unit| unit.key != "implement-compiler");
+    source.nesting.clear();
+    source.barriers = vec![WorkflowBarrierSource {
+        key: "native-closure".into(),
+        waits_for: vec!["inspect-source".into()],
+        releases: vec!["integrate-return".into()],
+    }];
+    for unit in &mut source.units {
+        unit.subject_ref = format!("subject:controlled-{}", unit.key).parse().unwrap();
+        unit.agent_requirements.agent_refs = vec![format!("agent:controlled-{}", unit.key)];
+        unit.agent_requirements.agency_refs = vec![format!("agency:controlled-{}", unit.key)];
+        unit.permitted_effects =
+            vec!["read controlled source and return contracted difference".into()];
+        unit.independence_from.clear();
+        unit.dependencies = match unit.key.as_str() {
+            "inspect-source" => vec![],
+            "review-adversarially" => vec!["inspect-source".into()],
+            _ => vec!["inspect-source".into(), "review-adversarially".into()],
+        };
+        unit.inputs = unit
+            .dependencies
+            .iter()
+            .map(|key| WorkflowInputSource {
+                predecessor: key.clone(),
+                receiving_context_ref: format!("context:closure-{}-from-{key}", unit.key),
+            })
+            .collect();
+    }
+    source.source.digest = workflow_source_digest(&source).unwrap();
+    source
+}
+
+fn closure_contribution(
+    fixture: &Fixture,
+    workflow: &CompiledWorkflow,
+    key: &str,
+    generation: u8,
+) -> String {
+    use epilogos_factory::workflow_inputs::SelectedWorkflowInput;
+    let unit = workflow.unit(key).unwrap();
+    let grant = RetryGrant::new(format!("grant:closure-{key}"), 2).unwrap();
+    let mut selected = disposition(&fixture.run, workflow, key, Some(&grant));
+    let reading = fixture.reading();
+    selected.selected_inputs = unit
+        .inputs
+        .iter()
+        .map(|input| {
+            let leg = &reading.legs[&input.predecessor];
+            selected
+                .context_refs
+                .insert(input.receiving_context_ref.clone());
+            SelectedWorkflowInput {
+                predecessor: input.predecessor.clone(),
+                execution_ref: leg.execution_ref.clone(),
+                receiving_context_ref: input.receiving_context_ref.clone(),
+                artifacts: leg.artifacts.clone(),
+            }
+        })
+        .collect();
+    if key == "review-adversarially" {
+        selected.selection.demand.independence_from.insert(
+            reading.legs[&workflow.unit("inspect-source").unwrap().reference]
+                .execution_ref
+                .clone(),
+        );
+    }
+    let attempt = format!("attempt:closure-{key}-{generation}");
+    if generation == 1 {
+        fixture
+            .action(FactoryAttemptOperation::StartSerial {
+                attempt_ref: attempt.clone(),
+                task_ref: format!("task:closure-{key}"),
+                parent_journey_ref: "journey:controlled-closure".into(),
+                workflow_unit_ref: unit.reference.clone(),
+                disposition: selected,
+                retry_grant: Some(grant),
+                tracking: vec![],
+                place_grant: None,
+            })
+            .unwrap();
+    } else {
+        let mut failed = verification(workflow, key, &format!("verification:reject-{key}-1"));
+        failed.outcome = VerificationOutcome::Failed;
+        fixture
+            .action(FactoryAttemptOperation::RecordVerification {
+                attempt_ref: format!("attempt:closure-{key}-1"),
+                verification: failed,
+            })
+            .unwrap();
+        let rejected = fixture.reading();
+        let prior = rejected
+            .attempts
+            .iter()
+            .find(|record| record.attempt_ref == format!("attempt:closure-{key}-1"))
+            .unwrap();
+        let mut retained_evidence: BTreeSet<String> = prior
+            .dispatch
+            .iter()
+            .chain(prior.observations.iter())
+            .flat_map(|receipt| receipt.partial_effect_refs.iter().cloned())
+            .collect();
+        for verification in &prior.verifications {
+            retained_evidence.insert(verification.verification_ref.clone());
+            retained_evidence.extend(verification.evidence_refs.iter().cloned());
+        }
+        for artifact in rejected.legs[&unit.reference].artifacts.iter().chain(
+            selected
+                .selected_inputs
+                .iter()
+                .flat_map(|input| input.artifacts.iter()),
+        ) {
+            retained_evidence.insert(artifact.artifact_ref.clone());
+            retained_evidence.extend(artifact.evidence_refs.iter().cloned());
+        }
+        let resolution = ReresolutionRecord {
+            resolution_ref: format!("resolution:closure-{key}-{generation}"),
+            reason: "Rejected retained result; re-resolve against the exact current predecessor artifacts".into(),
+            source_revision: selected.participant.source_revision.clone(),
+            evidence_refs: retained_evidence,
+            replacement_now_ref: None,
+            replacement_material_ref: None,
+            replacement_harness_ref: None,
+        };
+        fixture
+            .action(FactoryAttemptOperation::Retry {
+                attempt_ref: attempt.clone(),
+                task_ref: format!("task:closure-{key}"),
+                parent_journey_ref: "journey:controlled-closure".into(),
+                workflow_unit_ref: unit.reference.clone(),
+                grant_ref: grant.grant_ref,
+                disposition: selected,
+                tracking: vec![],
+                reresolution: Some(resolution),
+                place_grant: None,
+            })
+            .unwrap();
+    }
+    complete(
+        fixture,
+        workflow,
+        &attempt,
+        key,
+        &format!("execution:closure-{key}-{generation}"),
+    );
+    if key == "review-adversarially" {
+        fixture
+            .action(FactoryAttemptOperation::RegisterIndependentReview {
+                attempt_ref: attempt.clone(),
+                review_of: BTreeSet::from([workflow
+                    .unit("inspect-source")
+                    .unwrap()
+                    .reference
+                    .clone()]),
+            })
+            .unwrap();
+    }
+    attempt
+}
+
+fn closure_synthesis(
+    fixture: &Fixture,
+    producer: &str,
+    reviewer: &str,
+    result: &str,
+    generation: u8,
+) {
+    fixture
+        .action(FactoryAttemptOperation::Synthesize {
+            attempt_ref: result.into(),
+            reviewer_attempt_ref: reviewer.into(),
+            synthesis_ref: format!("synthesis:closure-{generation}"),
+            barrier_key: "native-closure".into(),
+            result_artifact_ref: format!("artifact:{result}"),
+            artifact_refs: set([format!("artifact:{producer}")]),
+        })
+        .unwrap();
+}
+
+fn closure_receiving(
+    fixture: &Fixture,
+    result: &str,
+    generation: u8,
+) -> epilogos_factory::run_lifecycle::RunClosureBasis {
+    let receiving = format!("receiving:controlled-closure-{generation}");
+    fixture
+        .action(FactoryAttemptOperation::AttachReceiving {
+            attempt_ref: result.into(),
+            receiving_ref: receiving.clone(),
+            source_revision: format!("controlled-receiving-basis-{generation}"),
+            evidence_refs: set([format!("evidence:controlled-receiving-{generation}")]),
+        })
+        .unwrap();
+    epilogos_factory::run_lifecycle::RunClosureBasis {
+        final_attempt_ref: result.into(),
+        reviewer_attempt_refs: set([format!("attempt:closure-review-adversarially-{generation}")]),
+        receiving_ref: receiving,
+    }
+}
+
+#[test]
+fn native_review_and_synthesis_do_not_treat_a_receiving_label_as_closure_proof() {
+    use epilogos_factory::core::run::RunLifecycle;
+    let fixture = Fixture::new(closure_source());
+    let workflow = fixture.workflow();
+    owner_transition(&fixture, "closure-activate", RunLifecycle::Active, None).unwrap();
+    let producer = closure_contribution(&fixture, &workflow, "inspect-source", 1);
+    let reviewer = closure_contribution(&fixture, &workflow, "review-adversarially", 1);
+    let result = closure_contribution(&fixture, &workflow, "integrate-return", 1);
+    closure_synthesis(&fixture, &producer, &reviewer, &result, 1);
+    owner_transition(&fixture, "closure-finishing", RunLifecycle::Finishing, None).unwrap();
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(owner_transition(
+        &fixture,
+        "missing-receiving-finish",
+        RunLifecycle::Finished,
+        Some(epilogos_factory::run_lifecycle::RunClosureBasis {
+            final_attempt_ref: result.clone(),
+            reviewer_attempt_refs: set([reviewer.clone()]),
+            receiving_ref: "receiving:absent".into(),
+        })
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    let basis = closure_receiving(&fixture, &result, 1);
+    let bytes = std::fs::read(&fixture.state).unwrap();
+    assert!(fixture
+        .action(FactoryAttemptOperation::RecordObservation {
+            attempt_ref: result.clone(),
+            receipt: OwnerOperationReceipt {
+                owner_ref: "central".into(),
+                contract: "central.receiving-reading/v1".into(),
+                operation_ref: "central.receiving:unadmitted-label".into(),
+                receipt_ref: "native-receiving-admission:caller-json-cannot-write-this".into(),
+                source_revision: "controlled-reading-1".into(),
+                phase: OwnerOperationPhase::Observed,
+                evidence_refs: set(["evidence:controlled-label"]),
+                partial_effect_refs: BTreeSet::new(),
+                payload: json!({"factoryActionDigest":"caller-authored-digest"}),
+            },
+        })
+        .unwrap_err()
+        .contains("only by the canonical live-owner transaction"));
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    assert!(owner_transition(
+        &fixture,
+        "closure-finished",
+        RunLifecycle::Finished,
+        Some(basis),
+    )
+    .is_err());
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+    let reading = fixture.reading();
+    assert_eq!(reading.lifecycle, RunLifecycle::Finishing);
+    assert_eq!(
+        reading.whole_run_state,
+        epilogos_factory::orchestration::WholeRunState::Complete
+    );
+    let native = read_developmental_state(&fixture.state).unwrap();
+    assert_eq!(
+        native
+            .run_reading(fixture.run.reference())
+            .unwrap()
+            .native_attempts
+            .as_ref(),
+        Some(&reading)
+    );
+    assert_eq!(
+        native
+            .build_snapshot(fixture.run.reference())
+            .unwrap()
+            .view
+            .native_attempts
+            .as_ref(),
+        Some(&reading)
+    );
+}
+
+#[test]
+fn an_old_synthesis_cannot_close_replaced_producer_or_reviewer_material() {
+    use epilogos_factory::core::run::RunLifecycle;
+    for replace_producer in [false, true] {
+        let fixture = Fixture::new(closure_source());
+        let workflow = fixture.workflow();
+        owner_transition(&fixture, "candidate-activate", RunLifecycle::Active, None).unwrap();
+        let old_producer = closure_contribution(&fixture, &workflow, "inspect-source", 1);
+        let old_reviewer = closure_contribution(&fixture, &workflow, "review-adversarially", 1);
+        let old_result = closure_contribution(&fixture, &workflow, "integrate-return", 1);
+        closure_synthesis(&fixture, &old_producer, &old_reviewer, &old_result, 1);
+        let producer = if replace_producer {
+            closure_contribution(&fixture, &workflow, "inspect-source", 2)
+        } else {
+            old_producer
+        };
+        let reviewer = closure_contribution(&fixture, &workflow, "review-adversarially", 2);
+        let result = closure_contribution(&fixture, &workflow, "integrate-return", 2);
+        let basis = closure_receiving(&fixture, &result, 2);
+        assert_eq!(
+            fixture.reading().whole_run_state,
+            epilogos_factory::orchestration::WholeRunState::Complete
+        );
+        owner_transition(
+            &fixture,
+            "replacement-finishing",
+            RunLifecycle::Finishing,
+            None,
+        )
+        .unwrap();
+        let bytes = std::fs::read(&fixture.state).unwrap();
+        assert!(owner_transition(
+            &fixture,
+            "old-synthesis-finish",
+            RunLifecycle::Finished,
+            Some(basis.clone())
+        )
+        .unwrap_err()
+        .contains("exact current producer/reviewer material"));
+        assert_eq!(std::fs::read(&fixture.state).unwrap(), bytes);
+        closure_synthesis(&fixture, &producer, &reviewer, &result, 2);
+        assert!(owner_transition(
+            &fixture,
+            "replacement-finished",
+            RunLifecycle::Finished,
+            Some(basis),
+        )
+        .is_err());
+        assert_eq!(fixture.reading().lifecycle, RunLifecycle::Finishing);
+        assert!(!fixture.reading().completion_verified);
+    }
+}
+
+#[test]
+fn seeded_finished_history_and_archived_returned_legs_do_not_create_completion_admission() {
+    use epilogos_factory::core::run::RunLifecycle;
+    // Core lifecycle is a preserved public contract, but its imported history
+    // does not contain an actual native attempt/receiving closure admission.
+    for archived in [false, true] {
+        let fixture = Fixture::with_seed_lifecycle(
+            source(),
+            if archived {
+                vec![
+                    RunLifecycle::Active,
+                    RunLifecycle::Finishing,
+                    RunLifecycle::Finished,
+                    RunLifecycle::Archived,
+                ]
+            } else {
+                vec![
+                    RunLifecycle::Active,
+                    RunLifecycle::Finishing,
+                    RunLifecycle::Finished,
+                ]
+            },
+        );
+        let reading = fixture.reading();
+        assert_eq!(
+            reading.lifecycle,
+            if archived {
+                RunLifecycle::Archived
+            } else {
+                RunLifecycle::Finished
+            }
+        );
+        assert!(reading.attempts.is_empty());
+        assert!(!reading.completion_verified);
+    }
+    let fixture = Fixture::new(closure_source());
+    let workflow = fixture.workflow();
+    owner_transition(&fixture, "unreceived-activate", RunLifecycle::Active, None).unwrap();
+    closure_contribution(&fixture, &workflow, "inspect-source", 1);
+    closure_contribution(&fixture, &workflow, "review-adversarially", 1);
+    closure_contribution(&fixture, &workflow, "integrate-return", 1);
+    assert_eq!(
+        fixture.reading().whole_run_state,
+        epilogos_factory::orchestration::WholeRunState::Complete
+    );
+    owner_transition(&fixture, "unreceived-abort", RunLifecycle::Aborted, None).unwrap();
+    owner_transition(&fixture, "unreceived-archive", RunLifecycle::Archived, None).unwrap();
+    let reading = fixture.reading();
+    assert_eq!(reading.lifecycle, RunLifecycle::Archived);
+    assert_eq!(
+        reading.whole_run_state,
+        epilogos_factory::orchestration::WholeRunState::Complete
+    );
+    assert_eq!(reading.required_units, reading.current_returned_units);
+    assert!(!reading.completion_verified);
+}
+
+#[test]
 fn rejected_return_reopens_its_unit_and_blocks_dependents_after_restart() {
     let fixture = Fixture::new(source());
     let workflow = fixture.workflow();
@@ -1007,15 +1955,33 @@ struct Fixture {
 
 impl Fixture {
     fn new(source: WorkflowSource) -> Self {
+        Self::with_seed_lifecycle(source, vec![])
+    }
+
+    fn with_seed_lifecycle(
+        source: WorkflowSource,
+        lifecycle: Vec<epilogos_factory::core::run::RunLifecycle>,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let state = dir.path().join("attempt-state.json");
-        let run = Run::new(
+        let mut run = Run::new(
             RUN.parse::<RunRef>().unwrap(),
             PROJECT.parse().unwrap(),
             "public native attempt tests",
             "factory-attempt-public-test",
         )
         .unwrap();
+        for (index, target) in lifecycle.into_iter().enumerate() {
+            run.apply_lifecycle_command(
+                &run.mutation_authority(),
+                epilogos_factory::core::run::RunLifecycleCommand {
+                    command_id: format!("imported-core-lifecycle-{index}"),
+                    expected_revision: run.revision(),
+                    lifecycle: target,
+                },
+            )
+            .unwrap();
+        }
         let seed = FactoryAttemptSeed {
             run: run.clone(),
             workflow_source: source.clone(),

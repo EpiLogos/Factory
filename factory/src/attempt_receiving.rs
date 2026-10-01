@@ -127,7 +127,7 @@ fn escape(text: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
-fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Result<Value, String> {
+fn return_proposal(run_ref: &RunRef, attempt: &FactoryAttemptRecord) -> Result<Value, String> {
     let returned = attempt
         .readable_return
         .as_ref()
@@ -135,7 +135,7 @@ fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Res
     let identity = blake3::hash(
         format!(
             "{}\n{}\n{}",
-            request.run_ref, attempt.attempt_ref, returned.return_ref
+            run_ref, attempt.attempt_ref, returned.return_ref
         )
         .as_bytes(),
     )
@@ -149,12 +149,19 @@ fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Res
             .join(", ")
     };
     let html=format!("<p>{}</p><p>Factory Return: {}. Task: {}. Run: {}. Attempt: {}.</p><p>Artifacts: {}</p><p>Evidence: {}</p>",
-        escape(&returned.summary),escape(&returned.return_ref),escape(&attempt.task_ref),escape(&request.run_ref.to_string()),escape(&attempt.attempt_ref),refs(&returned.artifact_refs),refs(&returned.evidence_refs));
-    let mut input = json!({"producer_key":format!("factory-return:{identity}"),"source_ref":request.target.source_ref,
+        escape(&returned.summary),escape(&returned.return_ref),escape(&attempt.task_ref),escape(&run_ref.to_string()),escape(&attempt.attempt_ref),refs(&returned.artifact_refs),refs(&returned.evidence_refs));
+    Ok(
+        json!({"operation":"entry.add","entry_id":format!("factory-return:{identity}"),
+        "contribution_id":format!("factory-return:{identity}:body"),"html":html}),
+    )
+}
+fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Result<Value, String> {
+    let proposal = return_proposal(&request.run_ref, attempt)?;
+    let producer_key = proposal["entry_id"].clone();
+    let mut input = json!({"producer_key":producer_key,"source_ref":request.target.source_ref,
         "document_id":request.target.document_id,"expected_source_revision":request.target.source_revision,
         "task_ref":attempt.task_ref,"run_ref":request.run_ref.to_string(),"session_ref":attempt.disposition.body.agent_session_ref,
-        "proposal":{"operation":"entry.add","entry_id":format!("factory-return:{identity}"),
-            "contribution_id":format!("factory-return:{identity}:body"),"html":html}});
+        "proposal":proposal});
     if let Some(project) = &request.central.project {
         input["project"] = json!(project);
     }
@@ -199,7 +206,7 @@ fn submission(request: &ReceivingRequest, attempt: &FactoryAttemptRecord) -> Res
     }
     Ok(input)
 }
-fn call(
+pub(crate) fn call(
     endpoint: &CentralReceivingEndpoint,
     operation: &str,
     input: &Value,
@@ -234,6 +241,14 @@ fn check_response(
     request: &ReceivingRequest,
     attempt: &FactoryAttemptRecord,
 ) -> Result<(), String> {
+    check_native_response(response, input, &request.run_ref, attempt)
+}
+fn check_native_response(
+    response: &Value,
+    input: &Value,
+    run_ref: &RunRef,
+    attempt: &FactoryAttemptRecord,
+) -> Result<(), String> {
     let data = &response["data"];
     let received = &data["record"];
     if data["schema"] != "central.receiving-reading/v1"
@@ -249,7 +264,7 @@ fn check_response(
         || received["document_id"] != input["document_id"]
         || received["proposed_source_revision"] != input["expected_source_revision"]
         || received["proposal"] != input["proposal"]
-        || received["run_ref"] != json!(request.run_ref.to_string())
+        || received["run_ref"] != json!(run_ref.to_string())
         || received["task_ref"] != json!(attempt.task_ref)
         || received["session_ref"] != json!(attempt.disposition.body.agent_session_ref)
         || received["author"]["principal_ref"] != json!(attempt.disposition.participant.agent_ref)
@@ -266,6 +281,32 @@ fn check_response(
         .is_some_and(|reference| Some(reference.as_str()) != data["return_ref"].as_str())
     {
         return Err("a different receiving identity is already attached to this Return".into());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_closure_read(
+    response: &Value,
+    input: &Value,
+    run_ref: &RunRef,
+    attempt: &FactoryAttemptRecord,
+) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    check_native_response(response, input, run_ref, attempt)?;
+    let received = &response["data"]["record"];
+    let expected_digest = format!(
+        "{:x}",
+        Sha256::digest(
+            serde_json::to_string(input)
+                .map_err(|e| e.to_string())?
+                .as_bytes()
+        )
+    );
+    if received["request_digest"] != expected_digest
+        || input["proposal"] != return_proposal(run_ref, attempt)?
+        || matches!(received["status"].as_str(), Some("rejected" | "cancelled"))
+    {
+        return Err("live native receiving does not retain this exact final Return proposal and source basis".into());
     }
     Ok(())
 }

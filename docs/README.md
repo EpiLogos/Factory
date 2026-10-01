@@ -1,5 +1,10 @@
 # Documentation Map
 
+[Current native architecture navigation](ARCHITECTURE-NAVIGATION.md) connects
+Commission, custody, attempt storage, verification and receiving to real owner
+modules and their composed consumers. Canonical precedence remains in the index
+below; target design and dated native proof keep their own standing.
+
 This is the working documentation surface for the QL Software Factory.
 
 - [Factory sensing operations](FACTORY-SENSING.md) — native collection, Project

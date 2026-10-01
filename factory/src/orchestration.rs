@@ -6,7 +6,7 @@
 //! authority, and every launch consumes an Execution Intelligence disposition.
 
 use crate::core::run::{
-    CommandOutcome, NodeId, NodeState, Run, RunContractError, RunMutationAuthority,
+    CommandOutcome, NodeId, NodeKind, NodeState, Run, RunContractError, RunMutationAuthority,
     RunTopologyCommand, TopologyMutation, WorkflowUnitRef,
 };
 use crate::execution_intelligence::ExecutionDisposition;
@@ -184,7 +184,8 @@ pub struct BarrierReading {
     pub failed_units: BTreeSet<WorkflowUnitRef>,
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum WholeRunState {
     Incomplete,
     Complete,
@@ -272,6 +273,14 @@ pub enum OrchestrationError {
         subject: String,
         owner: WorkflowUnitRef,
     },
+    AmbiguousInitialSubjectRevision {
+        subject: String,
+        revisions: BTreeSet<String>,
+    },
+    UnaccountedWorkflowUnits {
+        source_ref: String,
+        units: BTreeSet<WorkflowUnitRef>,
+    },
     InvalidTransition {
         unit: WorkflowUnitRef,
         status: LegStatus,
@@ -305,6 +314,73 @@ impl Display for OrchestrationError {
 
 impl Error for OrchestrationError {}
 
+/// Each declared subject has one initial currency basis. Later explicit subject
+/// advances remain independent of these immutable declarations. Historical
+/// sources still compile and snapshots remain readable; new work is refused.
+pub fn validate_initial_subject_revisions(
+    workflow: &CompiledWorkflow,
+) -> Result<(), OrchestrationError> {
+    let mut revisions = BTreeMap::<String, BTreeSet<String>>::new();
+    for unit in workflow.units.values() {
+        revisions
+            .entry(unit.subject_ref.to_string())
+            .or_default()
+            .insert(unit.basis_revision.clone());
+    }
+    if let Some((subject, revisions)) = revisions.into_iter().find(|(_, values)| values.len() > 1) {
+        return Err(OrchestrationError::AmbiguousInitialSubjectRevision { subject, revisions });
+    }
+    Ok(())
+}
+
+/// The canonical RunMap owns required workflow work. Manual Work nodes have no
+/// workflow identity and keep their existing public topology behavior.
+pub fn required_workflow_units(run: &Run) -> BTreeSet<WorkflowUnitRef> {
+    run.map()
+        .nodes()
+        .values()
+        .filter(|node| node.kind == NodeKind::Work)
+        .filter_map(|node| node.semantic_ref.as_ref())
+        .filter(|reference| reference.kind() == "workflow-unit")
+        .map(|reference| {
+            WorkflowUnitRef::try_from(reference.clone())
+                .expect("workflow-unit reference kind was checked")
+        })
+        .collect()
+}
+
+pub fn unaccounted_workflow_units(
+    workflow: &CompiledWorkflow,
+    run: &Run,
+) -> BTreeSet<WorkflowUnitRef> {
+    let selected = workflow
+        .units
+        .values()
+        .map(|unit| unit.reference.clone())
+        .collect();
+    required_workflow_units(run)
+        .difference(&selected)
+        .cloned()
+        .collect()
+}
+
+/// Selecting one source must not omit workflow work already owned by this Run.
+/// Historical snapshots remain readable and disclose the omitted identities.
+pub fn validate_workflow_coverage(
+    workflow: &CompiledWorkflow,
+    run: &Run,
+) -> Result<(), OrchestrationError> {
+    let units = unaccounted_workflow_units(workflow, run);
+    if units.is_empty() {
+        Ok(())
+    } else {
+        Err(OrchestrationError::UnaccountedWorkflowUnits {
+            source_ref: workflow.source.reference.to_string(),
+            units,
+        })
+    }
+}
+
 impl From<RunContractError> for OrchestrationError {
     fn from(error: RunContractError) -> Self {
         Self::Run(error)
@@ -331,6 +407,8 @@ impl ExecutableOrchestration {
     /// Compile the supplied graph into the existing RunMap with one native,
     /// atomic topology command. No scheduler or shell DAG is introduced.
     pub fn new(workflow: CompiledWorkflow, mut run: Run) -> Result<Self, OrchestrationError> {
+        validate_initial_subject_revisions(&workflow)?;
+        validate_workflow_coverage(&workflow, &run)?;
         let authority = run.mutation_authority();
         let command = workflow.topology_command(run.revision());
         run.apply_topology_command(&authority, command)?;
@@ -362,6 +440,14 @@ impl ExecutableOrchestration {
 
     pub fn workflow(&self) -> &CompiledWorkflow {
         &self.workflow
+    }
+
+    pub fn required_units(&self) -> BTreeSet<WorkflowUnitRef> {
+        required_workflow_units(&self.run)
+    }
+
+    pub fn unaccounted_units(&self) -> BTreeSet<WorkflowUnitRef> {
+        unaccounted_workflow_units(&self.workflow, &self.run)
     }
 
     pub fn run(&self) -> &Run {
@@ -527,6 +613,8 @@ impl ExecutableOrchestration {
         unit: &WorkflowUnitRef,
         launch: &ExecutionLaunch,
     ) -> Result<(), OrchestrationError> {
+        validate_initial_subject_revisions(&self.workflow)?;
+        validate_workflow_coverage(&self.workflow, &self.run)?;
         self.unit(unit)?;
         if launch.execution_ref.trim().is_empty() {
             return Err(OrchestrationError::EmptyField("executionRef"));
@@ -908,6 +996,7 @@ impl ExecutableOrchestration {
                 expected_execution,
                 expected_subject,
                 expected_basis,
+                false,
             );
         }
         if artifact.producing_execution_ref != expected_execution
@@ -922,6 +1011,27 @@ impl ExecutableOrchestration {
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
         self.release_writer(unit);
         self.set_unit_state(unit, NodeState::Returned)
+    }
+
+    /// A canonical source successor makes this Return historical even when the
+    /// retained subject revision is unchanged. Keep actual bytes and basis;
+    /// never manufacture an AdvanceSubject or cancellation occurrence.
+    pub(crate) fn retain_superseded_artifact(
+        &mut self,
+        unit: &WorkflowUnitRef,
+        artifact: ReturnedArtifact,
+    ) -> Result<(), OrchestrationError> {
+        artifact.validate()?;
+        let leg = self
+            .leg(unit)
+            .ok_or_else(|| OrchestrationError::MissingLeg(unit.to_string()))?;
+        if artifact.producing_execution_ref != leg.execution_ref {
+            return self.record_historical_late_artifact(unit, artifact);
+        }
+        let execution = leg.execution_ref.clone();
+        let subject = leg.delegation.subject_ref.clone();
+        let basis = leg.delegation.basis_revision.clone();
+        self.return_late_artifact(unit, artifact, execution, subject, basis, true)
     }
 
     /// A result from an earlier attempt remains attached to that attempt. It
@@ -964,6 +1074,7 @@ impl ExecutableOrchestration {
         expected_execution: String,
         expected_subject: String,
         expected_basis: String,
+        source_superseded: bool,
     ) -> Result<(), OrchestrationError> {
         let current_revision = self
             .subject_revisions
@@ -973,7 +1084,18 @@ impl ExecutableOrchestration {
         let leg = self.leg_mut(unit)?;
         let stale_active = matches!(leg.status, LegStatus::Active | LegStatus::Detached)
             && current_revision != expected_basis;
-        if !stale_active
+        if !(stale_active
+            || (source_superseded
+                && matches!(
+                    leg.status,
+                    LegStatus::Active
+                        | LegStatus::Detached
+                        | LegStatus::CancelRequested
+                        | LegStatus::CancellationAccepted
+                        | LegStatus::ProcessTerminated
+                        | LegStatus::Quiescent
+                        | LegStatus::Failed
+                )))
             && !matches!(
                 leg.status,
                 LegStatus::Quiescent
@@ -1179,7 +1301,7 @@ impl ExecutableOrchestration {
 
     pub fn whole_run_state(&self) -> WholeRunState {
         let mut failed = false;
-        let mut complete = true;
+        let mut complete = self.unaccounted_units().is_empty();
         for unit in self.workflow.units.values() {
             match self.legs.get(&unit.reference).map(|leg| leg.status) {
                 Some(LegStatus::Returned) if self.is_current_return(&unit.reference) => {}

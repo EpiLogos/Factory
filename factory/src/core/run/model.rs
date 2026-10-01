@@ -46,6 +46,33 @@ pub enum RunLifecycle {
     Archived,
 }
 
+/// One explicit lifecycle transition, governed by the same Run authority and
+/// revision as topology. Eligibility for closure is checked by the native
+/// attempt owner before this core command is applied.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunLifecycleCommand {
+    pub command_id: String,
+    pub expected_revision: Revision,
+    pub lifecycle: RunLifecycle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RunLifecycleReceipt {
+    pub command: RunLifecycleCommand,
+    pub previous_lifecycle: RunLifecycle,
+    pub next_revision: Revision,
+    pub authority_owner: String,
+    pub authority_epoch: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunLifecycleOutcome {
+    Applied(RunLifecycleReceipt),
+    AlreadyApplied(RunLifecycleReceipt),
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteAuthority {
@@ -63,7 +90,8 @@ impl WriteAuthority {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RunMutationAuthority {
     run_ref: RunRef,
     owner: String,
@@ -120,6 +148,10 @@ pub struct Run {
     #[serde(default)]
     thought_field: RunThoughtField,
     applied_command_ids: BTreeSet<String>,
+    /// Exact commands, rather than only their names, fence changed retries.
+    /// Absent on historical Runs; a replay returns its original receipt.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    lifecycle_commands: BTreeMap<String, RunLifecycleReceipt>,
 }
 
 impl Run {
@@ -148,6 +180,7 @@ impl Run {
             map,
             thought_field: RunThoughtField::default(),
             applied_command_ids: BTreeSet::new(),
+            lifecycle_commands: BTreeMap::new(),
         })
     }
 
@@ -171,6 +204,20 @@ impl Run {
         self.lifecycle
     }
 
+    /// Archival retains the terminal outcome; the word "archived" alone
+    /// cannot establish whether this undertaking finished or was aborted.
+    pub fn archived_from(&self) -> Option<RunLifecycle> {
+        if self.lifecycle != RunLifecycle::Archived {
+            return None;
+        }
+        self.lifecycle_commands
+            .values()
+            .filter(|receipt| receipt.command.lifecycle == RunLifecycle::Archived)
+            .max_by_key(|receipt| receipt.next_revision.get())
+            .map(|receipt| receipt.previous_lifecycle)
+            .filter(|lifecycle| matches!(lifecycle, RunLifecycle::Finished | RunLifecycle::Aborted))
+    }
+
     pub fn write_authority(&self) -> &WriteAuthority {
         &self.write_authority
     }
@@ -189,6 +236,110 @@ impl Run {
             owner: self.write_authority.owner.clone(),
             epoch: self.write_authority.epoch,
         }
+    }
+
+    /// Validate the lifecycle portion of a provider CAS without accepting a
+    /// deserialized enum assignment as an owner command. A lifecycle Action
+    /// contains an exact command chain; topology revisions cannot be hidden
+    /// between its receipts. Topology-only Actions preserve the whole history.
+    pub(crate) fn validate_lifecycle_successor(&self, next: &Run) -> Result<(), RunContractError> {
+        if self.reference != next.reference
+            || self.write_authority != next.write_authority
+            || !self
+                .applied_command_ids
+                .is_subset(&next.applied_command_ids)
+            || self
+                .lifecycle_commands
+                .iter()
+                .any(|(id, receipt)| next.lifecycle_commands.get(id) != Some(receipt))
+        {
+            return Err(RunContractError::CorruptRun);
+        }
+        let mut additions = next
+            .lifecycle_commands
+            .iter()
+            .filter(|(id, _)| !self.lifecycle_commands.contains_key(*id))
+            .map(|(_, receipt)| receipt)
+            .collect::<Vec<_>>();
+        additions.sort_by_key(|receipt| receipt.next_revision);
+        if additions.is_empty() {
+            return if self.lifecycle == next.lifecycle {
+                Ok(())
+            } else {
+                Err(RunContractError::CorruptRun)
+            };
+        }
+        let mut replay = self.clone();
+        let authority = replay.mutation_authority();
+        for receipt in additions {
+            if replay.apply_lifecycle_command(&authority, receipt.command.clone())?
+                != RunLifecycleOutcome::Applied(receipt.clone())
+            {
+                return Err(RunContractError::CorruptRun);
+            }
+        }
+        if replay.lifecycle != next.lifecycle
+            || replay.revision != next.revision
+            || replay.map != next.map
+            || replay.applied_command_ids != next.applied_command_ids
+        {
+            return Err(RunContractError::CorruptRun);
+        }
+        Ok(())
+    }
+
+    pub fn apply_lifecycle_command(
+        &mut self,
+        authority: &RunMutationAuthority,
+        command: RunLifecycleCommand,
+    ) -> Result<RunLifecycleOutcome, RunContractError> {
+        self.validate_authority(authority)?;
+        if command.command_id.trim().is_empty() {
+            return Err(RunContractError::InvalidCommandId);
+        }
+        if let Some(receipt) = self.lifecycle_commands.get(&command.command_id) {
+            if receipt.command != command {
+                return Err(RunContractError::LifecycleCommandConflict(
+                    command.command_id,
+                ));
+            }
+            return Ok(RunLifecycleOutcome::AlreadyApplied(receipt.clone()));
+        }
+        if self.applied_command_ids.contains(&command.command_id) {
+            return Err(RunContractError::LifecycleCommandConflict(
+                command.command_id,
+            ));
+        }
+        if command.expected_revision != self.revision {
+            return Err(RunContractError::RevisionConflict {
+                expected: command.expected_revision,
+                actual: self.revision,
+            });
+        }
+        if !legal_lifecycle_transition(self.lifecycle, command.lifecycle) {
+            return Err(RunContractError::InvalidLifecycleTransition {
+                from: self.lifecycle,
+                to: command.lifecycle,
+            });
+        }
+        let next_revision = self
+            .revision
+            .next()
+            .ok_or(RunContractError::RevisionOverflow)?;
+        let receipt = RunLifecycleReceipt {
+            command,
+            previous_lifecycle: self.lifecycle,
+            next_revision,
+            authority_owner: authority.owner.clone(),
+            authority_epoch: authority.epoch,
+        };
+        self.lifecycle = receipt.command.lifecycle;
+        self.revision = next_revision;
+        self.applied_command_ids
+            .insert(receipt.command.command_id.clone());
+        self.lifecycle_commands
+            .insert(receipt.command.command_id.clone(), receipt.clone());
+        Ok(RunLifecycleOutcome::Applied(receipt))
     }
 
     pub fn apply_topology_command(
@@ -354,6 +505,21 @@ impl Run {
         {
             return Err(RunContractError::CorruptRun);
         }
+        for (command_id, receipt) in &self.lifecycle_commands {
+            if command_id != &receipt.command.command_id
+                || !self.applied_command_ids.contains(command_id)
+                || receipt.authority_owner.trim().is_empty()
+                || receipt.authority_epoch == 0
+                || receipt.command.expected_revision.next() != Some(receipt.next_revision)
+                || receipt.next_revision > self.revision
+                || !legal_lifecycle_transition(
+                    receipt.previous_lifecycle,
+                    receipt.command.lifecycle,
+                )
+            {
+                return Err(RunContractError::CorruptRun);
+            }
+        }
         Ok(())
     }
 
@@ -366,6 +532,18 @@ impl Run {
         }
         Ok(())
     }
+}
+
+fn legal_lifecycle_transition(from: RunLifecycle, to: RunLifecycle) -> bool {
+    use RunLifecycle::*;
+    matches!(
+        (from, to),
+        (Seeded, Active | Aborted)
+            | (Active, WaitingHuman | Suspended | Finishing | Aborted)
+            | (WaitingHuman | Suspended, Active | Aborted)
+            | (Finishing, Active | WaitingHuman | Finished | Aborted)
+            | (Finished | Aborted, Archived)
+    )
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -432,6 +610,11 @@ pub enum RunContractError {
     InvalidWriteOwner,
     InvalidCommandId,
     InvalidMutationAuthority,
+    LifecycleCommandConflict(String),
+    InvalidLifecycleTransition {
+        from: RunLifecycle,
+        to: RunLifecycle,
+    },
     RevisionConflict {
         expected: Revision,
         actual: Revision,
@@ -468,3 +651,87 @@ impl Display for RunContractError {
 }
 
 impl Error for RunContractError {}
+
+#[cfg(test)]
+mod lifecycle_successor_tests {
+    use super::*;
+
+    fn run() -> Run {
+        Run::new(
+            "run:01ARZ3NDEKTSV4RRFFQ69G5FBD".parse().unwrap(),
+            "project:01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap(),
+            "native lifecycle receipt validation",
+            "factory",
+        )
+        .unwrap()
+    }
+
+    fn transition(run: &mut Run, id: &str, lifecycle: RunLifecycle) {
+        run.apply_lifecycle_command(
+            &run.mutation_authority(),
+            RunLifecycleCommand {
+                command_id: id.into(),
+                expected_revision: run.revision(),
+                lifecycle,
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn lifecycle_successor_requires_exact_owner_receipts_and_preserved_history() {
+        let source = run();
+        let mut successor = source.clone();
+        transition(&mut successor, "activate", RunLifecycle::Active);
+        source.validate_lifecycle_successor(&successor).unwrap();
+
+        let mut forged = source.clone();
+        forged.lifecycle = RunLifecycle::Active;
+        forged.revision = Revision::new(2).unwrap();
+        assert!(source.validate_lifecycle_successor(&forged).is_err());
+
+        let active = successor.clone();
+        transition(&mut successor, "wait", RunLifecycle::WaitingHuman);
+        active.validate_lifecycle_successor(&successor).unwrap();
+        successor.lifecycle_commands.remove("activate");
+        assert!(active.validate_lifecycle_successor(&successor).is_err());
+    }
+
+    #[test]
+    fn lifecycle_receipts_cannot_hide_a_topology_revision_between_commands() {
+        let source = run();
+        let mut successor = source.clone();
+        transition(&mut successor, "activate", RunLifecycle::Active);
+        successor
+            .apply_topology_command(
+                &successor.mutation_authority(),
+                RunTopologyCommand {
+                    command_id: "add-work".into(),
+                    expected_revision: successor.revision(),
+                    mutation: TopologyMutation::Batch {
+                        mutations: vec![
+                            TopologyMutation::AddNode {
+                                node: super::super::TopologyNode {
+                                    id: super::super::NodeId::new("work-unit").unwrap(),
+                                    kind: super::super::NodeKind::Work,
+                                    label: "real native topology mutation".into(),
+                                    state: Some(super::super::NodeState::Ready),
+                                    semantic_ref: None,
+                                },
+                            },
+                            TopologyMutation::AddEdge {
+                                edge: super::super::TopologyEdge {
+                                    from: super::super::NodeId::new("destination").unwrap(),
+                                    to: super::super::NodeId::new("work-unit").unwrap(),
+                                    relation: super::super::EdgeKind::BranchesTo,
+                                },
+                            },
+                        ],
+                    },
+                },
+            )
+            .unwrap();
+        transition(&mut successor, "wait", RunLifecycle::WaitingHuman);
+        assert!(source.validate_lifecycle_successor(&successor).is_err());
+    }
+}

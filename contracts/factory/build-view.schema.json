@@ -98,7 +98,7 @@
       ]
     },
     "runStatus": {
-      "description": "Run lifecycle folded for display: queued (seeded), running (active, finishing), blocked (waiting_human, suspended), success (finished, archived), fail (aborted).",
+      "description": "Run standing in the existing display vocabulary. Archive retains the recorded Finished or Aborted outcome; unproved terminal completion is blocked. Canonical native readings require admitted completion.",
       "enum": [
         "queued",
         "running",
@@ -108,7 +108,7 @@
       ]
     },
     "closureState": {
-      "description": "The Run's closure standing from its lifecycle alone; never a verification Closure.",
+      "description": "Closure standing from retained lifecycle history, reconciled with native receiving admission when present; absent for unproved archived/finished history. This is not a verification Closure.",
       "oneOf": [
         {
           "const": "open",
@@ -120,11 +120,11 @@
         },
         {
           "const": "closed",
-          "description": "finished or archived"
+          "description": "Finished, or archive of Finished, with native receiving admission when a native attempt reading is present."
         },
         {
           "const": "aborted",
-          "description": "aborted"
+          "description": "Aborted, or archive of Aborted."
         }
       ]
     },
@@ -417,6 +417,138 @@
             "type": "string",
             "minLength": 1
           }
+        },
+        "unitDecisionBasis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "workflowUnitRef",
+            "attemptRef",
+            "executionRef",
+            "subjectRef",
+            "subjectRevision",
+            "workflowSourceRef",
+            "workflowSourceRevision",
+            "workflowSourceDigest",
+            "resolverRef",
+            "controlled"
+          ],
+          "properties": {
+            "workflowUnitRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "attemptRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "executionRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subjectRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subjectRevision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflowSourceRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflowSourceRevision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "workflowSourceDigest": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolverRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "controlled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "unitDecisionResponse": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "responseRef",
+            "resolverRef",
+            "channelReceiptRef",
+            "sourceRevision",
+            "outcome",
+            "evidenceRefs",
+            "controlled"
+          ],
+          "properties": {
+            "responseRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "resolverRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "channelReceiptRef": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sourceRevision": {
+              "type": "string",
+              "minLength": 1
+            },
+            "outcome": {
+              "enum": [
+                "resume",
+                "cancel"
+              ]
+            },
+            "evidenceRefs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "controlled": {
+              "type": "boolean"
+            }
+          }
+        },
+        "unitDecisionRetirement": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "reason",
+            "replacementBasisRefs",
+            "observedProviderRevision"
+          ],
+          "properties": {
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            },
+            "replacementBasisRefs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "observedProviderRevision": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         }
       }
     },
@@ -651,6 +783,9 @@
             "$ref": "#/$defs/executionUsage"
           },
           "description": "Present when the view is read from a developmental state with execution correlations for this Run."
+        },
+        "nativeAttempts": {
+          "$ref": "#/$defs/nativeAttempts"
         }
       }
     },
@@ -771,6 +906,140 @@
             "null"
           ],
           "description": "latest reported completion (RFC 3339)"
+        }
+      }
+    },
+    "nativeAttempts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "revision",
+        "runRef",
+        "runRevision",
+        "topologyRevision",
+        "workflowKey",
+        "workflowSourceRef",
+        "workflowSourceRevision",
+        "workflowSourceDigest",
+        "sourceCurrent",
+        "wholeRunState",
+        "lifecycle",
+        "requiredUnits",
+        "currentReturnedUnits",
+        "legs",
+        "attempts",
+        "independentReviewers",
+        "syntheses"
+      ],
+      "properties": {
+        "contract": {
+          "const": "factory.attempt-reading/v1"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "topologyRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflowKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCurrent": {
+          "type": "boolean"
+        },
+        "wholeRunState": {
+          "enum": [
+            "incomplete",
+            "complete",
+            "failed"
+          ]
+        },
+        "lifecycle": {
+          "enum": [
+            "seeded",
+            "active",
+            "waiting_human",
+            "suspended",
+            "finishing",
+            "finished",
+            "aborted",
+            "archived"
+          ]
+        },
+        "requiredUnits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "currentReturnedUnits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "legs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "independentReviewers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "syntheses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "completionVerified": {
+          "type": "boolean",
+          "description": "Exact canonical Finished admission through the authenticated native receiving owner; visible Returns and archive never create this fact."
+        },
+        "archivedFrom": {
+          "enum": [
+            "finished",
+            "aborted"
+          ],
+          "description": "Retained terminal lifecycle before canonical Archive; absent when history does not establish it."
         }
       }
     }

@@ -14,6 +14,7 @@ const COMMANDS: &[&str] = &[
     "attempt.task",
     "attempt.return",
     "attempt.receiving",
+    "attempt.decision",
     "attempt.learn",
     "attempt.material",
     "development.attempt.prepare",
@@ -26,6 +27,7 @@ const COMMANDS: &[&str] = &[
     "development.attempt.task",
     "development.attempt.return",
     "development.attempt.receiving",
+    "development.attempt.decision",
     "development.attempt.learn",
     "development.attempt.material",
     "owner",
@@ -43,6 +45,7 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_task::RETURN_READING,
     crate::attempt_receiving::RECEIVING_ACTION,
     crate::attempt_receiving::RECEIVING_RECEIPT,
+    crate::attempt_native_receiving::DECISION_READING,
     crate::attempt_learning::LEARNING_ACTION,
     crate::attempt_learning::LEARNING_RECEIPT,
     crate::attempt_material::MATERIAL_ACTION,
@@ -74,6 +77,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
             }
             Some("list" | "task" | "return") => crate::attempt_task::execute_cli(args),
             Some("receiving") => crate::attempt_receiving::execute_cli(&args[1..], stdin),
+            Some("decision") => crate::attempt_native_receiving::execute_cli(&args[1..], stdin),
             Some("learn") => crate::attempt_learning::execute_cli(&args[1..], stdin),
             Some("material") => crate::attempt_material::execute_cli(&args[1..], stdin),
             None | Some("help" | "--help" | "-h") => {
@@ -82,11 +86,12 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, String> {
                 let owner = crate::attempt_owner_cli::execute_attempt_owner_cli(&[], None)
                     .map_err(|error| error.to_string())?;
                 let receiving = crate::attempt_receiving::execute_cli(&[], None)?;
+                let decision = crate::attempt_native_receiving::execute_cli(&[], None)?;
                 let learning = crate::attempt_learning::execute_cli(&[], None)?;
                 let preparation = crate::attempt_central::execute_cli(&[], None)?;
                 let material = crate::attempt_material::execute_cli(&[], None)?;
                 Ok(format!(
-                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{learning}\n\n{preparation}\n\n{material}",
+                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{decision}\n\n{learning}\n\n{preparation}\n\n{material}",
                     task_help()
                 ))
             }

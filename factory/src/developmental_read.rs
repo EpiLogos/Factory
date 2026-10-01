@@ -568,6 +568,9 @@ impl FactoryDevelopmentalState {
             &selection,
             self.project_name(),
         )?;
+        snapshot
+            .view
+            .join_native_attempts(self.native_attempt_reading(run_ref)?)?;
         snapshot.view.execution_usage = self
             .execution_correlations
             .iter()
@@ -592,6 +595,24 @@ impl FactoryDevelopmentalState {
                     ProjectName::from_central_project_ref(&link.central_project_ref)
                 })
             })
+    }
+
+    fn native_attempt_reading(
+        &self,
+        run_ref: &RunRef,
+    ) -> Result<Option<crate::attempt_runtime::FactoryAttemptReading>, FactoryDevelopmentalReadError>
+    {
+        if !self.attempt_states.contains_key(run_ref) {
+            return Ok(None);
+        }
+        let view = crate::attempt_native_store::view_for(self, run_ref).map_err(|error| {
+            FactoryDevelopmentalReadError::InvalidNativeAttempt(error.to_string())
+        })?;
+        let mut reading = crate::attempt_runtime::reading_for(&view).map_err(|error| {
+            FactoryDevelopmentalReadError::InvalidNativeAttempt(error.to_string())
+        })?;
+        reading.source_current = crate::attempt_native_store::source_is_current(self, &view);
+        Ok(Some(reading))
     }
 
     pub fn run_reading(
@@ -667,6 +688,7 @@ impl FactoryDevelopmentalState {
             candidates: snapshot.view.candidates,
             human_requests: snapshot.view.human_requests,
             actions,
+            native_attempts: self.native_attempt_reading(run_ref)?,
         })
     }
 
@@ -1798,6 +1820,8 @@ pub struct FactoryRunReading {
     pub candidates: Vec<CandidateRecord>,
     pub human_requests: Vec<HumanRequestRecord>,
     pub actions: Vec<FactoryActionDescriptor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_attempts: Option<crate::attempt_runtime::FactoryAttemptReading>,
 }
 
 /// Factory-owned relation from one stable WorkflowUnit to one concrete
@@ -3621,6 +3645,7 @@ pub enum FactoryDevelopmentalReadError {
     },
     InvalidRoutineContinuation(String),
     InvalidCommission(String),
+    InvalidNativeAttempt(String),
     InvalidCentralProjectLink(String),
     CentralProjectLinkNotFound(String),
     InvalidWorkCustody(String),
