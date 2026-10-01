@@ -43,6 +43,7 @@ pub mod journey;
 pub mod journey_build;
 pub mod journey_commission;
 pub mod journey_praxis;
+pub mod native_aikit_route;
 pub mod native_gateway;
 pub mod native_owner;
 pub mod native_process;

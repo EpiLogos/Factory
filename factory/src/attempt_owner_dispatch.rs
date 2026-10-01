@@ -331,6 +331,7 @@ pub fn execute_attempt_owner_action(
     let NativeOwnerInvocation::AikitEncounter {
         binary,
         cwd,
+        transport,
         contract_revision,
         request: packet,
     } = &request.invocation
@@ -383,8 +384,11 @@ pub fn execute_attempt_owner_action(
             "attempt, Execution and AgentSession identities disagree or collide",
         ));
     }
-    let transport_identity =
+    let mut transport_identity =
         json!({"binary":binary, "cwd":cwd, "contractRevision":contract_revision});
+    if let Some(transport) = transport {
+        transport_identity["transport"] = serde_json::to_value(transport).map_err(error)?;
+    }
     let prior_send = attempt.observations.iter().find(|receipt| {
         same_delivery(receipt, session, delivery)
             && receipt.payload["action"].as_str() == Some("send")
@@ -426,9 +430,11 @@ pub fn execute_attempt_owner_action(
             }
             task_admission = Some(
                 task_dispatch::prepare(
+                    &reading,
                     attempt,
                     binary,
                     cwd,
+                    transport.as_ref(),
                     packet,
                     attempt
                         .disposition
@@ -544,6 +550,7 @@ pub fn execute_attempt_owner_action(
     let invocation = NativeOwnerInvocation::AikitEncounter {
         binary: binary.clone(),
         cwd: cwd.clone(),
+        transport: transport.clone(),
         contract_revision: contract_revision.clone(),
         request: effective_packet,
     };

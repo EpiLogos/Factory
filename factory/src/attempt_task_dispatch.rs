@@ -1,42 +1,55 @@
 //! Native task-bound AIKit dispatch. A retained configuration is only a preview:
 //! expected_task is enforced by the actual AIKit owner under its operation lock.
-use crate::attempt_runtime::FactoryAttemptRecord;
-use crate::native_process;
+use crate::attempt_runtime::{FactoryAttemptReading, FactoryAttemptRecord};
 use serde_json::{json, Value};
-use std::{path::Path, process::Command, time::Duration};
+use std::{
+    path::Path,
+    time::{Duration, Instant},
+};
+
+#[path = "attempt_task_material.rs"]
+mod material;
 
 /// The additive owner contract that first admits exact task/Agency assertions.
 /// This is a contract basis, not proof that an arbitrary binary has these bytes.
 pub const AIKIT_TASK_CONTRACT_REVISION: &str = "8804866fb49ec5072aaedcfcf032c7a078fa585f";
 
 pub(super) fn prepare(
+    reading: &FactoryAttemptReading,
     attempt: &FactoryAttemptRecord,
     binary: &Path,
     cwd: &Path,
+    transport: Option<&crate::native_aikit_route::AikitOwnerTransport>,
     request: &Value,
     timeout_ms: u64,
 ) -> Result<Value, String> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(30_000));
     let expected = request.pointer("/turn/expected_task").filter(|v| v.is_object())
         .ok_or("Protected task dispatch requires the native expected_task assertion, not a cached protection label")?;
-    let output = native_process::output(
-        Command::new(binary).args([
-            "-C",
-            cwd.to_str().ok_or("Task cwd is not UTF-8")?,
-            "session-space",
-            "encounter-task-read",
-            "--agent-session",
-            &attempt.disposition.body.agent_session_ref,
-        ]),
+    let output = crate::native_aikit_route::output(
+        binary,
+        cwd,
+        transport,
+        &[
+            "session-space".into(),
+            "encounter-task-read".into(),
+            "--agent-session".into(),
+            attempt.disposition.body.agent_session_ref.clone(),
+        ],
         Duration::from_millis(timeout_ms.min(30_000)),
     )
     .map_err(|e| format!("Native task reading failed before dispatch: {e}"))?;
     if !output.status.success() {
-        return Err("Native AIKit task reading refused; no unprotected fallback".into());
+        return Err(format!("Native AIKit task reading refused; no unprotected fallback; exit {:?}; stderr {}; response {}",
+            output.status.code(), bounded_text(&output.stderr), bounded_text(&output.stdout)));
     }
     let task: Value = serde_json::from_slice(&output.stdout)
         .map_err(|e| format!("Invalid native task reading: {e}"))?;
     if task["schema"] != "aikit.encounter-task/v1" || task["ready"] != true {
-        return Err("The selected AIKit task is absent or its preparation is incomplete".into());
+        return Err(format!(
+            "The selected AIKit task is absent or its preparation is incomplete; native reading {}",
+            bounded_text(&output.stdout)
+        ));
     }
     let allocation = &task["allocation"]["allocation"];
     let participant = &attempt.disposition.participant;
@@ -120,12 +133,22 @@ pub(super) fn prepare(
             "Declared write-boundary identity differs from the native requirements digest".into(),
         );
     }
+    let prepared_material = material::inspect(
+        reading,
+        &material::MaterialAttemptBasis::from(attempt),
+        &task,
+        transport,
+        deadline,
+    )?;
     let body = &attempt.disposition.body;
     if body.material_world_ref.is_some()
         || body.workcell_ref.is_some()
         || placement.material_receipt_ref.is_some()
     {
-        let world = &task["material"]["world"];
+        let world = prepared_material
+            .as_ref()
+            .map(|reading| &reading["materialReading"]["receipt_world"])
+            .unwrap_or(&task["material"]["world"]);
         if body.material_world_ref.as_deref() != world["world_ref"].as_str()
             || body.workcell_ref.as_deref() != world["workcell_ref"].as_str()
             || placement
@@ -138,12 +161,17 @@ pub(super) fn prepare(
             );
         }
     }
-    Ok(
-        json!({"contract":"factory.aikit-task-admission/v1", "taskRevision":task["revision"],
+    let mut admission = json!({"contract":"factory.aikit-task-admission/v1", "taskRevision":task["revision"],
         "expectedTask":expected, "requirementsDigest":task["inspection"]["requirements_digest"],
         "materialWorld":task["material"]["world"],
-        "standing":"preview-matched; native locked admission still required at send"}),
-    )
+        "standing":"preview-matched; native locked admission still required at send"});
+    if !task["prepared_run"].is_null() {
+        admission["preparedRunScope"] = task["prepared_run"].clone();
+    }
+    if let Some(material) = prepared_material {
+        admission["nativePreparedMaterial"] = material;
+    }
+    Ok(admission)
 }
 
 fn strings(value: &Value) -> Result<Vec<&str>, String> {
@@ -157,6 +185,10 @@ fn strings(value: &Value) -> Result<Vec<&str>, String> {
                 .ok_or_else(|| "Native requirement contains an empty/non-string identity".into())
         })
         .collect()
+}
+
+fn bounded_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]).into_owned()
 }
 
 pub(super) fn validate_response(

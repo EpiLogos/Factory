@@ -28,6 +28,8 @@ pub enum NativeOwnerInvocation {
     AikitEncounter {
         binary: PathBuf,
         cwd: PathBuf,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        transport: Option<crate::native_aikit_route::AikitOwnerTransport>,
         contract_revision: String,
         request: Value,
     },
@@ -143,9 +145,17 @@ pub fn invoke_native_owner_bounded(
         NativeOwnerInvocation::AikitEncounter {
             binary,
             cwd,
+            transport,
             contract_revision,
             request,
-        } => invoke_aikit(binary, cwd, contract_revision, request, timeout),
+        } => invoke_aikit(
+            binary,
+            cwd,
+            transport.as_ref(),
+            contract_revision,
+            request,
+            timeout,
+        ),
         NativeOwnerInvocation::WorkcellWriteBoundaryInspect {
             binary,
             requirements,
@@ -226,6 +236,7 @@ pub fn invoke_native_owner_bounded(
 fn invoke_aikit(
     binary: &Path,
     cwd: &Path,
+    transport: Option<&crate::native_aikit_route::AikitOwnerTransport>,
     contract_revision: &str,
     request: &Value,
     timeout: Duration,
@@ -263,15 +274,30 @@ fn invoke_aikit(
             "AIKit send/delivery requires a stable delivery_ref".into(),
         ));
     }
-    let mut command = Command::new(binary);
-    command
-        .arg("-C")
-        .arg(cwd)
-        .arg("session-space")
-        .arg("encounter")
-        .arg("--request-json")
-        .arg(serde_json::to_string(request)?);
-    let output = owner_output("AIKit", binary, &mut command, timeout)?;
+    let output = crate::native_aikit_route::output(
+        binary,
+        cwd,
+        transport,
+        &[
+            "session-space".into(),
+            "encounter".into(),
+            "--request-json".into(),
+            serde_json::to_string(request)?,
+        ],
+        timeout,
+    )
+    .map_err(|error| match error {
+        crate::native_aikit_route::AikitOwnerRouteError::InvalidConfiguration(message) => {
+            NativeOwnerError::InvalidInvocation(message)
+        }
+        crate::native_aikit_route::AikitOwnerRouteError::ClientIo { binary, error } => {
+            NativeOwnerError::Spawn {
+                owner: "AIKit",
+                binary,
+                error,
+            }
+        }
+    })?;
     let payload = parse_json_output("AIKit", &output)?;
     if payload.get("ok") == Some(&Value::Bool(false)) {
         return Err(command_failure("AIKit", output, Some(payload)));
@@ -1170,6 +1196,7 @@ mod native_adapter_regressions {
         let invocation = NativeOwnerInvocation::AikitEncounter {
             binary: PathBuf::from("must-not-run"),
             cwd: PathBuf::from("/controlled-test"),
+            transport: None,
             contract_revision: "unverified-new-head".into(),
             request: json!({"action":"delivery","agent_session":"session:controlled","delivery_ref":"delivery:controlled"}),
         };
