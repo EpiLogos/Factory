@@ -46,6 +46,30 @@ fn successful(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).expect("native structured output")
 }
 
+fn validate_mutation_contract(request: &Value) {
+    let schema: Value = serde_json::from_str(include_str!(
+        "../../contracts/factory/developmental-mutation.schema.json"
+    ))
+    .unwrap();
+    let mut source_schema: Value = serde_json::from_str(include_str!(
+        "../../contracts/factory/agent-workflow-source.schema.json"
+    ))
+    .unwrap();
+    // Resolve the bundled schema's relative id against the exact URI used by
+    // the public mutation contract, including repeated continuation branches.
+    let source_uri = "https://github.com/EpiLogos/agent-system-design/contracts/factory/agent-workflow-source.schema.json";
+    source_schema["$id"] = json!(source_uri);
+    jsonschema::options()
+        .with_resource(
+            source_uri,
+            jsonschema::Resource::from_contents(source_schema).unwrap(),
+        )
+        .build(&schema)
+        .unwrap()
+        .validate(request)
+        .unwrap();
+}
+
 fn ctrl_output(binary: &Path, root: &Path, action: &str, input: &Value) -> Output {
     Command::new(binary)
         .args(["--json", "--root"])
@@ -328,6 +352,9 @@ impl World {
             .to_owned();
         let mut source: WorkflowSource = serde_json::from_str(SOURCE).unwrap();
         source.source.flow_ref = Some(external["location"]["ref"].as_str().unwrap().to_owned());
+        // Source revisions are opaque: this valid value is admitted by the
+        // actual workflow owner and must survive the native relation unchanged.
+        source.source.revision = "native  Flow\tsource revision v1%20@basis:é".into();
         source.source.digest = workflow_source_digest(&source).unwrap();
         let world = Self {
             _directory: directory,
@@ -387,6 +414,7 @@ impl World {
     }
 
     fn mutate(&self, request: &Value) -> Value {
+        validate_mutation_contract(request);
         successful(self.mutate_output(request))
     }
 
@@ -455,6 +483,13 @@ impl World {
             ],
             None,
         ));
+        let retained = self.attempts(run);
+        assert_eq!(
+            retained["workflowSourceRef"],
+            source.source.reference.to_string()
+        );
+        assert_eq!(retained["workflowSourceRevision"], source.source.revision);
+        assert_eq!(retained["workflowSourceDigest"], source.source.digest);
     }
 
     fn flow(&self, name: &str) -> Flow {
@@ -751,7 +786,7 @@ impl World {
         source.source.reference = "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX"
             .parse()
             .unwrap();
-        source.source.revision = "explicit-native-relation-successor-v2".into();
+        source.source.revision = "explicit  native\trelation successor v2%20@basis:é".into();
         source.source.digest = workflow_source_digest(&source).unwrap();
         self.mutate(&self.owner_request("source-continuation","factory",&source.source.reference.to_string(),&source.source.revision,json!({
             "kind":"continue-commission","continuationRelation":relation,"commissionRef":COMMISSION,"journeyRef":self.journey,
@@ -830,6 +865,32 @@ fn actual_flow_association_is_per_run_retains_external_ancestry_and_does_not_com
     );
     assert!(associations(&world.reading("run", &world.run)).is_empty());
     let journey_after = world.reading("journey", &world.journey);
+    let owner_after = read_developmental_state(&world.state).unwrap();
+    let bounded_link = owner_after
+        .journeys
+        .iter()
+        .find(|journey| journey.journey_ref.to_string() == world.journey)
+        .unwrap()
+        .runs
+        .iter()
+        .find(|link| link.run_ref.to_string() == bounded)
+        .unwrap();
+    for (reference, revision, digest) in [
+        (
+            &world.source.source.reference,
+            "native%20%20Flow%09source%20revision%20v1%2520%40basis%3A%C3%A9",
+            &world.source.source.digest,
+        ),
+        (
+            &source.source.reference,
+            "explicit%20%20native%09relation%20successor%20v2%2520%40basis%3A%C3%A9",
+            &source.source.digest,
+        ),
+    ] {
+        assert!(bounded_link
+            .basis_refs
+            .contains(&format!("{reference}@{revision}:{digest}")));
+    }
     assert_eq!(
         journey_after["revision"].as_u64().unwrap(),
         journey_before["revision"].as_u64().unwrap() + 1

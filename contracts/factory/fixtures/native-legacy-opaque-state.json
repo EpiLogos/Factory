@@ -1,0 +1,1434 @@
+{
+  "schema": "factory.developmental-local-provider/v1",
+  "state": {
+    "schema": "factory.developmental-state/v1",
+    "build": {
+      "project": {
+        "ref": "project:0000000000JVZBK5J25CX1E93V",
+        "revision": 1
+      },
+      "runs": {
+        "runs": {
+          "run:01ARZ3NDEKTSV4RRFFQ69G5FBE": {
+            "ref": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+            "projectRef": "project:0000000000JVZBK5J25CX1E93V",
+            "revision": 2,
+            "destination": "bounded retained-history native regression",
+            "lifecycle": "seeded",
+            "writeAuthority": {
+              "owner": "factory",
+              "epoch": 1
+            },
+            "map": {
+              "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+              "topologyRevision": 2,
+              "nodes": {
+                "barrier-implementation-reviewed": {
+                  "id": "barrier-implementation-reviewed",
+                  "kind": "gate",
+                  "label": "Workflow barrier implementation-reviewed",
+                  "state": null,
+                  "semanticRef": null
+                },
+                "destination": {
+                  "id": "destination",
+                  "kind": "destination",
+                  "label": "bounded retained-history native regression",
+                  "state": null,
+                  "semanticRef": null
+                },
+                "work-implement-compiler": {
+                  "id": "work-implement-compiler",
+                  "kind": "work",
+                  "label": "Compile open Agent-first workflow source into stable Factory units",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:279SC9GFSH1W4THFVXNPNXZYBM"
+                },
+                "work-inspect-source": {
+                  "id": "work-inspect-source",
+                  "kind": "work",
+                  "label": "Recover the current Factory architecture and source obligations",
+                  "state": "ready",
+                  "semanticRef": "workflow-unit:64WYS7PV8S50ZCTWJ26G8S5731"
+                },
+                "work-integrate-return": {
+                  "id": "work-integrate-return",
+                  "kind": "work",
+                  "label": "Integrate implementation and independent review evidence",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:5FMX9T7Z5XVKZ6SJ1PJCJ0T05F"
+                },
+                "work-review-adversarially": {
+                  "id": "work-review-adversarially",
+                  "kind": "work",
+                  "label": "Challenge identity and graph compilation under hostile inputs",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:5X4N4QMAZ45WRNXC7QSAXTA0SX"
+                }
+              },
+              "edges": [
+                {
+                  "from": "barrier-implementation-reviewed",
+                  "to": "work-implement-compiler",
+                  "relation": "requires"
+                },
+                {
+                  "from": "barrier-implementation-reviewed",
+                  "to": "work-review-adversarially",
+                  "relation": "requires"
+                },
+                {
+                  "from": "destination",
+                  "to": "work-integrate-return",
+                  "relation": "branches_to"
+                },
+                {
+                  "from": "work-implement-compiler",
+                  "to": "work-inspect-source",
+                  "relation": "requires"
+                },
+                {
+                  "from": "work-integrate-return",
+                  "to": "barrier-implementation-reviewed",
+                  "relation": "requires"
+                },
+                {
+                  "from": "work-review-adversarially",
+                  "to": "work-inspect-source",
+                  "relation": "requires"
+                }
+              ]
+            },
+            "thoughtField": {
+              "thoughts": {}
+            },
+            "appliedCommandIds": [
+              "compile-workflow:workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX/legacy%2520@successor:漢/v2/fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+            ]
+          },
+          "run:01M3VDGMERT7R889QAYJ0JQ2SY": {
+            "ref": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+            "projectRef": "project:0000000000JVZBK5J25CX1E93V",
+            "revision": 2,
+            "destination": "bounded retained-history native regression",
+            "lifecycle": "seeded",
+            "writeAuthority": {
+              "owner": "factory",
+              "epoch": 1
+            },
+            "map": {
+              "runRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+              "topologyRevision": 2,
+              "nodes": {
+                "barrier-implementation-reviewed": {
+                  "id": "barrier-implementation-reviewed",
+                  "kind": "gate",
+                  "label": "Workflow barrier implementation-reviewed",
+                  "state": null,
+                  "semanticRef": null
+                },
+                "destination": {
+                  "id": "destination",
+                  "kind": "destination",
+                  "label": "bounded retained-history native regression",
+                  "state": null,
+                  "semanticRef": null
+                },
+                "work-implement-compiler": {
+                  "id": "work-implement-compiler",
+                  "kind": "work",
+                  "label": "Compile open Agent-first workflow source into stable Factory units",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:0X62PSZAM8G21B5EP3FAEE8M32"
+                },
+                "work-inspect-source": {
+                  "id": "work-inspect-source",
+                  "kind": "work",
+                  "label": "Recover the current Factory architecture and source obligations",
+                  "state": "ready",
+                  "semanticRef": "workflow-unit:7M2CMQK2AQKE485MH4DBYXTG0G"
+                },
+                "work-integrate-return": {
+                  "id": "work-integrate-return",
+                  "kind": "work",
+                  "label": "Integrate implementation and independent review evidence",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:6E7M9QAQPE4WRTDJTJ6TGBEC2V"
+                },
+                "work-review-adversarially": {
+                  "id": "work-review-adversarially",
+                  "kind": "work",
+                  "label": "Challenge identity and graph compilation under hostile inputs",
+                  "state": "planned",
+                  "semanticRef": "workflow-unit:7S3EZ0YKAVK8QR36ZFJQ179XF4"
+                }
+              },
+              "edges": [
+                {
+                  "from": "barrier-implementation-reviewed",
+                  "to": "work-implement-compiler",
+                  "relation": "requires"
+                },
+                {
+                  "from": "barrier-implementation-reviewed",
+                  "to": "work-review-adversarially",
+                  "relation": "requires"
+                },
+                {
+                  "from": "destination",
+                  "to": "work-integrate-return",
+                  "relation": "branches_to"
+                },
+                {
+                  "from": "work-implement-compiler",
+                  "to": "work-inspect-source",
+                  "relation": "requires"
+                },
+                {
+                  "from": "work-integrate-return",
+                  "to": "barrier-implementation-reviewed",
+                  "relation": "requires"
+                },
+                {
+                  "from": "work-review-adversarially",
+                  "to": "work-inspect-source",
+                  "relation": "requires"
+                }
+              ]
+            },
+            "thoughtField": {
+              "thoughts": {}
+            },
+            "appliedCommandIds": [
+              "compile-workflow:workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV/legacy%20@origin:é/v1/fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+            ]
+          }
+        }
+      },
+      "revision": 5,
+      "claims": {},
+      "evidence": {},
+      "candidates": {},
+      "humanRequests": {},
+      "agencies": {},
+      "executions": {},
+      "trajectories": {}
+    },
+    "journeys": [
+      {
+        "schema": "factory.journey/v1",
+        "ref": "journey:01M3VDGMEREWJR27C3RBGJSBMP",
+        "revision": 4,
+        "project_ref": "project:0000000000JVZBK5J25CX1E93V",
+        "related_projects": [],
+        "commission": {
+          "purpose": "Retain actual prior native opaque revision history for compatibility regression",
+          "commission_ref": "commission:previous-native-opaque-continuation-fac1ab94fb70",
+          "why_refs": [
+            "act:prior-native-opaque-continuation",
+            "agent:controlled-previous-owner-compatibility",
+            "commission:previous-native-opaque-continuation-fac1ab94fb70"
+          ]
+        },
+        "knowledge_refs": [],
+        "architecture_refs": [],
+        "design_refs": [],
+        "wayfinder_refs": [],
+        "participants": [
+          {
+            "participant_ref": "agent:controlled-previous-owner-compatibility",
+            "role": "bounded-root-act-commissioned-not-executed"
+          }
+        ],
+        "flow_refs": [],
+        "runs": [
+          {
+            "run_ref": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+            "journey_revision": 2,
+            "basis_refs": [
+              "act:prior-native-opaque-continuation",
+              "agent:controlled-previous-owner-compatibility",
+              "commission:previous-native-opaque-continuation-fac1ab94fb70"
+            ],
+            "agent_session_refs": []
+          },
+          {
+            "run_ref": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+            "journey_revision": 3,
+            "basis_refs": [
+              "commission:previous-native-opaque-continuation-fac1ab94fb70",
+              "factory-continuation-relation:bounded-contribution",
+              "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+              "source:prior-native-opaque-continuation",
+              "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+              "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%20@origin:é/v1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+              "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+              "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX@legacy%2520@successor:漢/v2:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+            ],
+            "agent_session_refs": []
+          }
+        ],
+        "agent_session_refs": [],
+        "activity_refs": [],
+        "returns": [],
+        "recognitions": [],
+        "material_context_refs": [],
+        "status": "active",
+        "frontier": "No worker executed or accepted",
+        "started_at": "2026-10-01T09:42:47Z",
+        "completed_at": null
+      }
+    ],
+    "workflowSources": [
+      {
+        "schemaVersion": "factory.agent-workflow-source/v1",
+        "coordinationContract": "factory.bounded-coordination/v1",
+        "source": {
+          "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+          "revision": "legacy%20@origin:é/v1",
+          "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+          "temporalRef": "flow-time:2026-09-08",
+          "flowRef": "flow:factory-197"
+        },
+        "workflowKey": "agent-first-implementation",
+        "units": [
+          {
+            "key": "inspect-source",
+            "developmentalConcern": "Recover the current Factory architecture and source obligations",
+            "requiredDifference": "The implementation basis is explicit and evidenced",
+            "returnContract": "Return the inspected seams and exact source basis",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [
+                "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+              ],
+              "agentSetRefs": [],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+            ],
+            "dependencies": [],
+            "independenceFrom": [],
+            "permittedEffects": [
+              "read Factory source"
+            ],
+            "verificationObligations": [
+              "cite exact files and revisions"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+            "stopConditions": "Stop if the requested base is unavailable",
+            "escalationConditions": "Escalate contradictory source contracts"
+          },
+          {
+            "key": "implement-compiler",
+            "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+            "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+            "returnContract": "Return production code and functional verification evidence",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [],
+              "agentSetRefs": [
+                "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+              ],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+            ],
+            "dependencies": [
+              "inspect-source"
+            ],
+            "independenceFrom": [
+              "review-adversarially"
+            ],
+            "permittedEffects": [
+              "write Factory workflow compiler",
+              "write direct contracts and tests"
+            ],
+            "verificationObligations": [
+              "compile checked-in source",
+              "preserve Run mutation authority"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+            "stopConditions": "Stop before creating a second execution runner",
+            "escalationConditions": "Escalate unresolved ownership overlap"
+          },
+          {
+            "key": "review-adversarially",
+            "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+            "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+            "returnContract": "Return adversarial findings and reproducible failures",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [
+                "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+              ],
+              "agentSetRefs": [],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+            ],
+            "dependencies": [
+              "inspect-source"
+            ],
+            "independenceFrom": [
+              "implement-compiler"
+            ],
+            "permittedEffects": [
+              "read implementation",
+              "execute direct tests"
+            ],
+            "verificationObligations": [
+              "exercise cycle and provenance attacks"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+            "stopConditions": "Stop before mutating implementation files",
+            "escalationConditions": "Escalate any identity instability"
+          },
+          {
+            "key": "integrate-return",
+            "developmentalConcern": "Integrate implementation and independent review evidence",
+            "requiredDifference": "One bounded return reports a verified integration order",
+            "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [],
+              "agentSetRefs": [],
+              "agencyRefs": [
+                "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+              ]
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+            ],
+            "dependencies": [],
+            "independenceFrom": [],
+            "permittedEffects": [
+              "publish bounded return"
+            ],
+            "verificationObligations": [
+              "include exact test results"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+            "stopConditions": "Stop before merge, push, or pull request creation",
+            "escalationConditions": "Escalate unresolved owner dependencies"
+          }
+        ],
+        "barriers": [
+          {
+            "key": "implementation-reviewed",
+            "waitsFor": [
+              "implement-compiler",
+              "review-adversarially"
+            ],
+            "releases": [
+              "integrate-return"
+            ]
+          }
+        ],
+        "nesting": []
+      },
+      {
+        "schemaVersion": "factory.agent-workflow-source/v1",
+        "coordinationContract": "factory.bounded-coordination/v1",
+        "source": {
+          "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+          "revision": "legacy%2520@successor:漢/v2",
+          "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+          "temporalRef": "flow-time:2026-09-08",
+          "flowRef": "flow:factory-197"
+        },
+        "workflowKey": "agent-first-implementation",
+        "units": [
+          {
+            "key": "inspect-source",
+            "developmentalConcern": "Recover the current Factory architecture and source obligations",
+            "requiredDifference": "The implementation basis is explicit and evidenced",
+            "returnContract": "Return the inspected seams and exact source basis",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [
+                "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+              ],
+              "agentSetRefs": [],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+            ],
+            "dependencies": [],
+            "independenceFrom": [],
+            "permittedEffects": [
+              "read Factory source"
+            ],
+            "verificationObligations": [
+              "cite exact files and revisions"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+            "stopConditions": "Stop if the requested base is unavailable",
+            "escalationConditions": "Escalate contradictory source contracts"
+          },
+          {
+            "key": "implement-compiler",
+            "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+            "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+            "returnContract": "Return production code and functional verification evidence",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [],
+              "agentSetRefs": [
+                "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+              ],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+            ],
+            "dependencies": [
+              "inspect-source"
+            ],
+            "independenceFrom": [
+              "review-adversarially"
+            ],
+            "permittedEffects": [
+              "write Factory workflow compiler",
+              "write direct contracts and tests"
+            ],
+            "verificationObligations": [
+              "compile checked-in source",
+              "preserve Run mutation authority"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+            "stopConditions": "Stop before creating a second execution runner",
+            "escalationConditions": "Escalate unresolved ownership overlap"
+          },
+          {
+            "key": "review-adversarially",
+            "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+            "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+            "returnContract": "Return adversarial findings and reproducible failures",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [
+                "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+              ],
+              "agentSetRefs": [],
+              "agencyRefs": []
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+            ],
+            "dependencies": [
+              "inspect-source"
+            ],
+            "independenceFrom": [
+              "implement-compiler"
+            ],
+            "permittedEffects": [
+              "read implementation",
+              "execute direct tests"
+            ],
+            "verificationObligations": [
+              "exercise cycle and provenance attacks"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+            "stopConditions": "Stop before mutating implementation files",
+            "escalationConditions": "Escalate any identity instability"
+          },
+          {
+            "key": "integrate-return",
+            "developmentalConcern": "Integrate implementation and independent review evidence",
+            "requiredDifference": "One bounded return reports a verified integration order",
+            "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+            "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+            "basisRevision": "947ce7a",
+            "agentRequirements": {
+              "agentRefs": [],
+              "agentSetRefs": [],
+              "agencyRefs": [
+                "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+              ]
+            },
+            "praxisRefs": [
+              "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+            ],
+            "capabilityRefs": [
+              "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+            ],
+            "dependencies": [],
+            "independenceFrom": [],
+            "permittedEffects": [
+              "publish bounded return"
+            ],
+            "verificationObligations": [
+              "include exact test results"
+            ],
+            "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+            "stopConditions": "Stop before merge, push, or pull request creation",
+            "escalationConditions": "Escalate unresolved owner dependencies"
+          }
+        ],
+        "barriers": [
+          {
+            "key": "implementation-reviewed",
+            "waitsFor": [
+              "implement-compiler",
+              "review-adversarially"
+            ],
+            "releases": [
+              "integrate-return"
+            ]
+          }
+        ],
+        "nesting": []
+      }
+    ],
+    "executionCorrelations": [],
+    "routineContinuations": [],
+    "commissions": [
+      {
+        "contract": "factory.commission/v1",
+        "revision": 1,
+        "request": {
+          "contract": "factory.commission-request/v1",
+          "requestRef": "commission:previous-native-opaque-continuation-fac1ab94fb70",
+          "projectKey": "previous-native-opaque-continuation-fac1ab94fb70",
+          "purpose": "Retain actual prior native opaque revision history for compatibility regression",
+          "frontier": "No worker executed or accepted",
+          "runDestination": "bounded retained-history native regression",
+          "writeOwner": "factory",
+          "commissionedAt": "2026-10-01T09:42:47Z",
+          "rootAct": {
+            "actRef": "act:prior-native-opaque-continuation",
+            "agentRef": "agent:controlled-previous-owner-compatibility",
+            "purpose": "Exercise only the actual native historical source and continuation owners",
+            "scopeRefs": [
+              "issue:O-I-203"
+            ],
+            "standing": "commissioned-not-executed"
+          },
+          "participantRequirements": [
+            {
+              "ref": "agent:controlled-previous-owner-compatibility",
+              "description": "Declared controlled native regression author; no runtime Agency or worker claim",
+              "sourceOwner": "test-contract",
+              "sourceRef": "source:prior-native-opaque-continuation",
+              "sourceRevision": "native-owner-compatibility-v1"
+            }
+          ]
+        },
+        "projectRef": "project:0000000000JVZBK5J25CX1E93V",
+        "journeyRef": "journey:01M3VDGMEREWJR27C3RBGJSBMP",
+        "runRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY"
+      }
+    ],
+    "developmentalMutations": [
+      {
+        "contract": "factory.developmental-mutation/v1",
+        "request": {
+          "contract": "factory.developmental-mutation-request/v1",
+          "mutationRef": "mutation:prior-attach-origin",
+          "occurrenceRef": "occurrence:prior-attach-origin",
+          "source": {
+            "owner": "factory",
+            "reference": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "revision": "legacy%20@origin:é/v1",
+            "standing": "owner-native-observation"
+          },
+          "observedAt": "2026-10-01T09:42:47Z",
+          "mutation": {
+            "kind": "attach-workflow-source",
+            "runRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+            "workflowSource": {
+              "schemaVersion": "factory.agent-workflow-source/v1",
+              "coordinationContract": "factory.bounded-coordination/v1",
+              "source": {
+                "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+                "revision": "legacy%20@origin:é/v1",
+                "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+                "temporalRef": "flow-time:2026-09-08",
+                "flowRef": "flow:factory-197"
+              },
+              "workflowKey": "agent-first-implementation",
+              "units": [
+                {
+                  "key": "inspect-source",
+                  "developmentalConcern": "Recover the current Factory architecture and source obligations",
+                  "requiredDifference": "The implementation basis is explicit and evidenced",
+                  "returnContract": "Return the inspected seams and exact source basis",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [
+                      "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+                    ],
+                    "agentSetRefs": [],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+                  ],
+                  "dependencies": [],
+                  "independenceFrom": [],
+                  "permittedEffects": [
+                    "read Factory source"
+                  ],
+                  "verificationObligations": [
+                    "cite exact files and revisions"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "stopConditions": "Stop if the requested base is unavailable",
+                  "escalationConditions": "Escalate contradictory source contracts"
+                },
+                {
+                  "key": "implement-compiler",
+                  "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+                  "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+                  "returnContract": "Return production code and functional verification evidence",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [],
+                    "agentSetRefs": [
+                      "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                    ],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+                  ],
+                  "dependencies": [
+                    "inspect-source"
+                  ],
+                  "independenceFrom": [
+                    "review-adversarially"
+                  ],
+                  "permittedEffects": [
+                    "write Factory workflow compiler",
+                    "write direct contracts and tests"
+                  ],
+                  "verificationObligations": [
+                    "compile checked-in source",
+                    "preserve Run mutation authority"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+                  "stopConditions": "Stop before creating a second execution runner",
+                  "escalationConditions": "Escalate unresolved ownership overlap"
+                },
+                {
+                  "key": "review-adversarially",
+                  "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+                  "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+                  "returnContract": "Return adversarial findings and reproducible failures",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [
+                      "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+                    ],
+                    "agentSetRefs": [],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+                  ],
+                  "dependencies": [
+                    "inspect-source"
+                  ],
+                  "independenceFrom": [
+                    "implement-compiler"
+                  ],
+                  "permittedEffects": [
+                    "read implementation",
+                    "execute direct tests"
+                  ],
+                  "verificationObligations": [
+                    "exercise cycle and provenance attacks"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+                  "stopConditions": "Stop before mutating implementation files",
+                  "escalationConditions": "Escalate any identity instability"
+                },
+                {
+                  "key": "integrate-return",
+                  "developmentalConcern": "Integrate implementation and independent review evidence",
+                  "requiredDifference": "One bounded return reports a verified integration order",
+                  "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [],
+                    "agentSetRefs": [],
+                    "agencyRefs": [
+                      "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+                    ]
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+                  ],
+                  "dependencies": [],
+                  "independenceFrom": [],
+                  "permittedEffects": [
+                    "publish bounded return"
+                  ],
+                  "verificationObligations": [
+                    "include exact test results"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+                  "stopConditions": "Stop before merge, push, or pull request creation",
+                  "escalationConditions": "Escalate unresolved owner dependencies"
+                }
+              ],
+              "barriers": [
+                {
+                  "key": "implementation-reviewed",
+                  "waitsFor": [
+                    "implement-compiler",
+                    "review-adversarially"
+                  ],
+                  "releases": [
+                    "integrate-return"
+                  ]
+                }
+              ],
+              "nesting": []
+            }
+          }
+        }
+      },
+      {
+        "contract": "factory.developmental-mutation/v1",
+        "request": {
+          "contract": "factory.developmental-mutation-request/v1",
+          "mutationRef": "mutation:prior-continue-bounded",
+          "occurrenceRef": "occurrence:prior-continue-bounded",
+          "source": {
+            "owner": "factory",
+            "reference": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            "revision": "legacy%2520@successor:漢/v2",
+            "standing": "owner-native-observation"
+          },
+          "observedAt": "2026-10-01T09:42:47Z",
+          "mutation": {
+            "kind": "continue-commission",
+            "continuationRelation": "bounded-contribution",
+            "commissionRef": "commission:previous-native-opaque-continuation-fac1ab94fb70",
+            "journeyRef": "journey:01M3VDGMEREWJR27C3RBGJSBMP",
+            "predecessorRunRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+            "expectedJourneyRevision": 3,
+            "expectedPredecessorRunRevision": 2,
+            "predecessorSourceRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "predecessorSourceRevision": "legacy%20@origin:é/v1",
+            "predecessorSourceDigest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+            "successorRunRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+            "workflowSource": {
+              "schemaVersion": "factory.agent-workflow-source/v1",
+              "coordinationContract": "factory.bounded-coordination/v1",
+              "source": {
+                "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+                "revision": "legacy%2520@successor:漢/v2",
+                "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+                "temporalRef": "flow-time:2026-09-08",
+                "flowRef": "flow:factory-197"
+              },
+              "workflowKey": "agent-first-implementation",
+              "units": [
+                {
+                  "key": "inspect-source",
+                  "developmentalConcern": "Recover the current Factory architecture and source obligations",
+                  "requiredDifference": "The implementation basis is explicit and evidenced",
+                  "returnContract": "Return the inspected seams and exact source basis",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [
+                      "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+                    ],
+                    "agentSetRefs": [],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+                  ],
+                  "dependencies": [],
+                  "independenceFrom": [],
+                  "permittedEffects": [
+                    "read Factory source"
+                  ],
+                  "verificationObligations": [
+                    "cite exact files and revisions"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+                  "stopConditions": "Stop if the requested base is unavailable",
+                  "escalationConditions": "Escalate contradictory source contracts"
+                },
+                {
+                  "key": "implement-compiler",
+                  "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+                  "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+                  "returnContract": "Return production code and functional verification evidence",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [],
+                    "agentSetRefs": [
+                      "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                    ],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+                  ],
+                  "dependencies": [
+                    "inspect-source"
+                  ],
+                  "independenceFrom": [
+                    "review-adversarially"
+                  ],
+                  "permittedEffects": [
+                    "write Factory workflow compiler",
+                    "write direct contracts and tests"
+                  ],
+                  "verificationObligations": [
+                    "compile checked-in source",
+                    "preserve Run mutation authority"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+                  "stopConditions": "Stop before creating a second execution runner",
+                  "escalationConditions": "Escalate unresolved ownership overlap"
+                },
+                {
+                  "key": "review-adversarially",
+                  "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+                  "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+                  "returnContract": "Return adversarial findings and reproducible failures",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [
+                      "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+                    ],
+                    "agentSetRefs": [],
+                    "agencyRefs": []
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+                  ],
+                  "dependencies": [
+                    "inspect-source"
+                  ],
+                  "independenceFrom": [
+                    "implement-compiler"
+                  ],
+                  "permittedEffects": [
+                    "read implementation",
+                    "execute direct tests"
+                  ],
+                  "verificationObligations": [
+                    "exercise cycle and provenance attacks"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+                  "stopConditions": "Stop before mutating implementation files",
+                  "escalationConditions": "Escalate any identity instability"
+                },
+                {
+                  "key": "integrate-return",
+                  "developmentalConcern": "Integrate implementation and independent review evidence",
+                  "requiredDifference": "One bounded return reports a verified integration order",
+                  "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+                  "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+                  "basisRevision": "947ce7a",
+                  "agentRequirements": {
+                    "agentRefs": [],
+                    "agentSetRefs": [],
+                    "agencyRefs": [
+                      "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+                    ]
+                  },
+                  "praxisRefs": [
+                    "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+                  ],
+                  "capabilityRefs": [
+                    "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+                  ],
+                  "dependencies": [],
+                  "independenceFrom": [],
+                  "permittedEffects": [
+                    "publish bounded return"
+                  ],
+                  "verificationObligations": [
+                    "include exact test results"
+                  ],
+                  "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+                  "stopConditions": "Stop before merge, push, or pull request creation",
+                  "escalationConditions": "Escalate unresolved owner dependencies"
+                }
+              ],
+              "barriers": [
+                {
+                  "key": "implementation-reviewed",
+                  "waitsFor": [
+                    "implement-compiler",
+                    "review-adversarially"
+                  ],
+                  "releases": [
+                    "integrate-return"
+                  ]
+                }
+              ],
+              "nesting": []
+            },
+            "reason": "Actual previous native owner continuation retained for exact compatibility replay",
+            "basisRefs": [
+              "commission:previous-native-opaque-continuation-fac1ab94fb70",
+              "source:prior-native-opaque-continuation"
+            ]
+          }
+        }
+      }
+    ],
+    "attemptStates": {
+      "run:01ARZ3NDEKTSV4RRFFQ69G5FBE": {
+        "schema": "factory.native-run-attempts/v1",
+        "workflowSource": {
+          "schemaVersion": "factory.agent-workflow-source/v1",
+          "coordinationContract": "factory.bounded-coordination/v1",
+          "source": {
+            "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            "revision": "legacy%2520@successor:漢/v2",
+            "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+            "temporalRef": "flow-time:2026-09-08",
+            "flowRef": "flow:factory-197"
+          },
+          "workflowKey": "agent-first-implementation",
+          "units": [
+            {
+              "key": "inspect-source",
+              "developmentalConcern": "Recover the current Factory architecture and source obligations",
+              "requiredDifference": "The implementation basis is explicit and evidenced",
+              "returnContract": "Return the inspected seams and exact source basis",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [
+                  "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+                ],
+                "agentSetRefs": [],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+              ],
+              "dependencies": [],
+              "independenceFrom": [],
+              "permittedEffects": [
+                "read Factory source"
+              ],
+              "verificationObligations": [
+                "cite exact files and revisions"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+              "stopConditions": "Stop if the requested base is unavailable",
+              "escalationConditions": "Escalate contradictory source contracts"
+            },
+            {
+              "key": "implement-compiler",
+              "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+              "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+              "returnContract": "Return production code and functional verification evidence",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [],
+                "agentSetRefs": [
+                  "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                ],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+              ],
+              "dependencies": [
+                "inspect-source"
+              ],
+              "independenceFrom": [
+                "review-adversarially"
+              ],
+              "permittedEffects": [
+                "write Factory workflow compiler",
+                "write direct contracts and tests"
+              ],
+              "verificationObligations": [
+                "compile checked-in source",
+                "preserve Run mutation authority"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+              "stopConditions": "Stop before creating a second execution runner",
+              "escalationConditions": "Escalate unresolved ownership overlap"
+            },
+            {
+              "key": "review-adversarially",
+              "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+              "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+              "returnContract": "Return adversarial findings and reproducible failures",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [
+                  "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+                ],
+                "agentSetRefs": [],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+              ],
+              "dependencies": [
+                "inspect-source"
+              ],
+              "independenceFrom": [
+                "implement-compiler"
+              ],
+              "permittedEffects": [
+                "read implementation",
+                "execute direct tests"
+              ],
+              "verificationObligations": [
+                "exercise cycle and provenance attacks"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+              "stopConditions": "Stop before mutating implementation files",
+              "escalationConditions": "Escalate any identity instability"
+            },
+            {
+              "key": "integrate-return",
+              "developmentalConcern": "Integrate implementation and independent review evidence",
+              "requiredDifference": "One bounded return reports a verified integration order",
+              "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [],
+                "agentSetRefs": [],
+                "agencyRefs": [
+                  "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+                ]
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+              ],
+              "dependencies": [],
+              "independenceFrom": [],
+              "permittedEffects": [
+                "publish bounded return"
+              ],
+              "verificationObligations": [
+                "include exact test results"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+              "stopConditions": "Stop before merge, push, or pull request creation",
+              "escalationConditions": "Escalate unresolved owner dependencies"
+            }
+          ],
+          "barriers": [
+            {
+              "key": "implementation-reviewed",
+              "waitsFor": [
+                "implement-compiler",
+                "review-adversarially"
+              ],
+              "releases": [
+                "integrate-return"
+              ]
+            }
+          ],
+          "nesting": []
+        },
+        "snapshot": {
+          "contract": "factory.orchestration-snapshot/v1",
+          "runRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+          "topologyRevision": 2,
+          "workflowSource": {
+            "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+            "revision": "legacy%2520@successor:漢/v2",
+            "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+            "temporalRef": "flow-time:2026-09-08",
+            "flowRef": "flow:factory-197"
+          },
+          "workflowKey": "agent-first-implementation",
+          "legs": {},
+          "subjectRevisions": {
+            "project:01ARZ3NDEKTSV4RRFFQ69G5FAW": "947ce7a"
+          },
+          "activeWriters": {},
+          "retryGrants": {},
+          "reviewers": {},
+          "syntheses": {},
+          "ownerObservations": {},
+          "concatenationAttempts": [],
+          "selfReviewAttempts": []
+        },
+        "attempts": {},
+        "actionReceipts": {}
+      },
+      "run:01M3VDGMERT7R889QAYJ0JQ2SY": {
+        "schema": "factory.native-run-attempts/v1",
+        "workflowSource": {
+          "schemaVersion": "factory.agent-workflow-source/v1",
+          "coordinationContract": "factory.bounded-coordination/v1",
+          "source": {
+            "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "revision": "legacy%20@origin:é/v1",
+            "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+            "temporalRef": "flow-time:2026-09-08",
+            "flowRef": "flow:factory-197"
+          },
+          "workflowKey": "agent-first-implementation",
+          "units": [
+            {
+              "key": "inspect-source",
+              "developmentalConcern": "Recover the current Factory architecture and source obligations",
+              "requiredDifference": "The implementation basis is explicit and evidenced",
+              "returnContract": "Return the inspected seams and exact source basis",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [
+                  "agent:01ARZ3NDEKTSV4RRFFQ69G5FAX"
+                ],
+                "agentSetRefs": [],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FAY"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FAZ"
+              ],
+              "dependencies": [],
+              "independenceFrom": [],
+              "permittedEffects": [
+                "read Factory source"
+              ],
+              "verificationObligations": [
+                "cite exact files and revisions"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB0",
+              "stopConditions": "Stop if the requested base is unavailable",
+              "escalationConditions": "Escalate contradictory source contracts"
+            },
+            {
+              "key": "implement-compiler",
+              "developmentalConcern": "Compile open Agent-first workflow source into stable Factory units",
+              "requiredDifference": "A deterministic validated compiler feeds the existing RunMap path",
+              "returnContract": "Return production code and functional verification evidence",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [],
+                "agentSetRefs": [
+                  "agent-set:01ARZ3NDEKTSV4RRFFQ69G5FB1"
+                ],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FB2"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FB3"
+              ],
+              "dependencies": [
+                "inspect-source"
+              ],
+              "independenceFrom": [
+                "review-adversarially"
+              ],
+              "permittedEffects": [
+                "write Factory workflow compiler",
+                "write direct contracts and tests"
+              ],
+              "verificationObligations": [
+                "compile checked-in source",
+                "preserve Run mutation authority"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB4",
+              "stopConditions": "Stop before creating a second execution runner",
+              "escalationConditions": "Escalate unresolved ownership overlap"
+            },
+            {
+              "key": "review-adversarially",
+              "developmentalConcern": "Challenge identity and graph compilation under hostile inputs",
+              "requiredDifference": "Malformed provenance and graph ambiguity fail closed",
+              "returnContract": "Return adversarial findings and reproducible failures",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [
+                  "agent:01ARZ3NDEKTSV4RRFFQ69G5FB5"
+                ],
+                "agentSetRefs": [],
+                "agencyRefs": []
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FB6"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FB7"
+              ],
+              "dependencies": [
+                "inspect-source"
+              ],
+              "independenceFrom": [
+                "implement-compiler"
+              ],
+              "permittedEffects": [
+                "read implementation",
+                "execute direct tests"
+              ],
+              "verificationObligations": [
+                "exercise cycle and provenance attacks"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FB8",
+              "stopConditions": "Stop before mutating implementation files",
+              "escalationConditions": "Escalate any identity instability"
+            },
+            {
+              "key": "integrate-return",
+              "developmentalConcern": "Integrate implementation and independent review evidence",
+              "requiredDifference": "One bounded return reports a verified integration order",
+              "returnContract": "Return exact base, changes, checks, gaps, and integration order",
+              "subjectRef": "project:01ARZ3NDEKTSV4RRFFQ69G5FAW",
+              "basisRevision": "947ce7a",
+              "agentRequirements": {
+                "agentRefs": [],
+                "agentSetRefs": [],
+                "agencyRefs": [
+                  "agency:01ARZ3NDEKTSV4RRFFQ69G5FB9"
+                ]
+              },
+              "praxisRefs": [
+                "skill:01ARZ3NDEKTSV4RRFFQ69G5FBA"
+              ],
+              "capabilityRefs": [
+                "capability:01ARZ3NDEKTSV4RRFFQ69G5FBB"
+              ],
+              "dependencies": [],
+              "independenceFrom": [],
+              "permittedEffects": [
+                "publish bounded return"
+              ],
+              "verificationObligations": [
+                "include exact test results"
+              ],
+              "returnAddress": "return:01ARZ3NDEKTSV4RRFFQ69G5FBC",
+              "stopConditions": "Stop before merge, push, or pull request creation",
+              "escalationConditions": "Escalate unresolved owner dependencies"
+            }
+          ],
+          "barriers": [
+            {
+              "key": "implementation-reviewed",
+              "waitsFor": [
+                "implement-compiler",
+                "review-adversarially"
+              ],
+              "releases": [
+                "integrate-return"
+              ]
+            }
+          ],
+          "nesting": []
+        },
+        "snapshot": {
+          "contract": "factory.orchestration-snapshot/v1",
+          "runRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+          "topologyRevision": 2,
+          "workflowSource": {
+            "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+            "revision": "legacy%20@origin:é/v1",
+            "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+            "temporalRef": "flow-time:2026-09-08",
+            "flowRef": "flow:factory-197"
+          },
+          "workflowKey": "agent-first-implementation",
+          "legs": {},
+          "subjectRevisions": {
+            "project:01ARZ3NDEKTSV4RRFFQ69G5FAW": "947ce7a"
+          },
+          "activeWriters": {},
+          "retryGrants": {},
+          "reviewers": {},
+          "syntheses": {},
+          "ownerObservations": {},
+          "concatenationAttempts": [],
+          "selfReviewAttempts": []
+        },
+        "attempts": {},
+        "actionReceipts": {}
+      }
+    }
+  }
+}

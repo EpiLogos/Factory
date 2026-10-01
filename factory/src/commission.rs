@@ -690,7 +690,7 @@ impl FactoryDevelopmentalState {
             .find(|journey| journey.journey_ref == commission.journey_ref)
             .ok_or(CommissionError::InvalidStored)?;
         for link in &journey.runs {
-            let Some((predecessor, source)) =
+            let Some((predecessor, mutation)) =
                 self.developmental_mutations.iter().find_map(|record| {
                     match &record.request.mutation {
                         FactoryDevelopmentalMutation::ContinueCommission {
@@ -698,13 +698,12 @@ impl FactoryDevelopmentalState {
                             journey_ref,
                             predecessor_run_ref,
                             successor_run_ref,
-                            workflow_source,
                             ..
                         } if commission_ref == request_ref
                             && journey_ref == &commission.journey_ref
                             && successor_run_ref == &link.run_ref =>
                         {
-                            Some((predecessor_run_ref, workflow_source))
+                            Some((predecessor_run_ref, &record.request.mutation))
                         }
                         _ => None,
                     }
@@ -733,10 +732,10 @@ impl FactoryDevelopmentalState {
                     "factory",
                 ),
                 edge(
-                    &format!(
-                        "{}@{}:{}",
-                        source.source.reference, source.source.revision, source.source.digest
-                    ),
+                    &crate::commission_continuation::retained_source_basis_ref(
+                        mutation,
+                        &link.basis_refs,
+                    )?,
                     "source-basis-for",
                     &link.run_ref.to_string(),
                     "factory",
@@ -936,10 +935,10 @@ impl FactoryDevelopmentalMutationRequest {
             ("occurrenceRef", &self.occurrence_ref),
             ("source.owner", &self.source.owner),
             ("source.reference", &self.source.reference),
-            ("source.revision", &self.source.revision),
         ] {
             stable_ref(value, name)?;
         }
+        validate_source_revision(&self.source.revision, "source.revision")?;
         if self.source.standing != "owner-native-observation" {
             return Err(CommissionError::Invalid("source.standing".into()));
         }
@@ -1233,6 +1232,16 @@ fn deterministic_ulid(timestamp_ms: u64, basis: &[u8]) -> Ulid {
 }
 fn required(value: &str, field: &str) -> Result<(), CommissionError> {
     if value.trim().is_empty() || value != value.trim() || value.chars().any(char::is_control) {
+        Err(CommissionError::Invalid(field.into()))
+    } else {
+        Ok(())
+    }
+}
+/// A Source revision is an opaque observed value, not a reference.
+/// Preserve its exact bytes; Source compilation and native observation own
+/// their normalization and comparison rules.
+pub(crate) fn validate_source_revision(value: &str, field: &str) -> Result<(), CommissionError> {
+    if value.trim().is_empty() {
         Err(CommissionError::Invalid(field.into()))
     } else {
         Ok(())

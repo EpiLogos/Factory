@@ -1,0 +1,64 @@
+{
+  "schema": "factory.actual-prior-native-both-complete-evidence/v1",
+  "binary": "/Users/admin/Library/Application Support/OI/products/software-factory/c1b663307336a096a4e84c62c88c0d04f52e0968536d42ce8e374172184b5202/bin/factory",
+  "binarySha256": "c1b663307336a096a4e84c62c88c0d04f52e0968536d42ce8e374172184b5202",
+  "reportedVersion": "factory 0.1.0 (34b6143ce56d)",
+  "originalGenuineEvidenceDirectory": "/Users/admin/Central/Control/agents/now/clearings/83e643b2633b70cd6ad9307010f0e86148005761e95aa3e71b72bfbdf398cceb/T/verification/factory-historical-opaque-continuation-20261001/native-old-authored-basis-4bad2e76-5c23-4192-b97b-0575bf4d35a6",
+  "originalStateSha256": "f7d3ec3ef552cb2e2017ceaf946d60c285b85de5627129ffd53ab4faedae22a5",
+  "commissionRef": "commission:previous-native-opaque-continuation-fac1ab94fb70",
+  "journeyRef": "journey:01M3VDGMEREWJR27C3RBGJSBMP",
+  "originRunRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+  "successorRunRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBG",
+  "originSource": {
+    "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "revision": "legacy%20@origin:é/v1",
+    "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "temporalRef": "flow-time:2026-09-08",
+    "flowRef": "flow:factory-197"
+  },
+  "successorSource": {
+    "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB",
+    "revision": "legacy%20@both:ü/v4",
+    "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "temporalRef": "flow-time:2026-09-08",
+    "flowRef": "flow:factory-197"
+  },
+  "authoredEncodedBasisRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB@legacy%2520%40both%3A%C3%BC%2Fv4:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+  "authoredEncodedOriginBasisRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%2520%40origin%3A%C3%A9%2Fv1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+  "requiredLegacySuccessorBasisRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB@legacy%20@both:ü/v4:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+  "requiredLegacyOriginBasisRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%20@origin:é/v1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+  "retainedSuccessorBasisRefs": [
+    "commission:previous-native-opaque-continuation-fac1ab94fb70",
+    "factory-continuation-relation:bounded-contribution",
+    "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+    "source:prior-native-opaque-continuation",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%20@origin:é/v1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%2520%40origin%3A%C3%A9%2Fv1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB@legacy%20@both:ü/v4:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB@legacy%2520%40both%3A%C3%BC%2Fv4:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+  ],
+  "oldNativeCommissionSourceBasisEdge": {
+    "subjectRef": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FBB@legacy%20@both:ü/v4:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "relation": "source-basis-for",
+    "objectRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBG",
+    "owner": "factory"
+  },
+  "state": {
+    "file": "genuine-prior-owner-state.json",
+    "sha256": "6eaecbe67d8bbb099fedf2bc5815b0301cc36fe695ec729317c99ab10c8594b2"
+  },
+  "continuationRequest": {
+    "file": "continuation-request.json",
+    "sha256": "2e3d4a5e2a094be359beba6d3bc2791d609f1ea6cf71507d8087c4d4504a5614"
+  },
+  "nativeInvocations": 10,
+  "exactReplayStatus": "already-applied",
+  "exactReplayAndReadsLeaveBytesUnchanged": true,
+  "wholeCompletion": false,
+  "workerOrModelExecuted": false,
+  "repairRunTouched": false,
+  "privateAuthorityOrCredentialUsed": false,
+  "standing": "actual installed old native owner produced both-complete ancestry on isolated copy; original genuine fixtures preserved"
+}

@@ -48,12 +48,14 @@ jobs:
       - name: Exercise real Factory to Workcell lifecycle
         run: |
           set -o pipefail
+          mkdir -p material-evidence/native-recovery
+          export FACTORY_TEST_NATIVE_EVIDENCE_DIR="$GITHUB_WORKSPACE/material-evidence/native-recovery"
           export FACTORY_TEST_WORKCELL_BIN_DIR="$GITHUB_WORKSPACE/.native-workcell/target/debug"
           test -x "$FACTORY_TEST_WORKCELL_BIN_DIR/workcell"
           test -x "$FACTORY_TEST_WORKCELL_BIN_DIR/workcell-control-service"
           cargo test --manifest-path factory/Cargo.toml --test attempt_material native_workcell_ -- --list > material-evidence/native-cases.txt
-          test "$(grep -c '^native_material::native_workcell_.*: test$' material-evidence/native-cases.txt)" = 1
-          cargo test --manifest-path factory/Cargo.toml --test attempt_material native_workcell_ -- --include-ignored --nocapture 2>&1 | tee material-evidence/native-material.log
+          test "$(grep -c '^native_material::native_workcell_.*: test$' material-evidence/native-cases.txt)" = 2
+          cargo test --manifest-path factory/Cargo.toml --test attempt_material native_workcell_ -- --include-ignored --nocapture --test-threads=1 2>&1 | tee material-evidence/native-material.log
       - name: Preserve successful source-built callers
         run: |
           target=$(cargo metadata --manifest-path factory/Cargo.toml --format-version 1 --no-deps | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')

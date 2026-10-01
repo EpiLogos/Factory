@@ -585,20 +585,6 @@ fn release_intent_prevents_a_later_native_start_using_the_same_material() {
 }
 
 #[test]
-fn lost_material_response_is_never_implicitly_recovered_again() {
-    let world = World::new();
-    world.mode("lost");
-    let request = world.request("recover:lost", WorkcellWorldOperation::Recover);
-    assert_eq!(success(world.invoke(&request))["needsReconciliation"], true);
-    assert_eq!(success(world.invoke(&request))["replayed"], true);
-    refused(
-        world.invoke(&world.request("recover:new-key", WorkcellWorldOperation::Recover)),
-        "unresolved material",
-    );
-    assert_eq!(world.calls(), 1);
-}
-
-#[test]
 fn material_transport_deadline_is_finite_without_claiming_worker_quiescence() {
     let world = World::with_timeout(100);
     world.mode("timeout");

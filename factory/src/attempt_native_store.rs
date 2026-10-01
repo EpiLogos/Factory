@@ -379,13 +379,13 @@ pub(crate) fn supersession_basis(
 ) -> Option<std::collections::BTreeSet<String>> {
     native.developmental_mutations.iter().find_map(|record| {
         let crate::commission::FactoryDevelopmentalMutation::ContinueCommission {
+            journey_ref,
             continuation_relation,
             predecessor_run_ref,
             predecessor_source_ref,
             predecessor_source_revision,
             predecessor_source_digest,
             successor_run_ref,
-            workflow_source,
             ..
         } = &record.request.mutation
         else {
@@ -399,15 +399,21 @@ pub(crate) fn supersession_basis(
         {
             return None;
         }
+        let link = native
+            .journeys
+            .iter()
+            .find(|journey| &journey.journey_ref == journey_ref)?
+            .runs
+            .iter()
+            .find(|link| &link.run_ref == successor_run_ref)?;
         Some(std::collections::BTreeSet::from([
             record.request.mutation_ref.clone(),
             successor_run_ref.to_string(),
-            format!(
-                "{}@{}:{}",
-                workflow_source.source.reference,
-                workflow_source.source.revision,
-                workflow_source.source.digest
-            ),
+            crate::commission_continuation::retained_source_basis_ref(
+                &record.request.mutation,
+                &link.basis_refs,
+            )
+            .ok()?,
         ]))
     })
 }

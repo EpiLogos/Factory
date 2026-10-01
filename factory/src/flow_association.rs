@@ -80,6 +80,10 @@ pub(crate) fn validate_request(
     let Some((association, _, _, _)) = fields(request) else {
         return Ok(());
     };
+    crate::commission::validate_source_revision(
+        &association.workflow_source_revision,
+        "associate-run-flow.workflowSourceRevision",
+    )?;
     let flow = &association.flow;
     if request.source.owner != "central"
         || request.source.reference != flow.location.reference
@@ -93,7 +97,6 @@ pub(crate) fn validate_request(
         || !stable(&flow.location.reference)
         || !stable(&flow.document_id)
         || !stable(&flow.source_revision)
-        || !stable(&association.workflow_source_revision)
         || association.workflow_source_digest.len() != 64
         || !association
             .workflow_source_digest

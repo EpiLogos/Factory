@@ -71,9 +71,12 @@ fn conflict(detail: impl Into<String>) -> CommissionError {
 }
 
 fn validate_fields(basis: &Continuation<'_>) -> Result<(), CommissionError> {
+    crate::commission::validate_source_revision(
+        basis.source_revision,
+        "predecessorSourceRevision",
+    )?;
     for (name, value) in [
         ("commissionRef", basis.commission),
-        ("predecessorSourceRevision", basis.source_revision),
         ("predecessorSourceDigest", basis.source_digest),
     ] {
         if value.trim().is_empty() || value.chars().any(char::is_whitespace) {
@@ -156,19 +159,24 @@ fn compiled_membership(run: &Run, workflow: &CompiledWorkflow) -> bool {
 }
 
 fn ancestry(basis: &Continuation<'_>) -> Vec<String> {
+    ancestry_with(basis, crate::workflow::source_basis_ref)
+}
+
+fn ancestry_with(
+    basis: &Continuation<'_>,
+    source_ref: fn(&Ref, &str, &str) -> String,
+) -> Vec<String> {
     let mut refs = basis.basis.to_vec();
     refs.extend([
         basis.commission.into(),
         basis.predecessor.to_string(),
         basis.source_ref.to_string(),
-        format!(
-            "{}@{}:{}",
-            basis.source_ref, basis.source_revision, basis.source_digest
-        ),
+        source_ref(basis.source_ref, basis.source_revision, basis.source_digest),
         basis.source.source.reference.to_string(),
-        format!(
-            "{}@{}:{}",
-            basis.source.source.reference, basis.source.source.revision, basis.source.source.digest
+        source_ref(
+            &basis.source.source.reference,
+            &basis.source.source.revision,
+            &basis.source.source.digest,
         ),
     ]);
     if basis.relation == CommissionContinuationRelation::BoundedContribution {
@@ -177,6 +185,38 @@ fn ancestry(basis: &Continuation<'_>) -> Vec<String> {
     refs.sort();
     refs.dedup();
     refs
+}
+
+/// Select the spelling produced by the complete retained continuation.
+/// An authored extra basis can resemble either spelling, so membership of
+/// one reference alone must not choose or rewrite historical provenance.
+/// If authored context makes both complete sets equal, preserve the legacy
+/// traversal spelling. The same rule governs new writes and later cleanup;
+/// the exact stored Source tuple remains authoritative in either case.
+pub(crate) fn retained_source_basis_ref(
+    mutation: &FactoryDevelopmentalMutation,
+    basis_refs: &[String],
+) -> Result<String, CommissionError> {
+    let basis = fields(mutation)?;
+    let source = &basis.source.source;
+    if basis_refs
+        == ancestry_with(&basis, |reference, revision, digest| {
+            format!("{reference}@{revision}:{digest}")
+        })
+    {
+        return Ok(format!(
+            "{}@{}:{}",
+            source.reference, source.revision, source.digest
+        ));
+    }
+    if basis_refs == ancestry(&basis) {
+        return Ok(crate::workflow::source_basis_ref(
+            &source.reference,
+            &source.revision,
+            &source.digest,
+        ));
+    }
+    Err(CommissionError::InvalidStored)
 }
 
 pub(crate) fn apply(
@@ -319,7 +359,7 @@ pub(crate) fn validate_record(
         compile_workflow(basis.source.clone()).map_err(|_| CommissionError::InvalidStored)?;
     if journey.commission.commission_ref.as_deref() != Some(basis.commission)
         || link.journey_revision != basis.journey_revision
-        || link.basis_refs != ancestry(&basis)
+        || retained_source_basis_ref(mutation, &link.basis_refs).is_err()
         || !journey
             .runs
             .iter()

@@ -37,6 +37,26 @@ pub struct WorkflowSourceProvenance {
     pub authoring: Option<Box<crate::workflow_authoring::AuthoredBasis>>,
 }
 
+/// Encode an observed Source tuple for a reference-valued ancestry field.
+/// The stored revision remains opaque and unchanged. Escaping every byte
+/// outside the URI unreserved set (including `%`) keeps whitespace and
+/// delimiters out of references without aliasing literal escape sequences.
+/// Existing unreserved revision spellings retain their reference spelling.
+pub(crate) fn source_basis_ref(reference: &Ref, revision: &str, digest: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(revision.len());
+    for byte in revision.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0xf)]));
+        }
+    }
+    format!("{reference}@{encoded}:{digest}")
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentRequirements {
