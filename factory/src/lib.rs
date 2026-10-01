@@ -33,6 +33,7 @@ pub mod development_field;
 pub mod development_field_cli;
 pub mod developmental_read;
 pub mod execution_intelligence;
+pub mod flow_association;
 pub mod git_development;
 pub mod inhabitation;
 pub mod inhabitation_cli;

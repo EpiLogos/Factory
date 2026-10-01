@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'factory/**'
+      - 'contracts/factory/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/factory-native-evidence.yml'
@@ -11,6 +12,7 @@ on:
     branches: [main]
     paths:
       - 'factory/**'
+      - 'contracts/factory/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/factory-native-evidence.yml'
@@ -90,6 +92,27 @@ jobs:
           cargo test --locked --manifest-path factory/Cargo.toml --test native_lifecycle_receiving -- --list > native-evidence/native-lifecycle-cases.txt
           test "$(grep -c ': test$' native-evidence/native-lifecycle-cases.txt)" = 9
           cargo test --locked --manifest-path factory/Cargo.toml --test native_lifecycle_receiving -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-lifecycle-receiving.log
+      - name: Real per-Run Flow association and changed-source gates
+        env:
+          FACTORY_REQUIRE_NATIVE_CTRL: '1'
+        run: |
+          set -euo pipefail
+          export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
+          test -x "$FACTORY_TEST_CTRL"
+          export FACTORY_TEST_CTRL_SHA256="$(sha256sum "$FACTORY_TEST_CTRL" | cut -d ' ' -f 1)"
+          export FACTORY_TEST_FLOW_TEMPLATE="$PWD/native-evidence/ql-flow.html"
+          export FACTORY_TEST_FLOW_TEMPLATE_SHA256=2ccaa5f1e71a565ac0432216717c7d9ceda51c67beabb8c805d997fa1caf5478
+          curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
+            https://raw.githubusercontent.com/EpiLogos/O-I/7dced5502f5057f951d58c3a6b199df26b4e6681/desktop/cradle/documents/ql-flow.html \
+            --output "$FACTORY_TEST_FLOW_TEMPLATE"
+          printf '%s  %s\n' "$FACTORY_TEST_FLOW_TEMPLATE_SHA256" "$FACTORY_TEST_FLOW_TEMPLATE" | sha256sum --check --strict
+          printf '%s\n' 7dced5502f5057f951d58c3a6b199df26b4e6681 > native-evidence/flow-template-source-sha.txt
+          sha256sum "$FACTORY_TEST_CTRL" "$FACTORY_TEST_FLOW_TEMPLATE" > native-evidence/flow-native-inputs.sha256
+          mkdir -m 700 native-evidence/flow-captures
+          export FACTORY_NATIVE_FLOW_EVIDENCE_DIR="$(pwd -P)/native-evidence/flow-captures"
+          cargo test --locked -p epilogos-factory --test native_flow_association -- --list > native-evidence/native-flow-cases.txt
+          test "$(grep -c ': test$' native-evidence/native-flow-cases.txt)" = 7
+          cargo test --locked -p epilogos-factory --test native_flow_association -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-flow.log
       - name: Real Actuation authority and Factory sensing integration
         run: |
           set -euo pipefail

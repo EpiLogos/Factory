@@ -658,6 +658,7 @@ impl FactoryDevelopmentalState {
                 "canonical Factory Run/RunMap + Factory Build correlations",
             ),
             run_ref: run.reference().clone(),
+            flow_associations: crate::flow_association::for_run(self, run_ref),
             revision: run.revision(),
             project_ref: run.project_ref().clone(),
             owning_journey_refs: self
@@ -1590,9 +1591,20 @@ impl FactoryDevelopmentalFileProvider {
         &mut self,
         request: FactoryDevelopmentalMutationRequest,
     ) -> Result<FactoryDevelopmentalMutationReceipt, FactoryDevelopmentalProviderError> {
+        // The foreign owner call stays outside our canonical lock. The exact
+        // Factory basis is checked again inside the transaction below.
+        let admission = if matches!(
+            &request.mutation,
+            crate::commission::FactoryDevelopmentalMutation::AssociateRunFlow { .. }
+        ) {
+            crate::flow_association::prepare(&Self::read_state(&self.path)?, &request)?
+        } else {
+            None
+        };
         let lock = self.lock()?;
         let mut candidate = Self::read_state(&self.path)?;
-        let receipt = candidate.apply_developmental_mutation(request)?;
+        let receipt = candidate
+            .apply_developmental_mutation_with_flow_admission(request, admission.as_ref())?;
         candidate.validate()?;
         if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
             self.persist_state(&candidate)?;
@@ -1802,6 +1814,10 @@ pub struct FactoryJourneyReading {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FactoryRunReading {
+    /// Retained native Flow read bases. This is not a current Flow reader and
+    /// conveys no participant authority, human recognition or completion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub flow_associations: Vec<crate::flow_association::FactoryRunFlowAssociation>,
     pub contract: String,
     pub provenance: FactoryReadingProvenance,
     pub run_ref: RunRef,

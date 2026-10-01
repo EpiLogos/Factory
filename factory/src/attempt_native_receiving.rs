@@ -32,7 +32,7 @@ fn digest(value: &impl serde::Serialize) -> Result<String, String> {
             .to_string(),
     )
 }
-fn configured_endpoint() -> Result<CentralReceivingEndpoint, String> {
+pub(crate) fn configured_endpoint() -> Result<CentralReceivingEndpoint, String> {
     let binary = std::env::var_os("FACTORY_NATIVE_CENTRAL_BINARY")
         .ok_or("host-configured FACTORY_NATIVE_CENTRAL_BINARY is unavailable")?;
     let root = std::env::var_os("FACTORY_NATIVE_CENTRAL_ROOT")

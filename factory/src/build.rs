@@ -652,6 +652,16 @@ impl FactoryBuildState {
             .ok_or_else(|| FactoryBuildError::RunNotFound(run_ref.to_string()))
     }
 
+    /// A typed owner context relation changes provider observation currency,
+    /// while the Run's topology/execution/source basis remains unchanged.
+    pub(crate) fn record_run_context_correlation(
+        &mut self,
+        run_ref: &RunRef,
+    ) -> Result<(), FactoryBuildError> {
+        self.ensure_run(run_ref)?;
+        self.bump_revision()
+    }
+
     fn bump_revision(&mut self) -> Result<(), FactoryBuildError> {
         self.revision = self
             .revision

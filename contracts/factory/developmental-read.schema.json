@@ -444,6 +444,12 @@
         },
         "nativeAttempts": {
           "$ref": "#/$defs/nativeAttempts"
+        },
+        "flowAssociations": {
+          "type": "array",
+          "items": {
+            "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/developmental-mutation.schema.json#/$defs/runFlowAssociation"
+          }
         }
       },
       "additionalProperties": false

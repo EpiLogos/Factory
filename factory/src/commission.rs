@@ -198,6 +198,14 @@ pub enum FactoryDevelopmentalMutation {
         reason: String,
         basis_refs: Vec<String>,
     },
+    /// Join an actual ordinary Central Flow to this same admitted Run/source.
+    /// The source tuple and native observation are retained, not rewritten.
+    AssociateRunFlow {
+        association: Box<crate::flow_association::FactoryRunFlowAssociation>,
+        expected_provider_revision: Revision,
+        expected_journey_revision: Revision,
+        expected_run_revision: Revision,
+    },
     CorrelateOwnerActivity {
         journey_ref: JourneyRef,
         activity_ref: String,
@@ -742,6 +750,14 @@ impl FactoryDevelopmentalState {
         &mut self,
         request: FactoryDevelopmentalMutationRequest,
     ) -> Result<FactoryDevelopmentalMutationReceipt, CommissionError> {
+        self.apply_developmental_mutation_with_flow_admission(request, None)
+    }
+
+    pub(crate) fn apply_developmental_mutation_with_flow_admission(
+        &mut self,
+        request: FactoryDevelopmentalMutationRequest,
+        admission: Option<&crate::flow_association::NativeFlowAdmission>,
+    ) -> Result<FactoryDevelopmentalMutationReceipt, CommissionError> {
         request.validate()?;
         if let Some(existing) = self.developmental_mutations.iter().find(|item| {
             item.request.mutation_ref == request.mutation_ref
@@ -803,6 +819,9 @@ impl FactoryDevelopmentalState {
             }
             FactoryDevelopmentalMutation::ContinueCommission { .. } => {
                 crate::commission_continuation::apply(&mut candidate, &request.mutation)?;
+            }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::apply(&mut candidate, &request, admission)?;
             }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity {
                 journey_ref,
@@ -934,6 +953,9 @@ impl FactoryDevelopmentalMutationRequest {
             FactoryDevelopmentalMutation::ContinueCommission { .. } => {
                 crate::commission_continuation::validate_request(self)?;
             }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::validate_request(self)?;
+            }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity { activity_ref, .. }
                 if self.source.reference != *activity_ref =>
             {
@@ -1013,6 +1035,9 @@ impl FactoryDevelopmentalMutationRecord {
             }
             FactoryDevelopmentalMutation::ContinueCommission { .. } => {
                 crate::commission_continuation::validate_record(state, &self.request.mutation)?;
+            }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::validate_record(state, &self.request)?;
             }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity {
                 journey_ref,
