@@ -534,7 +534,7 @@ pub(crate) mod publication_tests {
     use crate::project_development::ProjectDevelopmentLedger;
     use crate::workflow::{compile_workflow, WorkflowSource};
     use std::cell::Cell;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::rc::Rc;
     const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
     const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -737,12 +737,58 @@ pub(crate) mod publication_tests {
             std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777)).unwrap();
         });
     }
-    fn change_after_source_publication(source: PathBuf, occurrence: usize, seen: Rc<Cell<usize>>) {
+    #[derive(Clone)]
+    struct NativePublicationSource {
+        address: PathBuf,
+        physical: PathBuf,
+        parent_identity: (u64, u64),
+    }
+    impl NativePublicationSource {
+        fn capture(address: PathBuf) -> Self {
+            let physical = std::fs::canonicalize(&address).unwrap();
+            let identity = |path: &Path| {
+                let metadata = std::fs::metadata(path).unwrap();
+                (metadata.dev(), metadata.ino())
+            };
+            // Retain the caller's actual native address. Before any rename,
+            // prove its source and parent are the physical objects we will fault.
+            assert_eq!(identity(&address), identity(&physical));
+            let parent_identity = identity(address.parent().unwrap());
+            assert_eq!(parent_identity, identity(physical.parent().unwrap()));
+            Self {
+                address,
+                physical,
+                parent_identity,
+            }
+        }
+        fn matches(&self, published: &Path) -> bool {
+            // The observer receives the owner's lexical address; uncertainty
+            // details retain its pre-rename physical address. /var on Mac can
+            // name the same held parent as /private/var without spelling alike.
+            if published != self.address {
+                return false;
+            }
+            let parent = std::fs::metadata(published.parent().unwrap()).unwrap();
+            assert_eq!((parent.dev(), parent.ino()), self.parent_identity);
+            assert_eq!(std::fs::canonicalize(published).unwrap(), self.physical);
+            true
+        }
+        fn assert_published(&self, published: &Path) {
+            assert_eq!(published, self.address);
+            assert!(self.matches(published));
+        }
+    }
+    fn change_after_source_publication(
+        source: NativePublicationSource,
+        occurrence: usize,
+        seen: Rc<Cell<usize>>,
+    ) {
         crate::native_file_transaction::observe_next_publication(move |published| {
-            if published == source {
+            let matches = source.matches(published);
+            if matches {
                 seen.set(seen.get() + 1);
             }
-            if published == source && seen.get() == occurrence {
+            if matches && seen.get() == occurrence {
                 std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
                     .unwrap();
             } else {
@@ -759,9 +805,9 @@ pub(crate) mod publication_tests {
             .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
             .unwrap();
         let before = world.reading().revision;
-        let physical = std::fs::canonicalize(world.state()).unwrap();
+        let source = NativePublicationSource::capture(PathBuf::from(world.state()));
         let seen = Rc::new(Cell::new(0));
-        change_after_source_publication(physical.clone(), 2, seen.clone());
+        change_after_source_publication(source.clone(), 2, seen.clone());
         let args = vec![
             "attempt".into(),
             "learn".into(),
@@ -777,7 +823,7 @@ pub(crate) mod publication_tests {
         assert_eq!(seen.get(), 2);
         assert_eq!(
             returned["publicationUncertainty"]["source_path"],
-            physical.display().to_string()
+            source.physical.display().to_string()
         );
         assert_eq!(returned["publicationUncertainty"]["published"], true);
         assert_eq!(returned["publicationUncertainty"]["automatic_retry"], false);
@@ -825,19 +871,18 @@ pub(crate) mod publication_tests {
             .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
             .unwrap();
         let before = world.reading().revision;
-        let source = std::fs::canonicalize(
+        let source = NativePublicationSource::capture(
             request
                 .ledger_root
                 .join(format!("{}.json", request.run_ref.as_ref().id())),
-        )
-        .unwrap();
+        );
         let seen = Rc::new(Cell::new(0));
         change_after_source_publication(source.clone(), 1, seen.clone());
         let returned = execute(Path::new(&world.state()), request.clone()).unwrap();
         assert_eq!(seen.get(), 1);
         assert_eq!(
             returned["publicationUncertainty"]["source_path"],
-            source.display().to_string()
+            source.physical.display().to_string()
         );
         assert_eq!(returned["needsReconciliation"], true);
         let current = world.reading();
@@ -867,22 +912,22 @@ pub(crate) mod publication_tests {
         );
     }
     fn fault_two_native_sources(
-        attempt_source: PathBuf,
-        ledger_source: PathBuf,
+        attempt_source: NativePublicationSource,
+        ledger_source: NativePublicationSource,
         seen: Rc<Cell<usize>>,
     ) {
         crate::native_file_transaction::observe_next_publication(move |published| {
             let occurrence = seen.get() + 1;
             seen.set(occurrence);
             match occurrence {
-                1 => assert_eq!(published, attempt_source), // intent
+                1 => attempt_source.assert_published(published), // intent
                 2 => {
-                    assert_eq!(published, ledger_source);
+                    ledger_source.assert_published(published);
                     std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
                         .unwrap();
                 }
                 3 => {
-                    assert_eq!(published, attempt_source); // permitted observation
+                    attempt_source.assert_published(published); // permitted observation
                     std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
                         .unwrap();
                 }
@@ -903,13 +948,12 @@ pub(crate) mod publication_tests {
             .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
             .unwrap();
         let before = world.reading().revision;
-        let attempt_source = std::fs::canonicalize(world.state()).unwrap();
-        let ledger_source = std::fs::canonicalize(
+        let attempt_source = NativePublicationSource::capture(PathBuf::from(world.state()));
+        let ledger_source = NativePublicationSource::capture(
             request
                 .ledger_root
                 .join(format!("{}.json", request.run_ref.as_ref().id())),
-        )
-        .unwrap();
+        );
         let seen = Rc::new(Cell::new(0));
         fault_two_native_sources(attempt_source.clone(), ledger_source.clone(), seen.clone());
         let returned = execute(Path::new(&world.state()), request.clone()).unwrap();
@@ -920,8 +964,14 @@ pub(crate) mod publication_tests {
         );
         let first = &returned["publicationUncertainty"];
         let second = &returned["secondaryPublicationUncertainty"];
-        assert_eq!(first["source_path"], ledger_source.display().to_string());
-        assert_eq!(second["source_path"], attempt_source.display().to_string());
+        assert_eq!(
+            first["source_path"],
+            ledger_source.physical.display().to_string()
+        );
+        assert_eq!(
+            second["source_path"],
+            attempt_source.physical.display().to_string()
+        );
         for details in [first, second] {
             assert_eq!(details["published"], true);
             assert_eq!(details["outcome"], "unknown");

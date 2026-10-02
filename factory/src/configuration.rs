@@ -1995,7 +1995,7 @@ mod tests {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn actual_config_link_apply_and_reset_publication_failure_keeps_owner_document_and_cause() {
-        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
         for reset in [false, true] {
             for move_after_publication in [false, true] {
                 for public_dispatch in [false, true] {
@@ -2005,6 +2005,10 @@ mod tests {
                         .unwrap();
                     let source_path = root.path().join("central-project.json");
                     fs::write(&source_path,r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I"},"wiki":{"schema":"central.wiki/v1"}}"#).unwrap();
+                    let central_source_before = fs::read(&source_path).unwrap();
+                    let central_source_metadata = fs::metadata(&source_path).unwrap();
+                    let central_source_identity =
+                        (central_source_metadata.dev(), central_source_metadata.ino());
                     let value =
                         json!([{"central_project_ref":"project:o-i","source_path":source_path}]);
                     let scope = format!("project:{}", state_path.display());
@@ -2055,20 +2059,45 @@ mod tests {
                         "publication adversity starts from the actual apply/reset owner state"
                     );
                     let physical = state_path.canonicalize().unwrap();
-                    let expected_published = physical.clone();
+                    let expected_published = state_path.clone();
+                    let expected_physical = physical.clone();
                     let retained = root.path().join("retained-published-native-link.json");
                     let observer = retained.clone();
                     crate::native_file_transaction::observe_next_publication(move |published| {
                         assert_eq!(
                             published, expected_published,
-                            "fault the actual native link source"
+                            "native publication retains the provided owner address"
                         );
+                        // Resolve aliases before the deliberate move: the raw
+                        // owner address and canonical path must name the same
+                        // actual replacement inode, not merely similar strings.
+                        assert_eq!(published.canonicalize().unwrap(), expected_physical);
+                        let provided_metadata = fs::metadata(published).unwrap();
+                        let physical_metadata = fs::metadata(&expected_physical).unwrap();
+                        let published_identity = (provided_metadata.dev(), provided_metadata.ino());
+                        assert_eq!(
+                            published_identity,
+                            (physical_metadata.dev(), physical_metadata.ino())
+                        );
+                        let published_bytes = fs::read(published).unwrap();
                         if move_after_publication {
-                            fs::rename(published, observer).unwrap();
+                            fs::rename(published, &observer).unwrap();
                         } else {
                             fs::set_permissions(published, fs::Permissions::from_mode(0o777))
                                 .unwrap();
                         }
+                        let retained_path = if move_after_publication {
+                            observer.as_path()
+                        } else {
+                            published
+                        };
+                        let retained_metadata = fs::metadata(retained_path).unwrap();
+                        assert_eq!(
+                            (retained_metadata.dev(), retained_metadata.ino()),
+                            published_identity,
+                            "the actual fault preserves the published inode"
+                        );
+                        assert_eq!(fs::read(retained_path).unwrap(), published_bytes);
                     });
                     let error = if public_dispatch {
                         args.push("--json".into());
@@ -2098,6 +2127,18 @@ mod tests {
                     );
                     assert_eq!(document["publicationUncertainty"]["published"], true);
                     assert_eq!(document["publicationUncertainty"]["outcome"], "unknown");
+                    assert_eq!(
+                        document["publicationUncertainty"]["source_path"],
+                        physical.display().to_string(),
+                        "the public error keeps the physical address captured before publication"
+                    );
+                    assert_eq!(fs::read(&source_path).unwrap(), central_source_before);
+                    let current_source_metadata = fs::metadata(&source_path).unwrap();
+                    assert_eq!(
+                        (current_source_metadata.dev(), current_source_metadata.ino()),
+                        central_source_identity,
+                        "configuration adversity leaves Central source identity unchanged"
+                    );
                     let schema: Value = serde_json::from_str(include_str!(
                         "../tests/support/configuration-schemas/oi.config-error-v1.schema.json"
                     ))

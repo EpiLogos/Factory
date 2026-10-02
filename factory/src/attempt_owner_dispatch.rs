@@ -814,7 +814,7 @@ mod publication_tests {
     use super::*;
     use crate::attempt_learning::publication_tests::{native_observation, native_retention_source};
     use std::cell::Cell;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::rc::Rc;
 
     #[test]
@@ -889,8 +889,23 @@ mod publication_tests {
             let seen_for_observer = seen.clone();
             let retained_for_observer = retained.clone();
             let physical_for_observer = physical.clone();
+            let lexical_for_observer = path.clone();
             crate::native_file_transaction::observe_next_publication(move |published| {
-                assert_eq!(published, physical_for_observer);
+                assert_eq!(
+                    published, lexical_for_observer,
+                    "publisher retains its raw public address"
+                );
+                // Establish the actual candidate inode through both Mac path
+                // spellings while it exists, before the adversarial move.
+                assert_eq!(published.canonicalize().unwrap(), physical_for_observer);
+                let published_file = std::fs::File::open(published).unwrap();
+                let physical_file = std::fs::File::open(&physical_for_observer).unwrap();
+                let published_identity = published_file.metadata().unwrap();
+                let physical_identity = physical_file.metadata().unwrap();
+                assert_eq!(
+                    (published_identity.dev(), published_identity.ino()),
+                    (physical_identity.dev(), physical_identity.ino())
+                );
                 seen_for_observer.set(seen_for_observer.get() + 1);
                 if move_after_publication {
                     std::fs::rename(published, &retained_for_observer).unwrap();

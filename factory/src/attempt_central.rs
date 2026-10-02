@@ -861,7 +861,7 @@ mod publication_tests {
     use super::*;
     use crate::attempt_learning::publication_tests::{native_observation, native_retention_source};
     use std::cell::Cell;
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     use std::rc::Rc;
     #[test]
     fn actual_central_observation_and_tracking_retention_stop_after_committed_uncertainty() {
@@ -907,7 +907,7 @@ mod publication_tests {
                 let refused = retain_fact(&mut store, &request, fact.clone()).unwrap_err();
                 assert_eq!(
                     refused.to_string(),
-                    "Factory attempt error: InvalidOperation(\"tracking fact misattributes its native owner\")"
+                    r#"Factory attempt error: InvalidOperation("native developmental transaction: Factory attempt error: InvalidOperation(\"tracking fact misattributes its native owner\")")"#
                 );
                 assert!(crate::native_publication_uncertainty(&refused).is_none());
                 assert_eq!(
@@ -924,12 +924,28 @@ mod publication_tests {
                 fact.evidence_refs.insert(observation.receipt_ref.clone());
             }
             let before_fault = store.reading().unwrap().revision;
-            let physical = root.path().join("state.json").canonicalize().unwrap();
+            let lexical = root.path().join("state.json");
+            let physical = lexical.canonicalize().unwrap();
             let expected = physical.clone();
             let publications = Rc::new(Cell::new(0));
             let observed_publications = publications.clone();
             crate::native_file_transaction::observe_next_publication(move |published| {
-                assert_eq!(published, expected);
+                assert_eq!(
+                    published, lexical,
+                    "publisher retains its raw public address"
+                );
+                // Mac's /var and /private/var are distinct spellings of this
+                // same source. Bind their actual file identity before the fault;
+                // never resolve a moved or missing path after publication.
+                assert_eq!(published.canonicalize().unwrap(), expected);
+                let published_file = std::fs::File::open(published).unwrap();
+                let physical_file = std::fs::File::open(&expected).unwrap();
+                let published_identity = published_file.metadata().unwrap();
+                let physical_identity = physical_file.metadata().unwrap();
+                assert_eq!(
+                    (published_identity.dev(), published_identity.ino()),
+                    (physical_identity.dev(), physical_identity.ino())
+                );
                 observed_publications.set(observed_publications.get() + 1);
                 std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
                     .unwrap();
