@@ -1894,6 +1894,106 @@ mod tests {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
+    fn actual_config_link_invalid_changeset_refuses_before_publication_and_keeps_source_bytes() {
+        // Retain the exact invalid identities from the hosted failure. They
+        // fail native admission before publication, so they cannot exercise
+        // the post-publication cause oracle below.
+        for reset in [false, true] {
+            for public_dispatch in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let state_path = root.path().join("developmental.json");
+                crate::conformance::create_developmental_conformance_state(&state_path).unwrap();
+                let source_path = root.path().join("central-project.json");
+                fs::write(&source_path,r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I"},"wiki":{"schema":"central.wiki/v1"}}"#).unwrap();
+                let value =
+                    json!([{"central_project_ref":"project:o-i","source_path":source_path}]);
+                let scope = format!("project:{}", state_path.display());
+                let plan_args = vec![
+                    "config".into(),
+                    "plan".into(),
+                    "--setting".into(),
+                    CENTRAL_PROJECT_SETTING_REF.into(),
+                    "--scope".into(),
+                    scope.clone(),
+                    "--value".into(),
+                    value.to_string(),
+                ];
+                let plan = execute_config(&plan_args, None, true).unwrap();
+                let plan_path = root.path().join("native-plan.json");
+                fs::write(&plan_path, plan).unwrap();
+                let apply_args = vec![
+                    "config".into(),
+                    "apply".into(),
+                    "--plan-file".into(),
+                    plan_path.display().to_string(),
+                    "--changeset".into(),
+                    "cs-actual-apply-proof".into(),
+                ];
+                if reset {
+                    execute_config(&apply_args, None, true).unwrap();
+                }
+                let invalid_changeset = if reset {
+                    "actual-reset-proof"
+                } else {
+                    "actual-apply-proof"
+                };
+                let mut args = if reset {
+                    vec![
+                        "config".into(),
+                        "reset".into(),
+                        "--setting".into(),
+                        CENTRAL_PROJECT_SETTING_REF.into(),
+                        "--scope".into(),
+                        scope,
+                        "--changeset".into(),
+                        invalid_changeset.into(),
+                    ]
+                } else {
+                    let mut args = apply_args;
+                    *args.last_mut().unwrap() = invalid_changeset.into();
+                    args
+                };
+                let state_before = fs::read(&state_path).unwrap();
+                let journal_before = fs::read(journal_path(&state_path)).unwrap();
+                let source_before = fs::read(&source_path).unwrap();
+                let error = if public_dispatch {
+                    args.push("--json".into());
+                    crate::cli::execute_cli(&args, None).unwrap_err()
+                } else {
+                    crate::cli::CliError::from_native(
+                        execute_config(&args, None, true).unwrap_err(),
+                    )
+                };
+                let document: Value = serde_json::from_str(&error.to_string()).unwrap();
+                assert_eq!(document["schema"], CONFIG_ERROR_SCHEMA);
+                assert_eq!(document["error_code"], "validation_failed");
+                assert!(document["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(invalid_changeset));
+                assert!(document["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("must be `cs-`"));
+                assert!(crate::native_publication_uncertainty(&error).is_none());
+                assert!(document.get("publicationUncertainty").is_none());
+                assert_eq!(fs::read(&state_path).unwrap(), state_before);
+                assert_eq!(fs::read(journal_path(&state_path)).unwrap(), journal_before);
+                assert_eq!(fs::read(&source_path).unwrap(), source_before);
+                assert_eq!(
+                    FactoryDevelopmentalFileProvider::open(&state_path)
+                        .unwrap()
+                        .central_project_link()
+                        .is_some(),
+                    reset,
+                    "invalid changeset cannot apply or remove the native link"
+                );
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
     fn actual_config_link_apply_and_reset_publication_failure_keeps_owner_document_and_cause() {
         use std::os::unix::fs::PermissionsExt;
         for reset in [false, true] {
@@ -1927,7 +2027,7 @@ mod tests {
                         "--plan-file".into(),
                         plan_path.display().to_string(),
                         "--changeset".into(),
-                        "actual-apply-proof".into(),
+                        "cs-actual-apply-proof".into(),
                     ];
                     if reset {
                         execute_config(&apply_args, None, true).unwrap();
@@ -1941,15 +2041,28 @@ mod tests {
                             "--scope".into(),
                             scope,
                             "--changeset".into(),
-                            "actual-reset-proof".into(),
+                            "cs-actual-reset-proof".into(),
                         ]
                     } else {
                         apply_args
                     };
+                    assert_eq!(
+                        FactoryDevelopmentalFileProvider::open(&state_path)
+                            .unwrap()
+                            .central_project_link()
+                            .is_some(),
+                        reset,
+                        "publication adversity starts from the actual apply/reset owner state"
+                    );
                     let physical = state_path.canonicalize().unwrap();
+                    let expected_published = physical.clone();
                     let retained = root.path().join("retained-published-native-link.json");
                     let observer = retained.clone();
                     crate::native_file_transaction::observe_next_publication(move |published| {
+                        assert_eq!(
+                            published, expected_published,
+                            "fault the actual native link source"
+                        );
                         if move_after_publication {
                             fs::rename(published, observer).unwrap();
                         } else {
@@ -1965,7 +2078,9 @@ mod tests {
                             execute_config(&args, None, true).unwrap_err(),
                         )
                     };
-                    let publication = crate::native_publication_uncertainty(&error).unwrap();
+                    let publication = crate::native_publication_uncertainty(&error).unwrap_or_else(|| {
+                        panic!("expected actual native post-publication uncertainty for reset={reset}, move_after_publication={move_after_publication}, public_dispatch={public_dispatch}; owner refused: {error}")
+                    });
                     assert_eq!(publication.source_path, physical);
                     if move_after_publication {
                         assert_eq!(publication.cause.raw_os_error(), Some(libc::ENOENT));

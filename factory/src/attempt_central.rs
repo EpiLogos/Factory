@@ -859,9 +859,10 @@ pub fn execute_cli(args: &[String], input: Option<&str>) -> Result<String, CliEr
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
 mod publication_tests {
     use super::*;
-    use crate::attempt_learning::publication_tests::{
-        change_actual_published_privacy, native_observation, native_retention_source,
-    };
+    use crate::attempt_learning::publication_tests::{native_observation, native_retention_source};
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt;
+    use std::rc::Rc;
     #[test]
     fn actual_central_observation_and_tracking_retention_stop_after_committed_uncertainty() {
         for tracking in [false, true] {
@@ -890,30 +891,81 @@ mod publication_tests {
                 timeout_ms: None,
             };
             let observation = native_observation(&store);
-            change_actual_published_privacy();
+            let mut fact = AttemptTrackingFact {
+                fact_ref: "tracking:actual-retention".into(),
+                kind: "source-revision".into(),
+                owner_ref: "factory".into(),
+                subject_ref: root.path().join("state.json").display().to_string(),
+                source_revision: observation.source_revision.clone(),
+                evidence_refs: BTreeSet::new(),
+            };
+            if tracking {
+                // Preserve the original failure: source-revision belongs to
+                // Central, so a Factory-owned reading cannot claim that kind.
+                // This real semantic refusal must precede any fault observer.
+                let before_bytes = std::fs::read(root.path().join("state.json")).unwrap();
+                let refused = retain_fact(&mut store, &request, fact.clone()).unwrap_err();
+                assert_eq!(
+                    refused.to_string(),
+                    "Factory attempt error: InvalidOperation(\"tracking fact misattributes its native owner\")"
+                );
+                assert!(crate::native_publication_uncertainty(&refused).is_none());
+                assert_eq!(
+                    std::fs::read(root.path().join("state.json")).unwrap(),
+                    before_bytes,
+                    "misattributed native fact is refused without a write"
+                );
+                assert_eq!(store.reading().unwrap().revision, before);
+                // The tested receipt is an actual Factory source reading,
+                // never a fabricated Central response. Retain it as evidence
+                // for a Factory-owned, non-Central-specific tracking fact.
+                retain(&mut store, &request, &observation).unwrap();
+                fact.kind = "native-source-reading".into();
+                fact.evidence_refs.insert(observation.receipt_ref.clone());
+            }
+            let before_fault = store.reading().unwrap().revision;
+            let physical = root.path().join("state.json").canonicalize().unwrap();
+            let expected = physical.clone();
+            let publications = Rc::new(Cell::new(0));
+            let observed_publications = publications.clone();
+            crate::native_file_transaction::observe_next_publication(move |published| {
+                assert_eq!(published, expected);
+                observed_publications.set(observed_publications.get() + 1);
+                std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                    .unwrap();
+            });
             let error = if tracking {
-                retain_fact(
-                    &mut store,
-                    &request,
-                    AttemptTrackingFact {
-                        fact_ref: "tracking:actual-retention".into(),
-                        kind: "source-revision".into(),
-                        owner_ref: "factory".into(),
-                        subject_ref: root.path().join("state.json").display().to_string(),
-                        source_revision: observation.source_revision.clone(),
-                        evidence_refs: BTreeSet::new(),
-                    },
-                )
-                .unwrap_err()
+                retain_fact(&mut store, &request, fact.clone()).unwrap_err()
             } else {
                 retain(&mut store, &request, &observation).unwrap_err()
             };
-            assert!(crate::native_publication_uncertainty(&error).is_some());
+            let publication = crate::native_publication_uncertainty(&error).unwrap_or_else(|| {
+                panic!("actual publication cause missing (tracking={tracking}): {error}")
+            });
+            let details = publication.details();
+            assert_eq!(details.source_path, physical);
+            assert!(details.published);
+            assert_eq!(details.outcome, "unknown");
+            assert!(!details.automatic_retry);
+            assert_eq!(publications.get(), 1);
+            let current =
+                FileAttemptStore::open_run(root.path().join("state.json"), request.run_ref.clone())
+                    .unwrap()
+                    .reading()
+                    .unwrap();
             assert_eq!(
-                store.reading().unwrap().revision,
-                before + 1,
+                current.revision,
+                before_fault + 1,
                 "one actual commit; no changed-revision retry"
             );
+            let current_attempt = record(&current, &request.attempt_ref).unwrap();
+            assert!(current_attempt.observations.contains(&observation));
+            if tracking {
+                assert_eq!(current_attempt.tracking, vec![fact]);
+            } else {
+                assert!(current_attempt.tracking.is_empty());
+            }
+            assert!(current_attempt.readable_return.is_none());
         }
     }
 }

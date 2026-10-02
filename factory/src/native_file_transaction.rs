@@ -462,11 +462,24 @@ mod unix {
     }
     #[cfg(target_os = "macos")]
     fn acl(file: &File) -> io::Result<Vec<u8>> {
-        // SAFETY: live fd; each owned ACL/text allocation is released on all paths.
+        acl_from_fd(file.as_raw_fd())
+    }
+    #[cfg(target_os = "macos")]
+    fn acl_from_fd(fd: libc::c_int) -> io::Result<Vec<u8>> {
+        // SAFETY: the descriptor is passed only to the native retrieval API;
+        // each owned ACL/text allocation is released on all paths.
         unsafe {
-            let value = acl_get_fd_np(file.as_raw_fd(), 0x100);
+            let value = acl_get_fd_np(fd, 0x100);
             if value.is_null() {
-                return Err(io::Error::last_os_error());
+                let error = io::Error::last_os_error();
+                // Darwin reports ENOENT for an existing held file with no
+                // extended ACL. Absence is metadata, not a missing source.
+                // Preserve every other retrieval failure, including EBADF.
+                return if error.raw_os_error() == Some(libc::ENOENT) {
+                    Ok(Vec::new())
+                } else {
+                    Err(error)
+                };
             }
             let mut length = 0;
             let text = acl_to_text(value, &mut length);
@@ -702,7 +715,10 @@ mod unix {
             let source = match open_at(&parent, &target, libc::O_RDWR) {
                 Ok(file) => {
                     if regular(&file)?.mode() & 0o222 == 0 {
-                        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "native source has no writable mode; parent rename cannot bypass read-only source"));
+                        return Err(io::Error::new(
+                            io::ErrorKind::PermissionDenied,
+                            "native source has no writable mode; parent rename cannot bypass read-only source",
+                        ));
                     }
                     Some(Source {
                         bytes: bytes(&file)?,
@@ -1216,6 +1232,58 @@ mod unix {
                     b"foreign postpublication attribute"
                 );
             }
+        }
+
+        #[cfg(target_os = "macos")]
+        #[test]
+        fn actual_macos_absent_acl_allows_bootstrap_and_replacement_but_not_bad_descriptor() {
+            for bootstrap in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let path = root.path().join("state.json");
+                if !bootstrap {
+                    std::fs::write(&path, b"retained owner without ACL").unwrap();
+                    let file = File::open(&path).unwrap();
+                    assert!(acl(&file).unwrap().is_empty());
+                }
+                let transaction =
+                    NativeFileTransaction::acquire(&path, &lock_name(&path).unwrap(), false)
+                        .unwrap();
+                transaction
+                    .publish(b"candidate without ACL", bootstrap)
+                    .unwrap();
+                let file = File::open(&path).unwrap();
+                assert!(acl(&file).unwrap().is_empty());
+                let added = std::process::Command::new("/bin/chmod")
+                    .args(["+a", "everyone allow read"])
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    added.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&added.stderr)
+                );
+                assert!(!acl(&file).unwrap().is_empty());
+                let removed = std::process::Command::new("/bin/chmod")
+                    .arg("-N")
+                    .arg(&path)
+                    .output()
+                    .unwrap();
+                assert!(
+                    removed.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&removed.stderr)
+                );
+                assert!(acl(&file).unwrap().is_empty());
+                drop(transaction);
+                assert_eq!(read_native(&path).unwrap(), b"candidate without ACL");
+            }
+            // -1 cannot be reused by another parallel test as a live descriptor.
+            // Exercise the native retrieval failure, not a manufactured io::Error.
+            assert_eq!(
+                acl_from_fd(-1).unwrap_err().raw_os_error(),
+                Some(libc::EBADF)
+            );
         }
 
         #[cfg(target_os = "macos")]

@@ -3895,7 +3895,12 @@ mod tests {
     }
     #[test]
     fn actual_replacement_refuses_invalid_retained_schema_or_native_state_before_transfer() {
-        for invalid_basis in ["provider-schema", "state-schema", "native-project-relation"] {
+        for invalid_basis in [
+            "provider-schema",
+            "state-schema",
+            "native-project-relation",
+            "unknown-project-spelling",
+        ] {
             let root = tempfile::tempdir().unwrap();
             let path = root.path().join("invalid-basis.json");
             FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
@@ -3905,23 +3910,58 @@ mod tests {
             match invalid_basis {
                 "provider-schema" => raw["schema"] = serde_json::json!("foreign-provider/v1"),
                 "state-schema" => raw["state"]["schema"] = serde_json::json!("foreign-state/v1"),
+                "native-project-relation" => {
+                    // Journey's native retained field is snake_case, unlike
+                    // the surrounding developmental state's camelCase fields.
+                    assert_eq!(raw["state"]["journeys"][0]["project_ref"], PROJECT);
+                    raw["state"]["journeys"][0]["project_ref"] =
+                        serde_json::json!("project:01ARZ3NDEKTSV4RRFFQ69G5FCA");
+                }
                 _ => {
+                    // Preserve the original malformed case: this spelling is
+                    // an unknown nonempty extension, not a Project mutation.
                     raw["state"]["journeys"][0]["projectRef"] =
-                        serde_json::json!("project:01ARZ3NDEKTSV4RRFFQ69G5FCA")
+                        serde_json::json!("project:01ARZ3NDEKTSV4RRFFQ69G5FCA");
                 }
             }
             let before = serde_json::to_vec_pretty(&raw).unwrap();
             std::fs::write(&path, &before).unwrap();
             let error = FactoryDevelopmentalFileProvider::create(&path, state()).unwrap_err();
-            if invalid_basis == "provider-schema" {
-                assert!(matches!(
-                    error,
-                    FactoryDevelopmentalProviderError::UnsupportedProviderSchema(_)
-                ));
-            } else {
-                assert!(matches!(error, FactoryDevelopmentalProviderError::Read(_)));
+            match (invalid_basis, &error) {
+                (
+                    "provider-schema",
+                    FactoryDevelopmentalProviderError::UnsupportedProviderSchema(schema),
+                ) => assert_eq!(schema, "foreign-provider/v1"),
+                (
+                    "state-schema",
+                    FactoryDevelopmentalProviderError::Read(
+                        FactoryDevelopmentalReadError::UnsupportedSchema(schema),
+                    ),
+                ) => assert_eq!(schema, "foreign-state/v1"),
+                (
+                    "native-project-relation",
+                    FactoryDevelopmentalProviderError::Read(
+                        FactoryDevelopmentalReadError::ProjectJourneyMismatch {
+                            project_ref,
+                            journey_ref,
+                        },
+                    ),
+                ) => {
+                    assert_eq!(project_ref, PROJECT);
+                    assert_eq!(journey_ref, JOURNEY);
+                }
+                (
+                    "unknown-project-spelling",
+                    FactoryDevelopmentalProviderError::UnsupportedRetention(field),
+                ) => assert_eq!(field, "$.state.journeys[0].projectRef"),
+                _ => panic!("wrong retained-source refusal for {invalid_basis}: {error}"),
             }
-            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert!(crate::native_publication_uncertainty(&error).is_none());
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                before,
+                "each exact retained-source refusal must precede replacement"
+            );
         }
     }
     #[test]
