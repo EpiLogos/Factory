@@ -125,6 +125,34 @@ for protected task admission. An explicit binary override changes only the
 executable path; it does not select a retired standalone companion or weaken
 the owner contract. The supplied executable must support this native route.
 
+The additive optional `transport` field on `aikit-encounter` declares a local
+or SSH route to that same native owner. Both protected Task inspection and the
+subsequent Encounter call use its exact binary, cwd and route. Omitting the field
+preserves existing v1 request bytes and local invocation behavior. A declared
+route uses absolute native paths and retains its actual `workcell_ref`; SSH
+additionally requires an absolute `ssh_binary` and explicit `target`. The SSH
+client uses batch mode, a bounded connection timeout and separately quoted
+arguments. `environment` accepts only `PATH` and `WORKCELL_HOME` for native
+helper discovery; credentials and control authority cannot be placed in it.
+Factory does not copy a Mac executable or bearer into the remote process.
+
+For a Task prepared over an existing Workcell Run, Factory reads native
+`run show`, inspects its actual world receipt, then reads the Run again on the
+same route. It compares the prepared scope revision, demand and boundary with
+the Task, and the native world's exact Factory Run, current WorkflowSource
+ref/revision/digest, unit, Task, Agent, Agency, binding, AgentSession, SessionSpace
+and Workcell. A different undertaking, changed source or material revision,
+unavailable owner or replaced material refuses before the send intent. These
+sequential readings are retained previews; AIKit's locked Task admission and
+Workcell's scope validation still run before the provider effect. Inspection
+does not create a lease or certify completion. Native refusal diagnostics are
+retained with bounded stdout/stderr rather than converted into generic absence.
+
+Once Factory retains a send intent, delivery recovery must use its original
+binary, cwd, contract, declared route and Execution identity. It reads the same
+native delivery; a changed route cannot silently resend work. A timed-out SSH
+client leaves the remote effect uncertain until native readback resolves it.
+
 Transport has a finite deadline and a four-MiB limit on each output stream.
 Timeout, invalid identity, unreadable output and lost response remain uncertain.
 Stopping a client is not evidence that a remote worker stopped. No fixture

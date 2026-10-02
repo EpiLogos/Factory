@@ -3,15 +3,163 @@
   "$id": "factory.developmental-read.schema/v1",
   "title": "Factory developmental public readings",
   "oneOf": [
-    { "$ref": "#/$defs/projectReading" },
-    { "$ref": "#/$defs/journeyReading" },
-    { "$ref": "#/$defs/runReading" },
-    { "$ref": "#/$defs/workflowUnitListReading" },
-    { "$ref": "#/$defs/workflowUnitReading" },
-    { "$ref": "#/$defs/executionTelemetryReading" },
-    { "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission.schema.json#/$defs/reading" }
+    {
+      "$ref": "#/$defs/projectReading"
+    },
+    {
+      "$ref": "#/$defs/journeyReading"
+    },
+    {
+      "$ref": "#/$defs/runReading"
+    },
+    {
+      "$ref": "#/$defs/workflowUnitListReading"
+    },
+    {
+      "$ref": "#/$defs/workflowUnitReading"
+    },
+    {
+      "$ref": "#/$defs/executionTelemetryReading"
+    },
+    {
+      "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/commission.schema.json#/$defs/reading"
+    }
   ],
   "$defs": {
+    "nativeAttempts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "revision",
+        "runRef",
+        "runRevision",
+        "topologyRevision",
+        "workflowKey",
+        "workflowSourceRef",
+        "workflowSourceRevision",
+        "workflowSourceDigest",
+        "sourceCurrent",
+        "wholeRunState",
+        "lifecycle",
+        "requiredUnits",
+        "currentReturnedUnits",
+        "legs",
+        "attempts",
+        "independentReviewers",
+        "syntheses"
+      ],
+      "properties": {
+        "contract": {
+          "const": "factory.attempt-reading/v1"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "runRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "topologyRevision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflowKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowSourceDigest": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceCurrent": {
+          "type": "boolean"
+        },
+        "wholeRunState": {
+          "enum": [
+            "incomplete",
+            "complete",
+            "failed"
+          ]
+        },
+        "lifecycle": {
+          "enum": [
+            "seeded",
+            "active",
+            "waiting_human",
+            "suspended",
+            "finishing",
+            "finished",
+            "aborted",
+            "archived"
+          ]
+        },
+        "requiredUnits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "currentReturnedUnits": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "legs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "independentReviewers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "syntheses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "completionVerified": {
+          "type": "boolean",
+          "description": "Exact canonical Finished admission through the authenticated native receiving owner; visible Returns and archive never create this fact."
+        },
+        "archivedFrom": {
+          "enum": [
+            "finished",
+            "aborted"
+          ],
+          "description": "Retained terminal lifecycle before canonical Archive; absent when history does not establish it."
+        }
+      }
+    },
     "canonicalRef": {
       "type": "string",
       "pattern": "^[a-z][a-z0-9-]*:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
@@ -28,615 +176,1938 @@
       "type": "string",
       "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}$"
     },
-    "revision": { "type": "integer", "minimum": 1 },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
     "provenance": {
       "type": "object",
-      "required": ["owner", "factoryStateRevision", "subjectRevision", "source"],
+      "required": [
+        "owner",
+        "factoryStateRevision",
+        "subjectRevision",
+        "source"
+      ],
       "properties": {
-        "owner": { "const": "factory" },
-        "factoryStateRevision": { "$ref": "#/$defs/revision" },
-        "subjectRevision": { "$ref": "#/$defs/revision" },
-        "source": { "type": "string", "minLength": 1 }
+        "owner": {
+          "const": "factory"
+        },
+        "factoryStateRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "subjectRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "projectReading": {
       "type": "object",
-      "required": ["contract", "provenance", "projectRef", "projectRevision", "journeys"],
+      "required": [
+        "contract",
+        "provenance",
+        "projectRef",
+        "projectRevision",
+        "journeys"
+      ],
       "properties": {
-        "contract": { "const": "factory.project-reading/v1" },
-        "provenance": { "$ref": "#/$defs/provenance" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "projectRevision": { "$ref": "#/$defs/revision" },
-        "journeys": { "type": "array", "items": { "$ref": "#/$defs/journeySummary" } }
+        "contract": {
+          "const": "factory.project-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "projectRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "journeys": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/journeySummary"
+          }
+        }
       },
       "additionalProperties": false
     },
     "journeySummary": {
       "type": "object",
-      "required": ["journeyRef", "revision", "status", "frontier", "runRefs"],
+      "required": [
+        "journeyRef",
+        "revision",
+        "status",
+        "frontier",
+        "runRefs"
+      ],
       "properties": {
-        "journeyRef": { "$ref": "#/$defs/canonicalRef" },
-        "revision": { "$ref": "#/$defs/revision" },
-        "status": { "enum": ["proposed", "active", "paused", "completed", "abandoned"] },
-        "frontier": { "type": "string", "minLength": 1 },
-        "runRefs": { "type": "array", "items": { "$ref": "#/$defs/canonicalRef" } }
+        "journeyRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "status": {
+          "enum": [
+            "proposed",
+            "active",
+            "paused",
+            "completed",
+            "abandoned"
+          ]
+        },
+        "frontier": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/canonicalRef"
+          }
+        }
       },
       "additionalProperties": false
     },
     "journeyReading": {
       "type": "object",
-      "required": ["contract", "provenance", "journeyRef", "revision", "projectRef", "relatedProjects", "commission", "status", "frontier", "participants", "flowRefs", "runRefs", "agentSessionRefs", "activityRefs", "returns", "recognitions", "materialContextRefs", "routineInvocationRefs", "startedAt", "completedAt"],
+      "required": [
+        "contract",
+        "provenance",
+        "journeyRef",
+        "revision",
+        "projectRef",
+        "relatedProjects",
+        "commission",
+        "status",
+        "frontier",
+        "participants",
+        "flowRefs",
+        "runRefs",
+        "agentSessionRefs",
+        "activityRefs",
+        "returns",
+        "recognitions",
+        "materialContextRefs",
+        "routineInvocationRefs",
+        "startedAt",
+        "completedAt"
+      ],
       "properties": {
-        "contract": { "const": "factory.journey-reading/v1" },
-        "provenance": { "$ref": "#/$defs/provenance" },
-        "journeyRef": { "$ref": "#/$defs/canonicalRef" },
-        "revision": { "$ref": "#/$defs/revision" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "relatedProjects": { "type": "array" },
-        "commission": { "type": "object" },
-        "status": { "type": "string" },
-        "frontier": { "type": "string" },
-        "participants": { "type": "array" },
-        "flowRefs": { "type": "array" },
-        "runRefs": { "type": "array" },
-        "agentSessionRefs": { "type": "array" },
-        "activityRefs": { "type": "array" },
-        "returns": { "type": "array" },
-        "recognitions": { "type": "array" },
-        "materialContextRefs": { "type": "array" },
-        "routineInvocationRefs": { "$ref": "#/$defs/stringSet" },
-        "startedAt": { "type": "string" },
-        "completedAt": { "type": ["string", "null"] }
+        "contract": {
+          "const": "factory.journey-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "journeyRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "relatedProjects": {
+          "type": "array"
+        },
+        "commission": {
+          "type": "object"
+        },
+        "status": {
+          "type": "string"
+        },
+        "frontier": {
+          "type": "string"
+        },
+        "participants": {
+          "type": "array"
+        },
+        "flowRefs": {
+          "type": "array"
+        },
+        "runRefs": {
+          "type": "array"
+        },
+        "agentSessionRefs": {
+          "type": "array"
+        },
+        "activityRefs": {
+          "type": "array"
+        },
+        "returns": {
+          "type": "array"
+        },
+        "recognitions": {
+          "type": "array"
+        },
+        "materialContextRefs": {
+          "type": "array"
+        },
+        "routineInvocationRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "completedAt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "runReading": {
       "type": "object",
-      "required": ["contract", "provenance", "runRef", "revision", "projectRef", "owningJourneyRefs", "routineInvocationRefs", "lifecycle", "destination", "runMap", "thoughtAvailable", "thoughtRefs", "agencies", "executions", "evidence", "candidates", "humanRequests", "actions"],
+      "required": [
+        "contract",
+        "provenance",
+        "runRef",
+        "revision",
+        "projectRef",
+        "owningJourneyRefs",
+        "routineInvocationRefs",
+        "lifecycle",
+        "destination",
+        "runMap",
+        "thoughtAvailable",
+        "thoughtRefs",
+        "agencies",
+        "executions",
+        "evidence",
+        "candidates",
+        "humanRequests",
+        "actions"
+      ],
       "properties": {
-        "contract": { "const": "factory.run-reading/v1" },
-        "provenance": { "$ref": "#/$defs/provenance" },
-        "runRef": { "$ref": "#/$defs/canonicalRef" },
-        "revision": { "$ref": "#/$defs/revision" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "owningJourneyRefs": { "type": "array" },
-        "routineInvocationRefs": { "$ref": "#/$defs/stringSet" },
-        "lifecycle": { "type": "string" },
-        "destination": { "type": "string" },
-        "runMap": { "type": "object" },
-        "thoughtAvailable": { "type": "boolean" },
-        "thoughtRefs": { "type": "array" },
-        "agencies": { "type": "array" },
-        "executions": { "type": "array" },
-        "evidence": { "type": "array" },
-        "candidates": { "type": "array" },
-        "humanRequests": { "type": "array" },
-        "actions": { "type": "array" }
+        "contract": {
+          "const": "factory.run-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        },
+        "runRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "revision": {
+          "$ref": "#/$defs/revision"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "owningJourneyRefs": {
+          "type": "array"
+        },
+        "routineInvocationRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "lifecycle": {
+          "type": "string"
+        },
+        "destination": {
+          "type": "string"
+        },
+        "runMap": {
+          "type": "object"
+        },
+        "thoughtAvailable": {
+          "type": "boolean"
+        },
+        "thoughtRefs": {
+          "type": "array"
+        },
+        "agencies": {
+          "type": "array"
+        },
+        "executions": {
+          "type": "array"
+        },
+        "evidence": {
+          "type": "array"
+        },
+        "candidates": {
+          "type": "array"
+        },
+        "humanRequests": {
+          "type": "array"
+        },
+        "actions": {
+          "type": "array"
+        },
+        "nativeAttempts": {
+          "$ref": "#/$defs/nativeAttempts"
+        },
+        "flowAssociations": {
+          "type": "array",
+          "items": {
+            "$ref": "https://github.com/EpiLogos/agent-system-design/contracts/factory/developmental-mutation.schema.json#/$defs/runFlowAssociation"
+          }
+        }
       },
       "additionalProperties": false
     },
     "stringSet": {
       "type": "array",
-      "items": { "type": "string", "minLength": 1 },
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
       "uniqueItems": true
     },
     "canonicalRefSet": {
       "type": "array",
-      "items": { "$ref": "#/$defs/canonicalRef" },
+      "items": {
+        "$ref": "#/$defs/canonicalRef"
+      },
       "uniqueItems": true
     },
     "workflowUnitRefSet": {
       "type": "array",
-      "items": { "$ref": "#/$defs/workflowUnitRef" },
+      "items": {
+        "$ref": "#/$defs/workflowUnitRef"
+      },
       "uniqueItems": true
     },
     "workflowUnitProvenance": {
       "type": "object",
-      "required": ["owner", "buildStateRevision", "sourceRef", "sourceRevision", "sourceDigest", "identityAlgorithm"],
+      "required": [
+        "owner",
+        "buildStateRevision",
+        "sourceRef",
+        "sourceRevision",
+        "sourceDigest",
+        "identityAlgorithm"
+      ],
       "properties": {
-        "owner": { "const": "factory" },
-        "buildStateRevision": { "$ref": "#/$defs/revision" },
-        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
-        "sourceRevision": { "type": "string", "minLength": 1 },
-        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "identityAlgorithm": { "const": "factory.workflow-unit.identity.blake3-ulid/v1" }
+        "owner": {
+          "const": "factory"
+        },
+        "buildStateRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "sourceRef": {
+          "$ref": "#/$defs/workflowSourceRef"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "identityAlgorithm": {
+          "const": "factory.workflow-unit.identity.blake3-ulid/v1"
+        }
       },
       "additionalProperties": false
     },
     "workflowSourceBasis": {
       "type": "object",
-      "required": ["sourceRef", "sourceRevision", "sourceDigest"],
+      "required": [
+        "sourceRef",
+        "sourceRevision",
+        "sourceDigest"
+      ],
       "properties": {
-        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
-        "sourceRevision": { "type": "string", "minLength": 1 },
-        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        "sourceRef": {
+          "$ref": "#/$defs/workflowSourceRef"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitListProvenance": {
       "type": "object",
-      "required": ["owner", "buildStateRevision", "sourceBases"],
+      "required": [
+        "owner",
+        "buildStateRevision",
+        "sourceBases"
+      ],
       "properties": {
-        "owner": { "const": "factory" },
-        "buildStateRevision": { "$ref": "#/$defs/revision" },
+        "owner": {
+          "const": "factory"
+        },
+        "buildStateRevision": {
+          "$ref": "#/$defs/revision"
+        },
         "sourceBases": {
           "type": "array",
-          "items": { "$ref": "#/$defs/workflowSourceBasis" }
+          "items": {
+            "$ref": "#/$defs/workflowSourceBasis"
+          }
         }
       },
       "additionalProperties": false
     },
     "agentRequirements": {
       "type": "object",
-      "required": ["agentRefs", "agentSetRefs", "agencyRefs"],
+      "required": [
+        "agentRefs",
+        "agentSetRefs",
+        "agencyRefs"
+      ],
       "properties": {
-        "agentRefs": { "$ref": "#/$defs/stringSet" },
-        "agentSetRefs": { "$ref": "#/$defs/stringSet" },
-        "agencyRefs": { "$ref": "#/$defs/stringSet" }
+        "agentRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "agentSetRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "agencyRefs": {
+          "$ref": "#/$defs/stringSet"
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitRunCorrelation": {
       "type": "object",
-      "required": ["runRef", "runRevision", "runMapAddress", "topologyRevision", "journeyRefs"],
+      "required": [
+        "runRef",
+        "runRevision",
+        "runMapAddress",
+        "topologyRevision",
+        "journeyRefs"
+      ],
       "properties": {
-        "runRef": { "$ref": "#/$defs/runRef" },
-        "runRevision": { "$ref": "#/$defs/revision" },
-        "runMapAddress": { "type": "string", "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}/map$" },
-        "topologyRevision": { "$ref": "#/$defs/revision" },
-        "journeyRefs": { "$ref": "#/$defs/canonicalRefSet" }
+        "runRef": {
+          "$ref": "#/$defs/runRef"
+        },
+        "runRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "runMapAddress": {
+          "type": "string",
+          "pattern": "^run:[0-7][0-9A-HJKMNP-TV-Z]{25}/map$"
+        },
+        "topologyRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "journeyRefs": {
+          "$ref": "#/$defs/canonicalRefSet"
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitCurrentCorrelation": {
       "type": "object",
-      "required": ["runJourneyStatus", "runJourneyBasis", "runs", "lowerCorrelationStatus", "agencyRefs", "executionRefs", "telemetryRefs"],
+      "required": [
+        "runJourneyStatus",
+        "runJourneyBasis",
+        "runs",
+        "lowerCorrelationStatus",
+        "agencyRefs",
+        "executionRefs",
+        "telemetryRefs"
+      ],
       "properties": {
-        "runJourneyStatus": { "enum": ["owner-established", "absent"] },
-        "runJourneyBasis": { "type": "string", "minLength": 1 },
-        "runs": { "type": "array", "items": { "$ref": "#/$defs/workflowUnitRunCorrelation" } },
-        "lowerCorrelationStatus": { "enum": ["owner-established", "not-owner-established"] },
-        "agencyRefs": { "type": ["array", "null"], "items": { "type": "string" } },
-        "executionRefs": { "type": ["array", "null"], "items": { "type": "string" } },
-        "telemetryRefs": { "type": ["array", "null"], "items": { "type": "string" } }
+        "runJourneyStatus": {
+          "enum": [
+            "owner-established",
+            "absent"
+          ]
+        },
+        "runJourneyBasis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "runs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowUnitRunCorrelation"
+          }
+        },
+        "lowerCorrelationStatus": {
+          "enum": [
+            "owner-established",
+            "not-owner-established"
+          ]
+        },
+        "agencyRefs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "executionRefs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "telemetryRefs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitSummary": {
       "type": "object",
-      "required": ["workflowUnitRef", "locator", "key", "workflowKey", "sourceRef", "sourceRevision", "sourceDigest", "subjectRef", "basisRevision", "currentCorrelation"],
+      "required": [
+        "workflowUnitRef",
+        "locator",
+        "key",
+        "workflowKey",
+        "sourceRef",
+        "sourceRevision",
+        "sourceDigest",
+        "subjectRef",
+        "basisRevision",
+        "currentCorrelation"
+      ],
       "properties": {
-        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
-        "locator": { "type": "string", "minLength": 1 },
-        "key": { "type": "string", "minLength": 1 },
-        "workflowKey": { "type": "string", "minLength": 1 },
-        "sourceRef": { "$ref": "#/$defs/workflowSourceRef" },
-        "sourceRevision": { "type": "string", "minLength": 1 },
-        "sourceDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-        "subjectRef": { "$ref": "#/$defs/canonicalRef" },
-        "basisRevision": { "type": "string", "minLength": 1 },
-        "currentCorrelation": { "$ref": "#/$defs/workflowUnitCurrentCorrelation" }
+        "workflowUnitRef": {
+          "$ref": "#/$defs/workflowUnitRef"
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceRef": {
+          "$ref": "#/$defs/workflowSourceRef"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sourceDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "subjectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "basisRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currentCorrelation": {
+          "$ref": "#/$defs/workflowUnitCurrentCorrelation"
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitListReading": {
       "type": "object",
-      "required": ["contract", "provenance", "projectRef", "runFilter", "units"],
+      "required": [
+        "contract",
+        "provenance",
+        "projectRef",
+        "runFilter",
+        "units"
+      ],
       "properties": {
-        "contract": { "const": "factory.workflow-unit-list-reading/v1" },
-        "provenance": { "$ref": "#/$defs/workflowUnitListProvenance" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "runFilter": { "oneOf": [{ "$ref": "#/$defs/runRef" }, { "type": "null" }] },
-        "units": { "type": "array", "items": { "$ref": "#/$defs/workflowUnitSummary" } }
+        "contract": {
+          "const": "factory.workflow-unit-list-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/workflowUnitListProvenance"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "runFilter": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/runRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "units": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowUnitSummary"
+          }
+        }
       },
       "additionalProperties": false
     },
     "workflowBarrierRelation": {
       "type": "object",
-      "required": ["barrierKey", "relation"],
+      "required": [
+        "barrierKey",
+        "relation"
+      ],
       "properties": {
-        "barrierKey": { "type": "string", "minLength": 1 },
-        "relation": { "enum": ["awaited-by-barrier", "released-by-barrier"] }
+        "barrierKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation": {
+          "enum": [
+            "awaited-by-barrier",
+            "released-by-barrier"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "workflowNestingRelations": {
       "type": "object",
-      "required": ["parentUnitRefs", "childUnitRefs"],
+      "required": [
+        "parentUnitRefs",
+        "childUnitRefs"
+      ],
       "properties": {
-        "parentUnitRefs": { "$ref": "#/$defs/workflowUnitRefSet" },
-        "childUnitRefs": { "$ref": "#/$defs/workflowUnitRefSet" }
+        "parentUnitRefs": {
+          "$ref": "#/$defs/workflowUnitRefSet"
+        },
+        "childUnitRefs": {
+          "$ref": "#/$defs/workflowUnitRefSet"
+        }
       },
       "additionalProperties": false
     },
     "workflowReturnRequirement": {
       "type": "object",
-      "required": ["contract", "address"],
+      "required": [
+        "contract",
+        "address"
+      ],
       "properties": {
-        "contract": { "type": "string", "minLength": 1 },
-        "address": { "type": "string", "minLength": 1 }
+        "contract": {
+          "type": "string",
+          "minLength": 1
+        },
+        "address": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "workflowUnitReading": {
       "type": "object",
-      "required": ["contract", "provenance", "projectRef", "workflowUnitRef", "locator", "key", "workflowKey", "developmentalConcern", "subjectRef", "basisRevision", "requiredDifference", "requiredReturn", "requiredVerification", "agentRequirements", "praxisRefs", "capabilityRefs", "dependencies", "independenceFrom", "barrierRelations", "nesting", "permittedEffects", "stopConditions", "escalationConditions", "currentCorrelation"],
+      "required": [
+        "contract",
+        "provenance",
+        "projectRef",
+        "workflowUnitRef",
+        "locator",
+        "key",
+        "workflowKey",
+        "developmentalConcern",
+        "subjectRef",
+        "basisRevision",
+        "requiredDifference",
+        "requiredReturn",
+        "requiredVerification",
+        "agentRequirements",
+        "praxisRefs",
+        "capabilityRefs",
+        "dependencies",
+        "independenceFrom",
+        "barrierRelations",
+        "nesting",
+        "permittedEffects",
+        "stopConditions",
+        "escalationConditions",
+        "currentCorrelation"
+      ],
       "properties": {
-        "contract": { "const": "factory.workflow-unit-reading/v1" },
-        "provenance": { "$ref": "#/$defs/workflowUnitProvenance" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
-        "locator": { "type": "string", "minLength": 1 },
-        "key": { "type": "string", "minLength": 1 },
-        "workflowKey": { "type": "string", "minLength": 1 },
-        "developmentalConcern": { "type": "string", "minLength": 1 },
-        "subjectRef": { "$ref": "#/$defs/canonicalRef" },
-        "basisRevision": { "type": "string", "minLength": 1 },
-        "requiredDifference": { "type": "string", "minLength": 1 },
-        "requiredReturn": { "$ref": "#/$defs/workflowReturnRequirement" },
-        "requiredVerification": { "$ref": "#/$defs/stringSet" },
-        "agentRequirements": { "$ref": "#/$defs/agentRequirements" },
-        "praxisRefs": { "$ref": "#/$defs/stringSet" },
-        "capabilityRefs": { "$ref": "#/$defs/stringSet" },
-        "dependencies": { "$ref": "#/$defs/workflowUnitRefSet" },
-        "independenceFrom": { "$ref": "#/$defs/workflowUnitRefSet" },
-        "barrierRelations": { "type": "array", "items": { "$ref": "#/$defs/workflowBarrierRelation" } },
-        "nesting": { "$ref": "#/$defs/workflowNestingRelations" },
-        "permittedEffects": { "$ref": "#/$defs/stringSet" },
-        "stopConditions": { "type": "string", "minLength": 1 },
-        "escalationConditions": { "type": "string", "minLength": 1 },
-        "currentCorrelation": { "$ref": "#/$defs/workflowUnitCurrentCorrelation" }
+        "contract": {
+          "const": "factory.workflow-unit-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/workflowUnitProvenance"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "workflowUnitRef": {
+          "$ref": "#/$defs/workflowUnitRef"
+        },
+        "locator": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workflowKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "developmentalConcern": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subjectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "basisRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredDifference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "requiredReturn": {
+          "$ref": "#/$defs/workflowReturnRequirement"
+        },
+        "requiredVerification": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "agentRequirements": {
+          "$ref": "#/$defs/agentRequirements"
+        },
+        "praxisRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "capabilityRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "dependencies": {
+          "$ref": "#/$defs/workflowUnitRefSet"
+        },
+        "independenceFrom": {
+          "$ref": "#/$defs/workflowUnitRefSet"
+        },
+        "barrierRelations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/workflowBarrierRelation"
+          }
+        },
+        "nesting": {
+          "$ref": "#/$defs/workflowNestingRelations"
+        },
+        "permittedEffects": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "stopConditions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "escalationConditions": {
+          "type": "string",
+          "minLength": 1
+        },
+        "currentCorrelation": {
+          "$ref": "#/$defs/workflowUnitCurrentCorrelation"
+        }
       },
       "additionalProperties": false
     },
     "telemetryOwner": {
-      "enum": ["factory", "central", "actuation", "aikit", "workcell"]
+      "enum": [
+        "factory",
+        "central",
+        "actuation",
+        "aikit",
+        "workcell"
+      ]
     },
     "observationStanding": {
-      "enum": ["observed", "provider-reported", "normalized-from-native", "derived", "estimated"]
+      "enum": [
+        "observed",
+        "provider-reported",
+        "normalized-from-native",
+        "derived",
+        "estimated"
+      ]
     },
     "revisionedOwnerRef": {
       "type": "object",
-      "required": ["owner", "ref", "revision", "standing"],
+      "required": [
+        "owner",
+        "ref",
+        "revision",
+        "standing"
+      ],
       "properties": {
-        "owner": { "$ref": "#/$defs/telemetryOwner" },
-        "ref": { "type": "string", "minLength": 1 },
-        "revision": { "type": "string", "minLength": 1 },
-        "standing": { "$ref": "#/$defs/observationStanding" },
-        "modelUsage": { "$ref": "#/$defs/actuationModelUsageObservation" },
-        "resourceUsage": { "$ref": "#/$defs/workcellResourceUsageObservation" },
-        "contractSchemaDigest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+        "owner": {
+          "$ref": "#/$defs/telemetryOwner"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standing": {
+          "$ref": "#/$defs/observationStanding"
+        },
+        "modelUsage": {
+          "$ref": "#/$defs/actuationModelUsageObservation"
+        },
+        "resourceUsage": {
+          "$ref": "#/$defs/workcellResourceUsageObservation"
+        },
+        "contractSchemaDigest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
       },
       "additionalProperties": false
     },
     "modelUsageStanding": {
-      "enum": ["provider-reported", "observed", "normalized-from-native", "derived", "estimated", "unavailable", "not-reported"]
+      "enum": [
+        "provider-reported",
+        "observed",
+        "normalized-from-native",
+        "derived",
+        "estimated",
+        "unavailable",
+        "not-reported"
+      ]
     },
     "modelUsageIdentity": {
-      "type": "object", "required": ["standing"], "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "standing"
+      ],
+      "additionalProperties": false,
       "properties": {
-        "standing": { "$ref": "#/$defs/modelUsageStanding" }, "ref": { "type": "string", "minLength": 1 },
-        "name": { "type": "string", "minLength": 1 }, "revision": { "type": "string", "minLength": 1 }, "variant": { "type": "string", "minLength": 1 }
+        "standing": {
+          "$ref": "#/$defs/modelUsageStanding"
+        },
+        "ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "variant": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "actuationModelUsageObservation": {
-      "type": "object", "additionalProperties": false,
-      "required": ["schema", "usage_ref", "actuation_ref", "invocation_ref", "correlation", "provider", "model", "tokens", "cache", "timing", "cost", "outcome", "provenance"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "usage_ref",
+        "actuation_ref",
+        "invocation_ref",
+        "correlation",
+        "provider",
+        "model",
+        "tokens",
+        "cache",
+        "timing",
+        "cost",
+        "outcome",
+        "provenance"
+      ],
       "properties": {
-        "schema": { "const": "actuation.model-usage/v1" },
-        "usage_ref": { "type": "string", "minLength": 1 }, "actuation_ref": { "type": "string", "minLength": 1 }, "invocation_ref": { "type": "string", "minLength": 1 },
+        "schema": {
+          "const": "actuation.model-usage/v1"
+        },
+        "usage_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actuation_ref": {
+          "type": "string",
+          "minLength": 1
+        },
+        "invocation_ref": {
+          "type": "string",
+          "minLength": 1
+        },
         "correlation": {
-          "type": "object", "additionalProperties": false,
+          "type": "object",
+          "additionalProperties": false,
           "properties": {
-            "activity_ref": { "type": "string", "minLength": 1 }, "agent_ref": { "type": "string", "minLength": 1 }, "agency_ref": { "type": "string", "minLength": 1 },
-            "agent_session_ref": { "type": "string", "minLength": 1 }, "harness_ref": { "type": "string", "minLength": 1 }, "body_ref": { "type": "string", "minLength": 1 },
-            "native_session_ref": { "type": "string", "minLength": 1 }, "external_refs": { "$ref": "#/$defs/stringSet" }
+            "activity_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agency_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "agent_session_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "harness_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "body_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "native_session_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "external_refs": {
+              "$ref": "#/$defs/stringSet"
+            }
           }
         },
-        "provider": { "$ref": "#/$defs/modelUsageIdentity" }, "model": { "$ref": "#/$defs/modelUsageIdentity" },
+        "provider": {
+          "$ref": "#/$defs/modelUsageIdentity"
+        },
+        "model": {
+          "$ref": "#/$defs/modelUsageIdentity"
+        },
         "tokens": {
-          "type": "object", "required": ["standing"], "additionalProperties": false,
-          "properties": { "standing": { "$ref": "#/$defs/modelUsageStanding" }, "input": { "type": "integer", "minimum": 0 }, "output": { "type": "integer", "minimum": 0 } }
+          "type": "object",
+          "required": [
+            "standing"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "standing": {
+              "$ref": "#/$defs/modelUsageStanding"
+            },
+            "input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         },
         "cache": {
-          "type": "object", "required": ["standing"], "additionalProperties": false,
-          "properties": { "standing": { "$ref": "#/$defs/modelUsageStanding" }, "read_input": { "type": "integer", "minimum": 0 }, "creation_input": { "type": "integer", "minimum": 0 }, "output": { "type": "integer", "minimum": 0 } }
+          "type": "object",
+          "required": [
+            "standing"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "standing": {
+              "$ref": "#/$defs/modelUsageStanding"
+            },
+            "read_input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "creation_input": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
         },
-        "usage_classes": { "type": "array", "items": {
-          "type": "object", "required": ["class", "quantity", "unit", "standing"], "additionalProperties": false,
-          "properties": { "class": { "type": "string", "minLength": 1 }, "quantity": { "type": "integer", "minimum": 0 }, "unit": { "type": "string", "minLength": 1 }, "standing": { "$ref": "#/$defs/modelUsageStanding" } }
-        } },
+        "usage_classes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "class",
+              "quantity",
+              "unit",
+              "standing"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "class": {
+                "type": "string",
+                "minLength": 1
+              },
+              "quantity": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unit": {
+                "type": "string",
+                "minLength": 1
+              },
+              "standing": {
+                "$ref": "#/$defs/modelUsageStanding"
+              }
+            }
+          }
+        },
         "timing": {
-          "type": "object", "required": ["latency"], "additionalProperties": false,
-          "properties": { "started_at": { "type": "string", "format": "date-time" }, "completed_at": { "type": "string", "format": "date-time" }, "latency": {
-            "type": "object", "required": ["standing"], "additionalProperties": false,
-            "properties": { "standing": { "$ref": "#/$defs/modelUsageStanding" }, "milliseconds": { "type": "number", "minimum": 0 } }
-          } }
+          "type": "object",
+          "required": [
+            "latency"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "started_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "completed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "latency": {
+              "type": "object",
+              "required": [
+                "standing"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "standing": {
+                  "$ref": "#/$defs/modelUsageStanding"
+                },
+                "milliseconds": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            }
+          }
         },
         "cost": {
-          "type": "object", "required": ["standing"], "additionalProperties": false,
-          "properties": { "standing": { "$ref": "#/$defs/modelUsageStanding" }, "amount": { "type": "number", "minimum": 0 }, "currency": { "type": "string", "minLength": 1 }, "pricing_basis": {
-            "type": "object", "required": ["source_ref", "revision", "effective_at"], "additionalProperties": false,
-            "properties": { "source_ref": { "type": "string", "minLength": 1 }, "revision": { "type": "string", "minLength": 1 }, "effective_at": { "type": "string", "format": "date-time" } }
-          } }
+          "type": "object",
+          "required": [
+            "standing"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "standing": {
+              "$ref": "#/$defs/modelUsageStanding"
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0
+            },
+            "currency": {
+              "type": "string",
+              "minLength": 1
+            },
+            "pricing_basis": {
+              "type": "object",
+              "required": [
+                "source_ref",
+                "revision",
+                "effective_at"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "source_ref": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "revision": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "effective_at": {
+                  "type": "string",
+                  "format": "date-time"
+                }
+              }
+            }
+          }
         },
         "outcome": {
-          "type": "object", "required": ["state", "standing"], "additionalProperties": false,
-          "properties": { "state": { "enum": ["completed", "partial", "failed", "cancelled", "interrupted", "unknown"] }, "standing": { "$ref": "#/$defs/modelUsageStanding" }, "reason": { "type": "string", "minLength": 1 } }
+          "type": "object",
+          "required": [
+            "state",
+            "standing"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "enum": [
+                "completed",
+                "partial",
+                "failed",
+                "cancelled",
+                "interrupted",
+                "unknown"
+              ]
+            },
+            "standing": {
+              "$ref": "#/$defs/modelUsageStanding"
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         },
         "provenance": {
-          "type": "object", "required": ["reporter_ref", "native_event_ref", "native_schema", "observed_at", "raw_evidence_refs"], "additionalProperties": false,
-          "properties": { "reporter_ref": { "type": "string", "minLength": 1 }, "native_event_ref": { "type": "string", "minLength": 1 }, "native_request_ref": { "type": "string", "minLength": 1 }, "native_schema": { "type": "string", "minLength": 1 }, "observed_at": { "type": "string", "format": "date-time" }, "raw_evidence_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } } }
+          "type": "object",
+          "required": [
+            "reporter_ref",
+            "native_event_ref",
+            "native_schema",
+            "observed_at",
+            "raw_evidence_refs"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "reporter_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "native_event_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "native_request_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "native_schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "observed_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "raw_evidence_refs": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         },
-        "provider_facts": { "type": "object", "propertyNames": { "enum": ["service_tier", "speed", "inference_geo"] }, "additionalProperties": { "type": ["string", "number", "boolean", "null"] } }
+        "provider_facts": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "service_tier",
+              "speed",
+              "inference_geo"
+            ]
+          },
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        }
       }
     },
     "workcellMetric": {
       "oneOf": [
         {
-          "type": "object", "additionalProperties": false,
-          "required": ["standing", "value", "unit", "evidence"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "standing",
+            "value",
+            "unit",
+            "evidence"
+          ],
           "properties": {
-            "standing": { "enum": ["observed", "provider-reported", "sampled"] },
-            "value": { "type": "number", "minimum": 0 },
-            "unit": { "type": "string", "minLength": 1 },
-            "evidence": { "type": "string", "minLength": 1 }
+            "standing": {
+              "enum": [
+                "observed",
+                "provider-reported",
+                "sampled"
+              ]
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0
+            },
+            "unit": {
+              "type": "string",
+              "minLength": 1
+            },
+            "evidence": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         {
-          "type": "object", "additionalProperties": false,
-          "required": ["standing", "value", "unit", "derivation"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "standing",
+            "value",
+            "unit",
+            "derivation"
+          ],
           "properties": {
-            "standing": { "const": "derived" },
-            "value": { "type": "number", "minimum": 0 },
-            "unit": { "type": "string", "minLength": 1 },
-            "derivation": { "type": "string", "minLength": 1 }
+            "standing": {
+              "const": "derived"
+            },
+            "value": {
+              "type": "number",
+              "minimum": 0
+            },
+            "unit": {
+              "type": "string",
+              "minLength": 1
+            },
+            "derivation": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         },
         {
-          "type": "object", "additionalProperties": false,
-          "required": ["standing", "reason"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "standing",
+            "reason"
+          ],
           "properties": {
-            "standing": { "enum": ["unavailable", "unsupported"] },
-            "reason": { "type": "string", "minLength": 1 }
+            "standing": {
+              "enum": [
+                "unavailable",
+                "unsupported"
+              ]
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       ]
     },
     "workcellResourceUsageObservation": {
-      "type": "object", "additionalProperties": false,
-      "required": ["schema", "ok", "status", "usage_ref", "workcell_ref", "harness_instance_ref", "harness_ref", "material_binding", "interval", "provider", "metrics", "external_correlation_refs"],
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "ok",
+        "status",
+        "usage_ref",
+        "workcell_ref",
+        "harness_instance_ref",
+        "harness_ref",
+        "material_binding",
+        "interval",
+        "provider",
+        "metrics",
+        "external_correlation_refs"
+      ],
       "properties": {
-        "schema": { "const": "workcell.resource-usage/v1" },
-        "ok": { "const": true },
-        "status": { "const": "ok" },
-        "usage_ref": { "type": "string", "pattern": "^usage:[0-9a-f]{64}$" },
-        "workcell_ref": { "type": "string", "pattern": "^workcell:.+$" },
-        "harness_instance_ref": { "type": "string", "pattern": "^instance:.+$" },
-        "harness_ref": { "type": "string", "pattern": "^harness/.+$" },
+        "schema": {
+          "const": "workcell.resource-usage/v1"
+        },
+        "ok": {
+          "const": true
+        },
+        "status": {
+          "const": "ok"
+        },
+        "usage_ref": {
+          "type": "string",
+          "pattern": "^usage:[0-9a-f]{64}$"
+        },
+        "workcell_ref": {
+          "type": "string",
+          "pattern": "^workcell:.+$"
+        },
+        "harness_instance_ref": {
+          "type": "string",
+          "pattern": "^instance:.+$"
+        },
+        "harness_ref": {
+          "type": "string",
+          "pattern": "^harness/.+$"
+        },
         "material_binding": {
-          "type": "object", "additionalProperties": false,
-          "required": ["kind", "pid", "process_start_marker", "executable", "instance_evidence_grade", "instance_seams"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "pid",
+            "process_start_marker",
+            "executable",
+            "instance_evidence_grade",
+            "instance_seams"
+          ],
           "properties": {
-            "kind": { "const": "process" },
-            "pid": { "type": "integer", "minimum": 1 },
-            "process_start_marker": { "type": "string", "minLength": 1 },
+            "kind": {
+              "const": "process"
+            },
+            "pid": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "process_start_marker": {
+              "type": "string",
+              "minLength": 1
+            },
             "executable": {
-              "type": "object", "additionalProperties": false,
-              "required": ["path", "sha256"],
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "path",
+                "sha256"
+              ],
               "properties": {
-                "path": { "type": "string", "minLength": 1 },
-                "sha256": { "type": "string", "minLength": 1 }
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "sha256": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             },
-            "instance_evidence_grade": { "enum": ["live-pid", "gateway-confirmed"] },
-            "instance_seams": { "type": "array" }
+            "instance_evidence_grade": {
+              "enum": [
+                "live-pid",
+                "gateway-confirmed"
+              ]
+            },
+            "instance_seams": {
+              "type": "array"
+            }
           }
         },
         "interval": {
-          "type": "object", "additionalProperties": false,
-          "required": ["started_at", "ended_at", "duration_ms", "requested_duration_ms"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "started_at",
+            "ended_at",
+            "duration_ms",
+            "requested_duration_ms"
+          ],
           "properties": {
-            "started_at": { "type": "string", "pattern": "^unix-ms:[0-9]+$" },
-            "ended_at": { "type": "string", "pattern": "^unix-ms:[0-9]+$" },
-            "duration_ms": { "type": "integer", "minimum": 0 },
-            "requested_duration_ms": { "type": "integer", "minimum": 0, "maximum": 60000 }
+            "started_at": {
+              "type": "string",
+              "pattern": "^unix-ms:[0-9]+$"
+            },
+            "ended_at": {
+              "type": "string",
+              "pattern": "^unix-ms:[0-9]+$"
+            },
+            "duration_ms": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "requested_duration_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 60000
+            }
           }
         },
         "provider": {
-          "type": "object", "additionalProperties": false,
-          "required": ["provider_ref", "source", "platform", "collection", "raw_native_refs", "privacy"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider_ref",
+            "source",
+            "platform",
+            "collection",
+            "raw_native_refs",
+            "privacy"
+          ],
           "properties": {
-            "provider_ref": { "type": "string", "minLength": 1 },
-            "source": { "type": "string", "minLength": 1 },
-            "platform": { "type": "string", "minLength": 1 },
-            "collection": { "const": "bounded-on-demand" },
-            "raw_native_refs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+            "provider_ref": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "platform": {
+              "type": "string",
+              "minLength": 1
+            },
+            "collection": {
+              "const": "bounded-on-demand"
+            },
+            "raw_native_refs": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
             "privacy": {
-              "type": "object", "additionalProperties": false,
-              "required": ["argv_collected", "environment_collected"],
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "argv_collected",
+                "environment_collected"
+              ],
               "properties": {
-                "argv_collected": { "const": false },
-                "environment_collected": { "const": false }
+                "argv_collected": {
+                  "const": false
+                },
+                "environment_collected": {
+                  "const": false
+                }
               }
             }
           }
         },
         "metrics": {
-          "type": "object", "additionalProperties": false,
-          "required": ["cpu_time", "cpu_utilisation", "memory_rss", "memory_peak_rss", "gpu_utilisation", "vram", "network_bytes", "storage_io_bytes"],
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cpu_time",
+            "cpu_utilisation",
+            "memory_rss",
+            "memory_peak_rss",
+            "gpu_utilisation",
+            "vram",
+            "network_bytes",
+            "storage_io_bytes"
+          ],
           "properties": {
-            "cpu_time": { "$ref": "#/$defs/workcellMetric" },
-            "cpu_utilisation": { "$ref": "#/$defs/workcellMetric" },
-            "memory_rss": { "$ref": "#/$defs/workcellMetric" },
-            "memory_peak_rss": { "$ref": "#/$defs/workcellMetric" },
-            "gpu_utilisation": { "$ref": "#/$defs/workcellMetric" },
-            "vram": { "$ref": "#/$defs/workcellMetric" },
-            "network_bytes": { "$ref": "#/$defs/workcellMetric" },
-            "storage_io_bytes": { "$ref": "#/$defs/workcellMetric" }
+            "cpu_time": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "cpu_utilisation": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "memory_rss": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "memory_peak_rss": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "gpu_utilisation": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "vram": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "network_bytes": {
+              "$ref": "#/$defs/workcellMetric"
+            },
+            "storage_io_bytes": {
+              "$ref": "#/$defs/workcellMetric"
+            }
           }
         },
-        "external_correlation_refs": { "$ref": "#/$defs/stringSet" }
+        "external_correlation_refs": {
+          "$ref": "#/$defs/stringSet"
+        }
       }
     },
     "telemetryLink": {
       "type": "object",
-      "required": ["owner", "availability", "observations"],
+      "required": [
+        "owner",
+        "availability",
+        "observations"
+      ],
       "properties": {
-        "owner": { "$ref": "#/$defs/telemetryOwner" },
-        "availability": { "enum": ["available", "unavailable", "unsupported"] },
-        "observations": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
-        "reason": { "type": "string", "minLength": 1 }
+        "owner": {
+          "$ref": "#/$defs/telemetryOwner"
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "unsupported"
+          ]
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/revisionedOwnerRef"
+          }
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "carrier": {
       "type": "object",
-      "required": ["mechanism", "carrierRef", "determinationRef", "source"],
+      "required": [
+        "mechanism",
+        "carrierRef",
+        "determinationRef",
+        "source"
+      ],
       "properties": {
-        "mechanism": { "enum": ["native-harness", "provider-subagent", "provider-team", "acp", "a2a", "aikit-gateway", "persistent-agent", "shared-field", "source-proven-adapter"] },
-        "carrierRef": { "type": "string", "minLength": 1 },
-        "determinationRef": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+        "mechanism": {
+          "enum": [
+            "native-harness",
+            "provider-subagent",
+            "provider-team",
+            "acp",
+            "a2a",
+            "aikit-gateway",
+            "persistent-agent",
+            "shared-field",
+            "source-proven-adapter"
+          ]
+        },
+        "carrierRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "determinationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/revisionedOwnerRef"
+        }
       },
       "additionalProperties": false
     },
     "temporalFact": {
       "type": "object",
-      "required": ["value", "source"],
+      "required": [
+        "value",
+        "source"
+      ],
       "properties": {
-        "value": { "type": "string", "minLength": 1 },
-        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+        "value": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "$ref": "#/$defs/revisionedOwnerRef"
+        }
       },
       "additionalProperties": false
     },
     "temporalCorrelation": {
       "type": "object",
-      "required": ["activityRefs", "sourceChanges", "dayRefs"],
+      "required": [
+        "activityRefs",
+        "sourceChanges",
+        "dayRefs"
+      ],
       "properties": {
-        "started": { "$ref": "#/$defs/temporalFact" },
-        "updated": { "$ref": "#/$defs/temporalFact" },
-        "completed": { "$ref": "#/$defs/temporalFact" },
-        "activityRefs": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
-        "flow": { "$ref": "#/$defs/revisionedOwnerRef" },
-        "changeHorizon": { "$ref": "#/$defs/revisionedOwnerRef" },
-        "sourceChanges": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } },
-        "dayRefs": { "type": "array", "items": { "$ref": "#/$defs/revisionedOwnerRef" } }
+        "started": {
+          "$ref": "#/$defs/temporalFact"
+        },
+        "updated": {
+          "$ref": "#/$defs/temporalFact"
+        },
+        "completed": {
+          "$ref": "#/$defs/temporalFact"
+        },
+        "activityRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/revisionedOwnerRef"
+          }
+        },
+        "flow": {
+          "$ref": "#/$defs/revisionedOwnerRef"
+        },
+        "changeHorizon": {
+          "$ref": "#/$defs/revisionedOwnerRef"
+        },
+        "sourceChanges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/revisionedOwnerRef"
+          }
+        },
+        "dayRefs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/revisionedOwnerRef"
+          }
+        }
       },
       "additionalProperties": false
     },
     "executionCondition": {
       "type": "object",
-      "required": ["agentRef", "agencyRef", "carrier", "surfaceRefs", "workcellBindingRefs"],
+      "required": [
+        "agentRef",
+        "agencyRef",
+        "carrier",
+        "surfaceRefs",
+        "workcellBindingRefs"
+      ],
       "properties": {
-        "agentRef": { "type": "string", "minLength": 1 },
-        "agencyRef": { "type": "string", "minLength": 1 },
-        "actuationRef": { "type": "string", "minLength": 1 },
-        "carrier": { "$ref": "#/$defs/carrier" },
-        "harnessRef": { "type": "string", "minLength": 1 },
-        "harnessCompositionRef": { "type": "string", "minLength": 1 },
-        "agentSessionRef": { "type": "string", "minLength": 1 },
-        "sessionSpaceRef": { "type": "string", "minLength": 1 },
-        "surfaceRefs": { "$ref": "#/$defs/stringSet" },
-        "workcellBindingRefs": { "$ref": "#/$defs/stringSet" }
+        "agentRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agencyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actuationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "carrier": {
+          "$ref": "#/$defs/carrier"
+        },
+        "harnessRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "harnessCompositionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agentSessionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sessionSpaceRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "surfaceRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "workcellBindingRefs": {
+          "$ref": "#/$defs/stringSet"
+        }
       },
       "additionalProperties": false
     },
     "handoff": {
       "type": "object",
-      "required": ["fromAgencyRef", "delegationRef", "returnRef", "messageRefs", "source"],
+      "required": [
+        "fromAgencyRef",
+        "delegationRef",
+        "returnRef",
+        "messageRefs",
+        "source"
+      ],
       "properties": {
-        "fromAgencyRef": { "type": "string", "minLength": 1 },
-        "delegationRef": { "type": "string", "minLength": 1 },
-        "returnRef": { "type": "string", "minLength": 1 },
-        "messageRefs": { "$ref": "#/$defs/stringSet" },
-        "source": { "$ref": "#/$defs/revisionedOwnerRef" }
+        "fromAgencyRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "delegationRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "returnRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "messageRefs": {
+          "$ref": "#/$defs/stringSet"
+        },
+        "source": {
+          "$ref": "#/$defs/revisionedOwnerRef"
+        }
       },
       "additionalProperties": false
     },
     "executionReturnState": {
       "type": "object",
-      "required": ["evidenceRefs"],
+      "required": [
+        "evidenceRefs"
+      ],
       "properties": {
-        "agencyReturnRef": { "type": "string", "minLength": 1 },
-        "agencyReturnState": { "type": "string", "minLength": 1 },
-        "evidenceRefs": { "$ref": "#/$defs/stringSet" }
+        "agencyReturnRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agencyReturnState": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidenceRefs": {
+          "$ref": "#/$defs/stringSet"
+        }
       },
       "additionalProperties": false
     },
     "executionTelemetryProvenance": {
       "type": "object",
-      "required": ["owner", "factoryStateRevision", "correlationRef", "source"],
+      "required": [
+        "owner",
+        "factoryStateRevision",
+        "correlationRef",
+        "source"
+      ],
       "properties": {
-        "owner": { "const": "factory" },
-        "factoryStateRevision": { "$ref": "#/$defs/revision" },
-        "correlationRef": { "$ref": "#/$defs/canonicalRef" },
-        "source": { "type": "string", "minLength": 1 }
+        "owner": {
+          "const": "factory"
+        },
+        "factoryStateRevision": {
+          "$ref": "#/$defs/revision"
+        },
+        "correlationRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        }
       },
       "additionalProperties": false
     },
     "executionTelemetryReading": {
       "type": "object",
-      "required": ["contract", "provenance", "telemetryRef", "projectRef", "runRef", "workflowUnitRef", "executionRef", "condition", "temporal", "modelUsage", "materialUsage", "usage", "returnState"],
+      "required": [
+        "contract",
+        "provenance",
+        "telemetryRef",
+        "projectRef",
+        "runRef",
+        "workflowUnitRef",
+        "executionRef",
+        "condition",
+        "temporal",
+        "modelUsage",
+        "materialUsage",
+        "usage",
+        "returnState"
+      ],
       "properties": {
-        "contract": { "const": "factory.execution-telemetry-reading/v1" },
-        "provenance": { "$ref": "#/$defs/executionTelemetryProvenance" },
-        "telemetryRef": { "$ref": "#/$defs/canonicalRef" },
-        "projectRef": { "$ref": "#/$defs/canonicalRef" },
-        "runRef": { "$ref": "#/$defs/runRef" },
-        "workflowUnitRef": { "$ref": "#/$defs/workflowUnitRef" },
-        "executionRef": { "type": "string", "minLength": 1 },
-        "condition": { "$ref": "#/$defs/executionCondition" },
-        "temporal": { "$ref": "#/$defs/temporalCorrelation" },
-        "modelUsage": { "$ref": "#/$defs/telemetryLink" },
-        "materialUsage": { "$ref": "#/$defs/telemetryLink" },
-        "usage": { "$ref": "#/$defs/executionUsage" },
-        "handoff": { "$ref": "#/$defs/handoff" },
-        "returnState": { "$ref": "#/$defs/executionReturnState" },
-        "gitBasis": { "$ref": "#/$defs/gitBasis" }
+        "contract": {
+          "const": "factory.execution-telemetry-reading/v1"
+        },
+        "provenance": {
+          "$ref": "#/$defs/executionTelemetryProvenance"
+        },
+        "telemetryRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "projectRef": {
+          "$ref": "#/$defs/canonicalRef"
+        },
+        "runRef": {
+          "$ref": "#/$defs/runRef"
+        },
+        "workflowUnitRef": {
+          "$ref": "#/$defs/workflowUnitRef"
+        },
+        "executionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "condition": {
+          "$ref": "#/$defs/executionCondition"
+        },
+        "temporal": {
+          "$ref": "#/$defs/temporalCorrelation"
+        },
+        "modelUsage": {
+          "$ref": "#/$defs/telemetryLink"
+        },
+        "materialUsage": {
+          "$ref": "#/$defs/telemetryLink"
+        },
+        "usage": {
+          "$ref": "#/$defs/executionUsage"
+        },
+        "handoff": {
+          "$ref": "#/$defs/handoff"
+        },
+        "returnState": {
+          "$ref": "#/$defs/executionReturnState"
+        },
+        "gitBasis": {
+          "$ref": "#/$defs/gitBasis"
+        }
       },
       "additionalProperties": false
     },
     "gitBasis": {
       "type": "object",
-      "required": ["repository", "baseHead", "worktreeClean"],
+      "required": [
+        "repository",
+        "baseHead",
+        "worktreeClean"
+      ],
       "properties": {
-        "repository": { "type": "string", "minLength": 1 },
-        "baseHead": { "type": "string", "minLength": 1 },
-        "branch": { "type": "string", "minLength": 1 },
-        "worktreeClean": { "type": ["boolean", "null"] }
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseHead": {
+          "type": "string",
+          "minLength": 1
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "worktreeClean": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
       },
       "additionalProperties": false
     },
     "executionUsage": {
       "description": "Factory-normalised model usage for one execution, summed over its Actuation actuation.model-usage/v1 observations. Missing is never zero: a value is null unless every observation reports it with an available standing.",
       "type": "object",
-      "required": ["contract", "executionRef", "telemetryRef", "availability", "observationRefs", "inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "cost", "startedAt", "endedAt"],
+      "required": [
+        "contract",
+        "executionRef",
+        "telemetryRef",
+        "availability",
+        "observationRefs",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens",
+        "cost",
+        "startedAt",
+        "endedAt"
+      ],
       "properties": {
-        "contract": { "const": "factory.execution-usage/v1" },
-        "executionRef": { "type": "string", "minLength": 1 },
-        "telemetryRef": { "type": "string", "minLength": 1 },
-        "availability": { "enum": ["available", "unavailable", "unsupported"] },
-        "reason": { "type": "string", "minLength": 1 },
-        "observationRefs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "usage_ref@revision of every summed owner observation" },
-        "inputTokens": { "type": ["integer", "null"], "minimum": 0 },
-        "outputTokens": { "type": ["integer", "null"], "minimum": 0 },
-        "cacheReadTokens": { "type": ["integer", "null"], "minimum": 0, "description": "Actuation cache.read_input" },
-        "cacheWriteTokens": { "type": ["integer", "null"], "minimum": 0, "description": "Actuation cache.creation_input" },
+        "contract": {
+          "const": "factory.execution-usage/v1"
+        },
+        "executionRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "telemetryRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "availability": {
+          "enum": [
+            "available",
+            "unavailable",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observationRefs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "usage_ref@revision of every summed owner observation"
+        },
+        "inputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "outputTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "cacheReadTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.read_input"
+        },
+        "cacheWriteTokens": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Actuation cache.creation_input"
+        },
         "cost": {
           "anyOf": [
-            { "type": "null" },
+            {
+              "type": "null"
+            },
             {
               "type": "object",
-              "required": ["amount", "currency"],
-              "properties": { "amount": { "type": "number", "minimum": 0 }, "currency": { "type": "string", "minLength": 1 } },
+              "required": [
+                "amount",
+                "currency"
+              ],
+              "properties": {
+                "amount": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "currency": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
               "additionalProperties": false
             }
           ]
         },
-        "startedAt": { "type": ["string", "null"], "description": "earliest reported start (RFC 3339)" },
-        "endedAt": { "type": ["string", "null"], "description": "latest reported completion (RFC 3339)" }
+        "startedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "earliest reported start (RFC 3339)"
+        },
+        "endedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "latest reported completion (RFC 3339)"
+        }
       },
       "additionalProperties": false
     }

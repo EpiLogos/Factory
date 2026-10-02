@@ -4,10 +4,10 @@
 //! current source remains `FactoryDevelopmentalState.workflow_sources`.
 
 use crate::attempt_runtime::{
-    apply_operation, reading_for, validate_action_request, validate_state,
-    FactoryAttemptActionReceipt, FactoryAttemptActionRequest, FactoryAttemptError,
-    FactoryAttemptOperation, FactoryAttemptReading, FactoryAttemptRecord, FactoryAttemptSeed,
-    PersistedAttemptAction, StoredAttemptState, FACTORY_ATTEMPT_ACTION, FACTORY_ATTEMPT_STATE,
+    reading_for, validate_action_request, validate_state, FactoryAttemptActionReceipt,
+    FactoryAttemptActionRequest, FactoryAttemptError, FactoryAttemptOperation,
+    FactoryAttemptReading, FactoryAttemptRecord, FactoryAttemptSeed, PersistedAttemptAction,
+    StoredAttemptState, FACTORY_ATTEMPT_ACTION, FACTORY_ATTEMPT_STATE,
 };
 use crate::build::FactoryBuildState;
 use crate::core::run::{Project, RunRef};
@@ -113,7 +113,14 @@ impl FileAttemptStore {
             .attempt_states
             .insert(run_ref.clone(), FactoryRunAttempts::from_view(&view));
         FactoryDevelopmentalFileProvider::create_new(&path, native)
-            .map_err(|error| invalid(&error.to_string()))?;
+            .map_err(|error| {
+            let legacy_message = error.to_string();
+            match error {
+                crate::developmental_read::FactoryDevelopmentalProviderError::PublicationUncertain(cause) =>
+                    FactoryAttemptError::PublicationUncertain { cause, legacy_message },
+                other => invalid(&other.to_string()),
+            }
+        })?;
         Ok(Self { path, run_ref })
     }
 
@@ -251,6 +258,11 @@ impl FileAttemptStore {
                 stored: self.run_ref.to_string(),
             });
         }
+        // Central owns receiving/review and releases its locks before this
+        // canonical Factory transaction begins. Caller JSON cannot construct
+        // the private admission witness or substitute a process endpoint.
+        let native_admission = crate::attempt_native_receiving::prefetch(&self.path, &request)
+            .map_err(|error| invalid(&error))?;
         let request_digest = blake3::hash(&serde_json::to_vec(&request)?)
             .to_hex()
             .to_string();
@@ -266,7 +278,9 @@ impl FileAttemptStore {
                 if view.revision != request.expected_revision {
                     return Err(FactoryAttemptError::RevisionConflict { expected: request.expected_revision, actual: view.revision });
                 }
-                if requires_current_source(&request.operation) && !source_is_current(native, &view) {
+                let historical_intake = matches!(&request.operation, FactoryAttemptOperation::ReturnArtifact { .. })
+                    && supersession_basis(native, &view).is_some();
+                if requires_current_source(&request.operation) && !source_is_current(native, &view) && !historical_intake {
                     return Err(invalid("current authored source differs from retained attempt basis; explicit re-resolution is required"));
                 }
                 crate::attempt_application::validate_native_action(&reading_for(&view)?, &view.run, &request)?;
@@ -276,9 +290,25 @@ impl FileAttemptStore {
                 ).map_err(|error| invalid(&error))?;
                 let previous_revision = view.revision;
                 let previous_run_revision = view.run.revision();
-                let (operation, attempt_refs) = apply_operation(&mut view, request.operation.clone())?;
-                native.build.replace_attempt_run(previous_run_revision, view.run.clone())
-                    .map_err(|error| invalid(&error.to_string()))?;
+                if let Some(admission) = &native_admission {
+                    admission.validate(&request).map_err(|error| invalid(&error))?;
+                    let attempt = view.attempts.get_mut(&admission.attempt_ref)
+                        .ok_or_else(|| invalid("native receiving admission's exact attempt was replaced"))?;
+                    if attempt.observations.iter().any(|record| record.receipt_ref == admission.observation.receipt_ref) {
+                        return Err(invalid("native receiving admission receipt already exists outside this exact Action replay"));
+                    }
+                    attempt.observations.push(admission.observation.clone());
+                }
+                let (operation, attempt_refs, lifecycle_basis) = crate::attempt_lifecycle_provider::apply(
+                    native, &mut view, &request, native_admission.as_ref(),
+                )?;
+                if let Some(basis) = lifecycle_basis {
+                    native.build.replace_attempt_run_with_lifecycle_basis(previous_run_revision, view.run.clone(), basis)
+                        .map_err(|error| invalid(&error.to_string()))?;
+                } else {
+                    native.build.replace_attempt_run(previous_run_revision, view.run.clone())
+                        .map_err(|error| invalid(&error.to_string()))?;
+                }
                 view.revision = native.build.revision().get();
                 let receipt = FactoryAttemptActionReceipt {
                     contract: FACTORY_ATTEMPT_ACTION.into(), projection_ref: request.projection_ref.clone(),
@@ -307,7 +337,7 @@ impl FileAttemptStore {
     }
 }
 
-fn view_for(
+pub(crate) fn view_for(
     native: &FactoryDevelopmentalState,
     run_ref: &RunRef,
 ) -> Result<StoredAttemptState, FactoryAttemptError> {
@@ -333,14 +363,74 @@ fn view_for(
     Ok(view)
 }
 
-fn source_is_current(native: &FactoryDevelopmentalState, view: &StoredAttemptState) -> bool {
+pub(crate) fn source_is_current(
+    native: &FactoryDevelopmentalState,
+    view: &StoredAttemptState,
+) -> bool {
+    if native.developmental_mutations.iter().any(|record| matches!(
+        &record.request.mutation,
+        crate::commission::FactoryDevelopmentalMutation::ContinueCommission { predecessor_run_ref, continuation_relation, .. }
+            if predecessor_run_ref == view.run.reference() && continuation_relation.is_superseding_source()
+    )) { return false; }
     native.workflow_sources.iter().any(|source| {
         source.source == view.workflow_source.source
             && source.workflow_key == view.workflow_source.workflow_key
     })
 }
 
+/// Exact canonical continuation identities, derived for cleanup admission only.
+/// No supersession flag or copied successor state is persisted on the attempt.
+pub(crate) fn supersession_basis(
+    native: &FactoryDevelopmentalState,
+    view: &StoredAttemptState,
+) -> Option<std::collections::BTreeSet<String>> {
+    native.developmental_mutations.iter().find_map(|record| {
+        let crate::commission::FactoryDevelopmentalMutation::ContinueCommission {
+            journey_ref,
+            continuation_relation,
+            predecessor_run_ref,
+            predecessor_source_ref,
+            predecessor_source_revision,
+            predecessor_source_digest,
+            successor_run_ref,
+            ..
+        } = &record.request.mutation
+        else {
+            return None;
+        };
+        if !continuation_relation.is_superseding_source()
+            || predecessor_run_ref != view.run.reference()
+            || predecessor_source_ref != &view.workflow_source.source.reference
+            || predecessor_source_revision != &view.workflow_source.source.revision
+            || predecessor_source_digest != &view.workflow_source.source.digest
+        {
+            return None;
+        }
+        let link = native
+            .journeys
+            .iter()
+            .find(|journey| &journey.journey_ref == journey_ref)?
+            .runs
+            .iter()
+            .find(|link| &link.run_ref == successor_run_ref)?;
+        Some(std::collections::BTreeSet::from([
+            record.request.mutation_ref.clone(),
+            successor_run_ref.to_string(),
+            crate::commission_continuation::retained_source_basis_ref(
+                &record.request.mutation,
+                &link.basis_refs,
+            )
+            .ok()?,
+        ]))
+    })
+}
+
 fn requires_current_source(operation: &FactoryAttemptOperation) -> bool {
+    if matches!(operation, FactoryAttemptOperation::TransitionRun { command, .. }
+        if matches!(command.lifecycle, crate::core::run::RunLifecycle::Aborted | crate::core::run::RunLifecycle::Archived))
+    {
+        return false;
+    }
     matches!(
         operation,
         FactoryAttemptOperation::StartSerial { .. }
@@ -351,6 +441,9 @@ fn requires_current_source(operation: &FactoryAttemptOperation) -> bool {
             | FactoryAttemptOperation::RegisterIndependentReview { .. }
             | FactoryAttemptOperation::Synthesize { .. }
             | FactoryAttemptOperation::IncorporateLateResult { .. }
+            | FactoryAttemptOperation::RequestUnitDecision { .. }
+            | FactoryAttemptOperation::ResolveUnitDecision { .. }
+            | FactoryAttemptOperation::TransitionRun { .. }
     )
 }
 
@@ -361,5 +454,14 @@ fn store_error(error: FactoryAttemptError) -> ProjectDevelopmentStoreError {
     ProjectDevelopmentStoreError::Native(error.to_string())
 }
 fn native_error(error: ProjectDevelopmentStoreError) -> FactoryAttemptError {
-    invalid(&error.to_string())
+    let legacy_message = error.to_string();
+    match error {
+        ProjectDevelopmentStoreError::PublicationUncertain(cause) => {
+            FactoryAttemptError::PublicationUncertain {
+                cause,
+                legacy_message,
+            }
+        }
+        other => invalid(&other.to_string()),
+    }
 }

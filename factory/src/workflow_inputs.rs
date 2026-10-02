@@ -1,7 +1,7 @@
 //! Source-declared predecessor material on the existing native workflow and
 //! attempt. A dependency alone does not select or deliver a predecessor result.
 use crate::core::run::WorkflowUnitRef;
-use crate::orchestration::{ExecutableOrchestration, LegStatus, ReturnedArtifact};
+use crate::orchestration::{ExecutableOrchestration, ReturnedArtifact};
 use crate::workflow::CompiledWorkflowUnit;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -52,7 +52,8 @@ pub fn validate_selected_inputs(
         let leg = engine
             .leg(&input.predecessor)
             .ok_or("required predecessor has not started")?;
-        if leg.status != LegStatus::Returned || leg.execution_ref != input.execution_ref {
+        if !engine.is_current_return(&input.predecessor) || leg.execution_ref != input.execution_ref
+        {
             return Err("required predecessor has not returned on this exact current execution; failed, historical and late results cannot become current inputs".into());
         }
         if input.artifacts.is_empty() || input.artifacts.len() > 128 {
@@ -84,7 +85,7 @@ pub fn candidates(
         let leg=engine.leg(&input.predecessor);
         let artifacts=leg.map(|l|l.artifacts.iter().map(|a|json!({
             "artifact":a,
-            "current": l.status==LegStatus::Returned
+            "current": engine.is_current_return(&input.predecessor)
                 && a.producing_execution_ref==l.execution_ref
                 && engine.current_subject_revision(&a.subject_ref)==Some(a.subject_revision.as_str())
         })).collect::<Vec<_>>()).unwrap_or_default();

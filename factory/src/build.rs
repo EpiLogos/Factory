@@ -73,6 +73,12 @@ pub struct HumanRequestRecord {
     pub why_human: String,
     #[serde(default)]
     pub blocked_execution_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_decision_basis: Option<crate::run_lifecycle::UnitDecisionBasis>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_decision_response: Option<crate::run_lifecycle::UnitDecisionResponse>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_decision_retirement: Option<crate::run_lifecycle::UnitDecisionRetirement>,
     #[serde(default)]
     pub evidence_refs: Vec<String>,
 }
@@ -419,6 +425,63 @@ impl FactoryBuildState {
         self.bump_revision()
     }
 
+    pub(crate) fn human_requests_for_run(&self, run_ref: &RunRef) -> Vec<HumanRequestRecord> {
+        records_for_run(&self.human_requests, run_ref)
+    }
+
+    // The enclosing attempt transaction commits the single provider revision.
+    pub(crate) fn insert_unit_decision(
+        &mut self,
+        request: HumanRequestRecord,
+    ) -> Result<(), FactoryBuildError> {
+        self.ensure_run(&request.run_ref)?;
+        insert_unique(
+            &mut self.human_requests,
+            request.human_request_ref.clone(),
+            request,
+            "human request",
+        )
+    }
+
+    pub(crate) fn retire_unit_decision(
+        &mut self,
+        human_request_ref: &str,
+        retirement: crate::run_lifecycle::UnitDecisionRetirement,
+    ) -> Result<(), FactoryBuildError> {
+        let request = self
+            .human_requests
+            .get_mut(human_request_ref)
+            .ok_or_else(|| FactoryBuildError::SubjectNotFound(human_request_ref.into()))?;
+        if request.unit_decision_basis.is_none()
+            || request.unit_decision_response.is_some()
+            || request.unit_decision_retirement.is_some()
+        {
+            return Err(FactoryBuildError::ActionAlreadyApplied(
+                human_request_ref.into(),
+            ));
+        }
+        request.unit_decision_retirement = Some(retirement);
+        Ok(())
+    }
+
+    pub(crate) fn resolve_unit_decision(
+        &mut self,
+        human_request_ref: &str,
+        response: crate::run_lifecycle::UnitDecisionResponse,
+    ) -> Result<(), FactoryBuildError> {
+        let request = self
+            .human_requests
+            .get_mut(human_request_ref)
+            .ok_or_else(|| FactoryBuildError::SubjectNotFound(human_request_ref.into()))?;
+        if request.unit_decision_basis.is_none() || request.unit_decision_response.is_some() {
+            return Err(FactoryBuildError::ActionAlreadyApplied(
+                human_request_ref.into(),
+            ));
+        }
+        request.unit_decision_response = Some(response);
+        Ok(())
+    }
+
     /// Read-only lookups for the admission/validation paths.
     pub fn agency(&self, agency_ref: &str) -> Option<&AgencyRecord> {
         self.agencies.get(agency_ref)
@@ -479,6 +542,27 @@ impl FactoryBuildState {
         expected_revision: Revision,
         next: Run,
     ) -> Result<(), FactoryBuildError> {
+        self.replace_attempt_run_checked(expected_revision, next, None)
+    }
+
+    /// One owner Action may change ordinary topology and then reconcile its
+    /// derived lifecycle. The provider captures the intermediate native Run;
+    /// it is validated in memory and never becomes another persisted owner.
+    pub(crate) fn replace_attempt_run_with_lifecycle_basis(
+        &mut self,
+        expected_revision: Revision,
+        next: Run,
+        basis: Run,
+    ) -> Result<(), FactoryBuildError> {
+        self.replace_attempt_run_checked(expected_revision, next, Some(basis))
+    }
+
+    fn replace_attempt_run_checked(
+        &mut self,
+        expected_revision: Revision,
+        next: Run,
+        lifecycle_basis: Option<Run>,
+    ) -> Result<(), FactoryBuildError> {
         let reference = next.reference().clone();
         let current = self
             .runs
@@ -491,16 +575,29 @@ impl FactoryBuildState {
             }
             .into());
         }
-        if next.project_ref() != current.project_ref()
-            || next.destination() != current.destination()
-            || next.lifecycle() != current.lifecycle()
-            || next.write_authority() != current.write_authority()
-            || next.thought_field() != current.thought_field()
-            || next.revision().get() < current.revision().get()
-        {
-            return Err(RunContractError::CorruptRun.into());
+        let validate = |from: &Run, to: &Run| -> Result<(), FactoryBuildError> {
+            if to.reference() != from.reference()
+                || to.project_ref() != from.project_ref()
+                || to.destination() != from.destination()
+                || to.write_authority() != from.write_authority()
+                || to.thought_field() != from.thought_field()
+                || to.revision().get() < from.revision().get()
+            {
+                return Err(RunContractError::CorruptRun.into());
+            }
+            from.validate_lifecycle_successor(to)?;
+            to.validate()?;
+            Ok(())
+        };
+        if let Some(basis) = lifecycle_basis {
+            if basis.lifecycle() != current.lifecycle() {
+                return Err(RunContractError::CorruptRun.into());
+            }
+            validate(current, &basis)?;
+            validate(&basis, &next)?;
+        } else {
+            validate(current, &next)?;
         }
-        next.validate()?;
         let revision = self
             .revision
             .next()
@@ -537,6 +634,9 @@ impl FactoryBuildState {
             why_human: "The Candidate needs additional evidence before recognition can proceed."
                 .into(),
             blocked_execution_refs: Vec::new(),
+            unit_decision_basis: None,
+            unit_decision_response: None,
+            unit_decision_retirement: None,
             evidence_refs: candidate.evidence_refs.clone(),
         };
         self.human_requests
@@ -550,6 +650,16 @@ impl FactoryBuildState {
             .get(run_ref)
             .map(|_| ())
             .ok_or_else(|| FactoryBuildError::RunNotFound(run_ref.to_string()))
+    }
+
+    /// A typed owner context relation changes provider observation currency,
+    /// while the Run's topology/execution/source basis remains unchanged.
+    pub(crate) fn record_run_context_correlation(
+        &mut self,
+        run_ref: &RunRef,
+    ) -> Result<(), FactoryBuildError> {
+        self.ensure_run(run_ref)?;
+        self.bump_revision()
     }
 
     fn bump_revision(&mut self) -> Result<(), FactoryBuildError> {
@@ -628,6 +738,44 @@ pub struct FactoryBuildView {
     /// execution correlations; each entry says what is unknown as `null`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub execution_usage: Vec<crate::developmental_read::FactoryExecutionUsage>,
+    /// Canonical native attempts, joined once by the developmental owner.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_attempts: Option<crate::attempt_runtime::FactoryAttemptReading>,
+}
+
+impl FactoryBuildView {
+    /// Join the canonical reading once and preserve its admitted completion
+    /// and terminal history in the existing display vocabulary.
+    pub(crate) fn join_native_attempts(
+        &mut self,
+        reading: Option<crate::attempt_runtime::FactoryAttemptReading>,
+    ) -> Result<(), FactoryBuildError> {
+        if let Some(native) = &reading {
+            if native.run_ref.to_string() != self.run.run_ref {
+                return Err(FactoryBuildError::ProjectRunMismatch);
+            }
+            use crate::core::run::RunLifecycle;
+            if matches!(
+                native.lifecycle,
+                RunLifecycle::Finished | RunLifecycle::Archived
+            ) {
+                if native.lifecycle == RunLifecycle::Archived
+                    && native.archived_from == Some(RunLifecycle::Aborted)
+                {
+                    self.run.status = "fail".into();
+                    self.frontier.closure_state = Some("aborted".into());
+                } else if native.completion_verified {
+                    self.run.status = "success".into();
+                    self.frontier.closure_state = Some("closed".into());
+                } else {
+                    self.run.status = "blocked".into();
+                    self.frontier.closure_state = None;
+                }
+            }
+        }
+        self.native_attempts = reading;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -833,6 +981,7 @@ impl FactoryBuildViewProvider {
                 required_capability_ref: REQUEST_MORE_EVIDENCE_CAPABILITY_REF.into(),
             }],
             execution_usage: Vec::new(),
+            native_attempts: None,
         };
 
         Ok(FactoryBuildSnapshot {
@@ -890,7 +1039,12 @@ fn run_status(run: &Run) -> String {
         RunLifecycle::Seeded => "queued",
         RunLifecycle::Active | RunLifecycle::Finishing => "running",
         RunLifecycle::WaitingHuman | RunLifecycle::Suspended => "blocked",
-        RunLifecycle::Finished | RunLifecycle::Archived => "success",
+        RunLifecycle::Finished => "success",
+        RunLifecycle::Archived => match run.archived_from() {
+            Some(RunLifecycle::Finished) => "success",
+            Some(RunLifecycle::Aborted) => "fail",
+            _ => "blocked",
+        },
         RunLifecycle::Aborted => "fail",
     }
     .into()
@@ -898,17 +1052,22 @@ fn run_status(run: &Run) -> String {
 
 /// The Run's closure standing from its lifecycle. See
 /// [`FrontierView::closure_state`].
-fn closure_state(run: &Run) -> &'static str {
+fn closure_state(run: &Run) -> Option<&'static str> {
     use crate::core::run::RunLifecycle;
 
     match run.lifecycle() {
         RunLifecycle::Seeded
         | RunLifecycle::Active
         | RunLifecycle::WaitingHuman
-        | RunLifecycle::Suspended => "open",
-        RunLifecycle::Finishing => "closing",
-        RunLifecycle::Finished | RunLifecycle::Archived => "closed",
-        RunLifecycle::Aborted => "aborted",
+        | RunLifecycle::Suspended => Some("open"),
+        RunLifecycle::Finishing => Some("closing"),
+        RunLifecycle::Finished => Some("closed"),
+        RunLifecycle::Archived => match run.archived_from() {
+            Some(RunLifecycle::Finished) => Some("closed"),
+            Some(RunLifecycle::Aborted) => Some("aborted"),
+            _ => None,
+        },
+        RunLifecycle::Aborted => Some("aborted"),
     }
 }
 
@@ -1060,7 +1219,7 @@ fn materialise_frontier(run: &Run) -> FrontierView {
             }
             .into(),
             summary: frontier_summary(node.state).into(),
-            closure_state: Some(closure_state(run).into()),
+            closure_state: closure_state(run).map(Into::into),
             gate_state: frontier_gate_state(run, &node.id).map(Into::into),
         },
         None => FrontierView {
@@ -1068,7 +1227,7 @@ fn materialise_frontier(run: &Run) -> FrontierView {
             title: run.destination().to_owned(),
             mode: "work".into(),
             summary: "Nothing is ready, running, blocked, waiting or returned.".into(),
-            closure_state: Some(closure_state(run).into()),
+            closure_state: closure_state(run).map(Into::into),
             gate_state: None,
         },
     }
@@ -1378,14 +1537,14 @@ mod frontier_tests {
         )
         .unwrap();
         for (lifecycle, closure) in [
-            ("seeded", "open"),
-            ("active", "open"),
-            ("waiting_human", "open"),
-            ("suspended", "open"),
-            ("finishing", "closing"),
-            ("finished", "closed"),
-            ("archived", "closed"),
-            ("aborted", "aborted"),
+            ("seeded", Some("open")),
+            ("active", Some("open")),
+            ("waiting_human", Some("open")),
+            ("suspended", Some("open")),
+            ("finishing", Some("closing")),
+            ("finished", Some("closed")),
+            ("archived", None),
+            ("aborted", Some("aborted")),
         ] {
             let mut value = serde_json::to_value(&run).unwrap();
             value["lifecycle"] = lifecycle.into();

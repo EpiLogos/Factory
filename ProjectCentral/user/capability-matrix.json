@@ -204,7 +204,8 @@
     },
     "runtime_paths": [
       "src/**",
-      "crates/*/src/**"
+      "crates/*/src/**",
+      "factory/src/**"
     ]
   },
   "provenance": {

@@ -447,7 +447,7 @@ fn an_invalid_frame_is_refused_at_its_unit_and_field() {
     assert_eq!(diagnostic.unit.as_deref(), Some("scope"));
     assert_eq!(diagnostic.field.as_deref(), Some("composition"));
     assert!(diagnostic.message.contains("InvalidCPrimeProfile"));
-    let location = diagnostic.location.expect("source location");
+    let location = diagnostic.location.as_ref().expect("source location");
     assert_eq!(location.file, "test.workflow.ts");
     assert!(location.line > 1);
 

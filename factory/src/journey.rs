@@ -245,6 +245,13 @@ impl Journey {
         self.bump_revision()
     }
 
+    pub(crate) fn correlate_flow(&mut self, flow_ref: String) -> Result<(), JourneyError> {
+        self.ensure_mutable()?;
+        validate_ref_text(&flow_ref, "Journey Flow source ref")?;
+        push_unique(&mut self.flow_refs, flow_ref);
+        self.bump_revision()
+    }
+
     pub fn correlate_activity(
         &mut self,
         activity_ref: impl Into<String>,

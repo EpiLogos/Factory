@@ -339,6 +339,17 @@ pub struct FactoryAttemptReading {
     pub workflow_source_revision: String,
     pub workflow_source_digest: String,
     pub source_current: bool,
+    /// Owner-computed required-leg completion; callers must not count visible rows.
+    pub whole_run_state: crate::orchestration::WholeRunState,
+    pub lifecycle: crate::core::run::RunLifecycle,
+    /// Retained canonical Finished admission, including the exact native final
+    /// Return reading. Archive and required-leg success cannot create this fact.
+    #[serde(default)]
+    pub completion_verified: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_from: Option<crate::core::run::RunLifecycle>,
+    pub required_units: BTreeSet<WorkflowUnitRef>,
+    pub current_returned_units: BTreeSet<WorkflowUnitRef>,
     pub legs: BTreeMap<WorkflowUnitRef, LegRecord>,
     pub attempts: Vec<FactoryAttemptRecord>,
     #[serde(default)]
@@ -362,6 +373,24 @@ pub struct FactoryAttemptActionRequest {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "kebab-case")]
 pub enum FactoryAttemptOperation {
+    TransitionRun {
+        command: crate::core::run::RunLifecycleCommand,
+        authority: crate::core::run::RunMutationAuthority,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        closure: Option<crate::run_lifecycle::RunClosureBasis>,
+    },
+    RequestUnitDecision {
+        request: crate::run_lifecycle::UnitDecisionRequest,
+    },
+    RetireUnitDecision {
+        human_request_ref: String,
+        reason: String,
+        replacement_basis_refs: BTreeSet<String>,
+    },
+    ResolveUnitDecision {
+        human_request_ref: String,
+        response: crate::run_lifecycle::UnitDecisionResponse,
+    },
     StartSerial {
         attempt_ref: String,
         task_ref: String,
@@ -512,10 +541,29 @@ pub(crate) fn apply_operation(
     state: &mut StoredAttemptState,
     operation: FactoryAttemptOperation,
 ) -> Result<(String, Vec<String>), FactoryAttemptError> {
+    apply_operation_with_source_currency(state, operation, true)
+}
+
+/// Only the canonical provider derives source currency. Historical intake uses
+/// this same Return validation and immutable attempt recording path.
+pub(crate) fn apply_operation_with_source_currency(
+    state: &mut StoredAttemptState,
+    operation: FactoryAttemptOperation,
+    source_current: bool,
+) -> Result<(String, Vec<String>), FactoryAttemptError> {
     let workflow = compile_workflow(state.workflow_source.clone())?;
     let mut engine = state.snapshot.restore(workflow, state.run.clone())?;
     let mut attempt_refs = Vec::new();
     let operation_name = match operation {
+        FactoryAttemptOperation::TransitionRun { .. }
+        | FactoryAttemptOperation::RequestUnitDecision { .. }
+        | FactoryAttemptOperation::ResolveUnitDecision { .. }
+        | FactoryAttemptOperation::RetireUnitDecision { .. } => {
+            return Err(FactoryAttemptError::InvalidOperation(
+                "lifecycle and decision mutations require their canonical provider transaction"
+                    .into(),
+            ));
+        }
         FactoryAttemptOperation::StartSerial {
             attempt_ref,
             task_ref,
@@ -628,6 +676,14 @@ pub(crate) fn apply_operation(
             receipt,
         } => {
             validate_owner_receipt(&receipt)?;
+            if receipt
+                .receipt_ref
+                .starts_with("native-receiving-admission:")
+            {
+                return Err(FactoryAttemptError::InvalidOperation(
+                    "native receiving admission is retained only by the canonical live-owner transaction".into(),
+                ));
+            }
             let record = attempt_mut(state, &attempt_ref)?;
             if receipt.owner_ref == "factory"
                 && receipt.contract == "factory.attempt-owner-transport/v1"
@@ -689,6 +745,21 @@ pub(crate) fn apply_operation(
                 factory_admission_time(),
             );
             record.verifications.push(verification);
+            if !has_passing_verification(record)
+                && engine.leg(&record.workflow_unit_ref).is_some_and(|leg| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && record.execution_ref.as_deref() == Some(leg.execution_ref.as_str())
+                })
+            {
+                engine.reject_return(
+                    &record.workflow_unit_ref,
+                    format!(
+                        "current Return no longer verified: {} ({:?})",
+                        record.verifications.last().unwrap().verification_ref,
+                        record.verifications.last().unwrap().outcome,
+                    ),
+                )?;
+            }
             attempt_refs.push(attempt_ref);
             "record-verification"
         }
@@ -833,7 +904,11 @@ pub(crate) fn apply_operation(
                     ));
                 }
             }
-            engine.return_artifact(&unit, artifact)?;
+            if source_current {
+                engine.return_artifact(&unit, artifact)?;
+            } else {
+                engine.retain_superseded_artifact(&unit, artifact)?;
+            }
             let record = attempt_mut(state, &attempt_ref)?;
             record.return_recorded_at = Some(factory_admission_time());
             record.verification_count_at_return = Some(record.verifications.len());
@@ -896,6 +971,18 @@ pub(crate) fn apply_operation(
                 ));
             }
             engine.advance_subject(subject_ref, revision);
+            let stale_returns = engine
+                .legs()
+                .iter()
+                .filter(|(unit, leg)| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && !engine.is_current_return(unit)
+                })
+                .map(|(unit, _)| unit.clone())
+                .collect::<Vec<_>>();
+            for unit in stale_returns {
+                engine.reject_return(&unit, "Return is historical after subject advance".into())?;
+            }
             "advance-subject"
         }
         FactoryAttemptOperation::AttachReceiving {
@@ -1313,8 +1400,8 @@ fn ensure_retry_protection(
     Ok(())
 }
 
-fn has_passing_verification(record: &FactoryAttemptRecord) -> bool {
-    record.verifications.iter().any(|verification| {
+pub(crate) fn has_passing_verification(record: &FactoryAttemptRecord) -> bool {
+    record.verifications.last().is_some_and(|verification| {
         verification.outcome == VerificationOutcome::Passed
             && verification
                 .obligations
@@ -1649,10 +1736,22 @@ pub(crate) fn reading_for(
         run_revision: state.run.revision().get(),
         topology_revision: state.run.map().topology_revision().get(),
         workflow_key: engine.workflow().workflow_key.clone(),
-        workflow_source_ref: engine.workflow().source.reference.to_string(),
-        workflow_source_revision: engine.workflow().source.revision.clone(),
-        workflow_source_digest: engine.workflow().source.digest.clone(),
+        workflow_source_ref: state.workflow_source.source.reference.to_string(),
+        workflow_source_revision: state.workflow_source.source.revision.clone(),
+        workflow_source_digest: state.workflow_source.source.digest.clone(),
         source_current: true,
+        whole_run_state: engine.whole_run_state(),
+        lifecycle: state.run.lifecycle(),
+        completion_verified: crate::attempt_native_receiving::completion_verified(state),
+        archived_from: state.run.archived_from(),
+        required_units: engine.required_units(),
+        current_returned_units: engine
+            .workflow()
+            .units
+            .values()
+            .filter(|unit| engine.is_current_return(&unit.reference))
+            .map(|unit| unit.reference.clone())
+            .collect(),
         legs: engine.legs().clone(),
         attempts: state.attempts.values().cloned().collect(),
         independent_reviewers: engine.independent_reviewers().clone(),
@@ -1800,6 +1899,10 @@ fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
 
 #[derive(Debug)]
 pub enum FactoryAttemptError {
+    PublicationUncertain {
+        cause: crate::NativePublicationUncertainty,
+        legacy_message: String,
+    },
     Io(io::Error),
     Json(serde_json::Error),
     Workflow(crate::workflow::WorkflowError),
@@ -1813,8 +1916,14 @@ pub enum FactoryAttemptError {
     UnknownAttempt(String),
     DuplicateReference(String),
     VerificationIncomplete(String),
-    RunMismatch { addressed: String, stored: String },
-    RevisionConflict { expected: u64, actual: u64 },
+    RunMismatch {
+        addressed: String,
+        stored: String,
+    },
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
     RevisionOverflow,
     CorruptState(String),
     Cli(String),
@@ -1822,11 +1931,29 @@ pub enum FactoryAttemptError {
 
 impl Display for FactoryAttemptError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Factory attempt error: {self:?}")
+        if let Self::PublicationUncertain { legacy_message, .. } = self {
+            write!(
+                formatter,
+                "Factory attempt error: InvalidOperation({legacy_message:?})"
+            )
+        } else {
+            write!(formatter, "Factory attempt error: {self:?}")
+        }
     }
 }
 
-impl Error for FactoryAttemptError {}
+impl Error for FactoryAttemptError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::PublicationUncertain { cause, .. } => Some(cause),
+            Self::Io(cause) => Some(cause),
+            Self::Json(cause) => Some(cause),
+            Self::Workflow(cause) => Some(cause),
+            Self::Orchestration(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 impl From<io::Error> for FactoryAttemptError {
     fn from(error: io::Error) -> Self {

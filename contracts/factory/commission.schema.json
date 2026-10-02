@@ -38,9 +38,9 @@
       "required": ["subjectRef", "relation", "objectRef", "owner"],
       "properties": {
         "subjectRef": { "$ref": "#/$defs/stableRef" },
-        "relation": { "enum": ["commissioned", "contains", "bounded-as", "bounds", "composition-evidence-for", "supports-membership-reading"] },
+        "relation": { "enum": ["commissioned", "contains", "bounded-as", "bounds", "composition-evidence-for", "supports-membership-reading", "required-participant-for", "continued-from", "source-basis-for"] },
         "objectRef": { "$ref": "#/$defs/stableRef" },
-        "owner": { "enum": ["factory", "central"] }
+        "owner": { "$ref": "#/$defs/stableRef" }
       },
       "additionalProperties": false
     },
@@ -50,7 +50,8 @@
       "properties": {
         "contract": { "const": "factory.commission-reading/v1" },
         "commission": { "$ref": "#/$defs/commission" },
-        "traversal": { "type": "array", "minItems": 6, "items": { "$ref": "#/$defs/edge" } }
+        "continuationRunRefs": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/factoryRef" } },
+        "traversal": { "type": "array", "minItems": 5, "items": { "$ref": "#/$defs/edge" } }
       },
       "additionalProperties": false
     }

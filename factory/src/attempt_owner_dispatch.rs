@@ -59,20 +59,70 @@ pub struct FactoryAttemptOwnerReceipt {
     pub owner_receipt: Option<OwnerOperationReceipt>,
     /// A response that could not be retained is still returned to the caller.
     pub retention_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_uncertainty: Option<crate::NativePublicationDetails>,
     /// Missing current readback must not be represented by a stale snapshot.
     pub reading: Option<FactoryAttemptReading>,
 }
 
 #[derive(Debug)]
-pub struct AttemptOwnerError(pub String);
+pub struct AttemptOwnerError {
+    message: String,
+    cause: Option<Box<dyn Error + Send + Sync>>,
+}
 impl Display for AttemptOwnerError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        formatter.write_str(&self.message)
     }
 }
-impl Error for AttemptOwnerError {}
+impl Error for AttemptOwnerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.cause
+            .as_ref()
+            .map(|cause| cause.as_ref() as &(dyn Error + 'static))
+    }
+}
+/// A later retention failure must not replace the primary refusal. Its
+/// actual native cause remains traversable while Display keeps the original
+/// owner/semantic failure and both objects remain retained in this wrapper.
+#[derive(Debug)]
+struct RetentionFailures {
+    primary: AttemptOwnerError,
+    secondary: AttemptOwnerError,
+}
+impl Display for RetentionFailures {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.primary, formatter)
+    }
+}
+impl Error for RetentionFailures {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.secondary)
+    }
+}
+impl AttemptOwnerError {
+    fn with_secondary(self, secondary: AttemptOwnerError) -> Self {
+        Self {
+            message: self.to_string(),
+            cause: Some(Box::new(RetentionFailures {
+                primary: self,
+                secondary,
+            })),
+        }
+    }
+}
+
 fn error(value: impl Display) -> AttemptOwnerError {
-    AttemptOwnerError(value.to_string())
+    AttemptOwnerError {
+        message: value.to_string(),
+        cause: None,
+    }
+}
+fn native_error(value: impl Error + Send + Sync + 'static) -> AttemptOwnerError {
+    AttemptOwnerError {
+        message: value.to_string(),
+        cause: Some(Box::new(value)),
+    }
 }
 
 fn record<'a>(
@@ -149,7 +199,7 @@ fn retain(
     operation: FactoryAttemptOperation,
 ) -> Result<(), AttemptOwnerError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(error)?;
+        let reading = store.reading().map_err(native_error)?;
         let attempt = record(&reading, &request.attempt_ref)?;
         if let FactoryAttemptOperation::RecordObservation { receipt, .. } = &operation {
             if let Some(existing) = attempt
@@ -199,8 +249,13 @@ fn retain(
         )) {
             Ok(_) => return Ok(()),
             Err(failure) => {
-                if store.reading().map_err(error)?.revision == reading.revision {
-                    return Err(error(failure));
+                // A changed revision after rename is a possible committed effect,
+                // not permission to retry an operation with unknown publication.
+                if crate::native_publication_uncertainty(&failure).is_some() {
+                    return Err(native_error(failure));
+                }
+                if store.reading().map_err(native_error)?.revision == reading.revision {
+                    return Err(native_error(failure));
                 }
             }
         }
@@ -229,12 +284,33 @@ fn result(
     replayed: bool,
     transport: OwnerOperationReceipt,
     owner_receipt: Option<OwnerOperationReceipt>,
-    mut retention_error: Option<String>,
+    retention_failure: Option<AttemptOwnerError>,
 ) -> FactoryAttemptOwnerReceipt {
+    let mut publication_uncertainty = retention_failure
+        .as_ref()
+        .and_then(|error| crate::native_publication_uncertainty(error))
+        .map(|failure| failure.details());
+    if publication_uncertainty.is_none() {
+        // Replay discloses actual retained owner evidence, never error prose.
+        publication_uncertainty = transport
+            .payload
+            .pointer("/detail/publicationUncertainty")
+            .cloned()
+            .and_then(|value| serde_json::from_value(value).ok());
+    }
+    let mut retention_error = retention_failure.as_ref().map(ToString::to_string);
     let reading = match store.reading() {
         Ok(reading) => Some(reading),
         Err(failure) => {
-            retention_error = Some(failure.to_string());
+            if let Some(details) = &mut publication_uncertainty {
+                if details.readback_observation.is_none() {
+                    details.readback_observation =
+                        Some(format!("subsequent native readback failed: {failure}"));
+                }
+            }
+            if retention_error.is_none() {
+                retention_error = Some(failure.to_string());
+            }
             None
         }
     };
@@ -256,8 +332,49 @@ fn result(
         transport_observation: transport,
         owner_receipt,
         retention_error,
+        publication_uncertainty,
         reading,
     }
+}
+
+fn completion_failure(
+    store: &mut FileAttemptStore,
+    request: &FactoryAttemptOwnerRequest,
+    intent: OwnerOperationReceipt,
+    owner: OwnerOperationReceipt,
+    mut failure: AttemptOwnerError,
+) -> FactoryAttemptOwnerReceipt {
+    let mut detail = json!({"ownerReceipt":owner,"ownerReceiptRef":owner.receipt_ref,
+        "retentionFailure":failure.to_string(),"instruction":"inspect original delivery; never resend"});
+    if let Some(publication) = crate::native_publication_uncertainty(&failure) {
+        detail["publicationUncertainty"] = serde_json::to_value(publication.details())
+            .expect("native publication details serialize");
+    }
+    let mut uncertain = stamp(intent, OwnerOperationPhase::Uncertain, detail);
+    if crate::native_publication_uncertainty(&failure).is_none() {
+        if let Err(secondary) = retain(
+            store,
+            request,
+            "retention-failed",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: uncertain.clone(),
+            },
+        ) {
+            let mut detail = uncertain.payload["detail"].clone();
+            detail["secondaryRetentionError"] = json!(secondary.to_string());
+            if let Some(publication) = crate::native_publication_uncertainty(&secondary) {
+                detail["secondaryPublicationUncertainty"] =
+                    serde_json::to_value(publication.details())
+                        .expect("native publication details serialize");
+            }
+            // These returned failure facts were observed after publication;
+            // do not write them again onto that same uncertain attempt source.
+            uncertain = stamp(uncertain, OwnerOperationPhase::Uncertain, detail);
+            failure = failure.with_secondary(secondary);
+        }
+    }
+    result(store, request, false, uncertain, Some(owner), Some(failure))
 }
 
 /// Dispatch or observe an already provisioned native session. The existing
@@ -274,8 +391,8 @@ pub fn execute_attempt_owner_action(
         return Err(error("invalid attempt owner Action identity or contract"));
     }
     let mut store =
-        FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(error)?;
-    let reading = store.reading().map_err(error)?;
+        FileAttemptStore::open_run(state_path, request.run_ref.clone()).map_err(native_error)?;
+    let reading = store.reading().map_err(native_error)?;
     let attempt = record(&reading, &request.attempt_ref)?;
     // Retain the original v1 request digest for existing persisted Action replay.
     let digest = blake3::hash(&serde_json::to_vec(&request).map_err(error)?)
@@ -331,6 +448,7 @@ pub fn execute_attempt_owner_action(
     let NativeOwnerInvocation::AikitEncounter {
         binary,
         cwd,
+        transport,
         contract_revision,
         request: packet,
     } = &request.invocation
@@ -383,8 +501,11 @@ pub fn execute_attempt_owner_action(
             "attempt, Execution and AgentSession identities disagree or collide",
         ));
     }
-    let transport_identity =
+    let mut transport_identity =
         json!({"binary":binary, "cwd":cwd, "contractRevision":contract_revision});
+    if let Some(transport) = transport {
+        transport_identity["transport"] = serde_json::to_value(transport).map_err(error)?;
+    }
     let prior_send = attempt.observations.iter().find(|receipt| {
         same_delivery(receipt, session, delivery)
             && receipt.payload["action"].as_str() == Some("send")
@@ -426,9 +547,11 @@ pub fn execute_attempt_owner_action(
             }
             task_admission = Some(
                 task_dispatch::prepare(
+                    &reading,
                     attempt,
                     binary,
                     cwd,
+                    transport.as_ref(),
                     packet,
                     attempt
                         .disposition
@@ -544,6 +667,7 @@ pub fn execute_attempt_owner_action(
     let invocation = NativeOwnerInvocation::AikitEncounter {
         binary: binary.clone(),
         cwd: cwd.clone(),
+        transport: transport.clone(),
         contract_revision: contract_revision.clone(),
         request: effective_packet,
     };
@@ -557,7 +681,7 @@ pub fn execute_attempt_owner_action(
                 receipt: intent.clone(),
             },
         ))
-        .map_err(error)?;
+        .map_err(native_error)?;
     let owner = match invoke_native_owner_bounded(&invocation, timeout_ms) {
         Ok(owner) => owner,
         Err(failure) => {
@@ -575,8 +699,7 @@ pub fn execute_attempt_owner_action(
                     receipt: uncertain.clone(),
                 },
             )
-            .err()
-            .map(|failure| failure.to_string());
+            .err();
             return Ok(result(
                 &store,
                 &request,
@@ -597,7 +720,7 @@ pub fn execute_attempt_owner_action(
                 receipt: owner.clone(),
             },
         )?;
-        let current = store.reading().map_err(error)?;
+        let current = store.reading().map_err(native_error)?;
         let current_attempt = record(&current, &request.attempt_ref)?;
         task_dispatch::validate_response(current_attempt, delivery, &owner).map_err(error)?;
         if current_attempt.execution_ref.is_none()
@@ -625,7 +748,7 @@ pub fn execute_attempt_owner_action(
                 },
             )?;
         }
-        let current = store.reading().map_err(error)?;
+        let current = store.reading().map_err(native_error)?;
         let current_attempt = record(&current, &request.attempt_ref)?;
         let mut calls = latest_transports(current_attempt)
             .into_values()
@@ -680,30 +803,174 @@ pub fn execute_attempt_owner_action(
             Some(owner),
             None,
         )),
-        Err(failure) => {
-            let uncertain = stamp(
-                intent,
-                OwnerOperationPhase::Uncertain,
-                json!({"ownerReceipt":owner,"ownerReceiptRef":owner.receipt_ref,
-                "retentionFailure":failure.to_string(),"instruction":"inspect original delivery; never resend"}),
-            );
-            let _ = retain(
+        Err(failure) => Ok(completion_failure(
+            &mut store, &request, intent, owner, failure,
+        )),
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{native_observation, native_retention_source};
+    use std::cell::Cell;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::rc::Rc;
+
+    #[test]
+    fn actual_fallback_publication_retains_primary_refusal_and_secondary_native_cause() {
+        for move_after_publication in [false, true] {
+            let (root, mut store, base) = native_retention_source();
+            let path = root.path().join("state.json");
+            let physical = path.canonicalize().unwrap();
+            let retained = root.path().join("retained-published-state.json");
+            let request = FactoryAttemptOwnerRequest {
+                contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
+                request_ref: base.request_ref,
+                projection_ref: base.projection_ref,
+                caller: base.caller,
+                run_ref: base.run_ref,
+                expected_revision: store.reading().unwrap().revision,
+                authority: base.authority,
+                attempt_ref: base.attempt_ref,
+                execution_ref: "execution:native-retention-only".into(),
+                invocation: NativeOwnerInvocation::AikitEncounter {
+                    binary: std::env::current_exe().unwrap(),
+                    cwd: root.path().to_path_buf(),
+                    transport: None,
+                    contract_revision: AIKIT_CAW_CONTRACT_REVISION.into(),
+                    request: Value::Null,
+                },
+            };
+            // This owner receipt is the actual Factory source reading, not an
+            // invented AIKit response, provider execution or worker Return.
+            let owner = native_observation(&store);
+            retain(
                 &mut store,
                 &request,
-                "retention-failed",
+                "actual-owner-reading",
                 FactoryAttemptOperation::RecordObservation {
                     attempt_ref: request.attempt_ref.clone(),
-                    receipt: uncertain.clone(),
+                    receipt: owner.clone(),
                 },
+            )
+            .unwrap();
+            let mut intent = owner.clone();
+            intent.contract = TRANSPORT_OBSERVATION.into();
+            intent.operation_ref = format!("factory-owner-call:{}", request.request_ref);
+            intent = stamp(
+                intent,
+                OwnerOperationPhase::Dispatching,
+                json!({"meaning":"controlled retention intent; no external owner invoked"}),
             );
-            Ok(result(
-                &store,
-                &request,
-                false,
-                uncertain,
-                Some(owner),
-                Some(failure.to_string()),
-            ))
+            let before = store.reading().unwrap().revision;
+            let before_bytes = std::fs::read(&path).unwrap();
+            let primary = native_error(
+                store
+                    .apply(action_request(
+                        &request,
+                        before,
+                        "actual-semantic-refusal",
+                        FactoryAttemptOperation::RecordObservation {
+                            attempt_ref: "attempt:not-retained".into(),
+                            receipt: owner.clone(),
+                        },
+                    ))
+                    .unwrap_err(),
+            );
+            assert!(crate::native_publication_uncertainty(&primary).is_none());
+            let primary_message = primary.to_string();
+            assert_eq!(
+                std::fs::read(&path).unwrap(),
+                before_bytes,
+                "actual semantic refusal precedes any publication"
+            );
+            let seen = Rc::new(Cell::new(0));
+            let seen_for_observer = seen.clone();
+            let retained_for_observer = retained.clone();
+            let physical_for_observer = physical.clone();
+            let lexical_for_observer = path.clone();
+            crate::native_file_transaction::observe_next_publication(move |published| {
+                assert_eq!(
+                    published, lexical_for_observer,
+                    "publisher retains its raw public address"
+                );
+                // Establish the actual candidate inode through both Mac path
+                // spellings while it exists, before the adversarial move.
+                assert_eq!(published.canonicalize().unwrap(), physical_for_observer);
+                let published_file = std::fs::File::open(published).unwrap();
+                let physical_file = std::fs::File::open(&physical_for_observer).unwrap();
+                let published_identity = published_file.metadata().unwrap();
+                let physical_identity = physical_file.metadata().unwrap();
+                assert_eq!(
+                    (published_identity.dev(), published_identity.ino()),
+                    (physical_identity.dev(), physical_identity.ino())
+                );
+                seen_for_observer.set(seen_for_observer.get() + 1);
+                if move_after_publication {
+                    std::fs::rename(published, &retained_for_observer).unwrap();
+                } else {
+                    std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                        .unwrap();
+                }
+            });
+            let returned = completion_failure(&mut store, &request, intent, owner.clone(), primary);
+            assert_eq!(
+                seen.get(),
+                1,
+                "one actual fallback publication; no retry/settlement"
+            );
+            assert_eq!(
+                returned.retention_error.as_deref(),
+                Some(primary_message.as_str())
+            );
+            assert_eq!(returned.owner_receipt.as_ref(), Some(&owner));
+            assert_eq!(
+                returned.transport_observation.payload["detail"]["retentionFailure"],
+                primary_message
+            );
+            let secondary = &returned.transport_observation.payload["detail"]
+                ["secondaryPublicationUncertainty"];
+            assert_eq!(secondary["source_path"], physical.display().to_string());
+            assert_eq!(secondary["published"], true);
+            assert_eq!(secondary["outcome"], "unknown");
+            assert_eq!(secondary["automatic_retry"], false);
+            let details = returned.publication_uncertainty.as_ref().unwrap();
+            assert_eq!(details.source_path, physical);
+            assert!(returned.needs_reconciliation);
+            if move_after_publication {
+                assert_eq!(details.cause.raw_os_error, Some(libc::ENOENT));
+                assert!(returned.reading.is_none());
+            }
+            let readback = FileAttemptStore::open_run(
+                if move_after_publication {
+                    &retained
+                } else {
+                    &path
+                },
+                request.run_ref,
+            )
+            .unwrap()
+            .reading()
+            .unwrap();
+            assert_eq!(readback.revision, before + 1);
+            let attempt = record(&readback, &request.attempt_ref).unwrap();
+            assert!(
+                attempt.observations.contains(&owner),
+                "actual source owner reading remains retained"
+            );
+            assert_eq!(
+                attempt
+                    .observations
+                    .iter()
+                    .filter(|receipt| receipt.contract == TRANSPORT_OBSERVATION)
+                    .count(),
+                1
+            );
+            assert!(
+                attempt.readable_return.is_none(),
+                "physical retention cannot create a worker Return"
+            );
         }
     }
 }

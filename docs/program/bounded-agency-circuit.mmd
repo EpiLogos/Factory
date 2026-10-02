@@ -1,3 +1,8 @@
+%% source_id: factory:bounded-agency-circuit
+%% visual_question: How did the dated bounded native agency circuit preserve source and return?
+%% companion_doc: BOUNDED-AGENCY-FOUNDATION.md
+%% revision: 2026-09-30
+%% provenance: dated 2026-09-06 implementation account; human Recognition remains authored, not observed
 flowchart TB
   person["Person: concern, commission, experience"]
   central["Central: authored profile and source revision"]
@@ -6,7 +11,7 @@ flowchart TB
   aikit["AIKit: source selection, composition, native Method / ContextResolution"]
   gate{"Required source bytes still match?"}
   hold["Refuse new prompt; retain draft and work"]
-  owner["Existing desktop ACP resident owner"]
+  owner["Existing AIKit ACP resident owner"]
   bridge["AgentSessionHost → pi-acp → Pi"]
   proposal["Actual model proposal; mutation tools disabled"]
   effect{"Current source basis and exact finite material grant?"}
@@ -16,24 +21,24 @@ flowchart TB
   stale["Changed subject: historical evidence cannot establish current applicability"]
   recognition["Person: recognise, challenge or revise"]
   cleanup["Native cancellation / PID-bound owner shutdown / process-group reap"]
-  person --> central
-  person --> actuation
-  central --> aikit
-  actuation --> aikit
-  sources --> aikit
-  aikit --> gate
-  gate -- no --> hold
-  gate -- yes --> owner
-  owner --> bridge
-  bridge --> proposal
-  proposal --> effect
-  effect -- no --> denied
-  effect -- yes --> workcell
-  workcell --> factory
-  factory -- subject changed --> stale
-  factory --> recognition
-  recognition -- correction to responsible owner --> person
-  owner --> cleanup
-  hold --> cleanup
+  person -->|"authored profile / source"| central
+  person -->|"World-bound instantiation"| actuation
+  central -->|"authored source revision"| aikit
+  actuation -->|"WorldBinding / instantiation receipt"| aikit
+  sources -->|"three source-owned Skills"| aikit
+  aikit -->|"selected immutable source pins"| gate
+  gate -->|"changed / missing source: refuse"| hold
+  gate -->|"current required source: admit prompt"| owner
+  owner -->|"canonical session / native resident spawn"| bridge
+  bridge -->|"actual ACP prompt / model reply"| proposal
+  proposal -->|"proposed scoped material difference"| effect
+  effect -->|"absent / expired / spent grant: refuse"| denied
+  effect -->|"current exact one-use grant"| workcell
+  workcell -->|"actual artifact / material receipt"| factory
+  factory -->|"changed subject: historical applicability"| stale
+  factory -.->|"authored human Return; Recognition unproved"| recognition
+  recognition -.->|"human correction to responsible owner"| person
+  owner -->|"explicit native cancellation / owner lifecycle"| cleanup
+  hold -->|"refused prompt retains work / cleans resident"| cleanup
   style recognition fill:#f5ead6,stroke:#725f3d
   style person fill:#f5ead6,stroke:#725f3d

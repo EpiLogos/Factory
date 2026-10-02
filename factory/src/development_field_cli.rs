@@ -10,7 +10,9 @@ use crate::development_field::{
     DevelopmentMaterialBinding, DEVELOPMENT_FIELD_READING_CONTRACT,
 };
 use crate::project_development::ProjectDevelopmentLedger;
-use crate::project_development_store::{FileProjectDevelopmentStore, ProjectDevelopmentStore};
+use crate::project_development_store::{
+    FileProjectDevelopmentStore, ProjectDevelopmentStore, ProjectDevelopmentStoreError,
+};
 use serde_json::Value;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
@@ -37,6 +39,11 @@ pub fn cli_main() -> ExitCode {
         }
         Ok(None) => crate::cli::cli_main(),
         Err(error) => {
+            if args.iter().any(|arg| arg == "--json") {
+                if let Some(result) = crate::native_publication_failure(&error) {
+                    println!("{result}");
+                }
+            }
             eprintln!("factory: {error}");
             ExitCode::from(2)
         }
@@ -52,7 +59,7 @@ pub fn execute_extension(
     match args.first().map(String::as_str) {
         None | Some("help") | Some("--help") | Some("-h") => {
             let base = crate::cli::execute_cli(args, None)
-                .map_err(|error| DevelopmentFieldCliError(error.to_string()))?;
+                .map_err(DevelopmentFieldCliError::from_native)?;
             Ok(Some(format!("{base}\n{}", field_help())))
         }
         Some("capabilities") => Ok(Some(extend_capabilities(args)?)),
@@ -69,8 +76,8 @@ fn field_help() -> &'static str {
 
 fn extend_capabilities(args: &[String]) -> Result<String, DevelopmentFieldCliError> {
     let json = args.iter().any(|argument| argument == "--json");
-    let base = crate::cli::execute_cli(args, None)
-        .map_err(|error| DevelopmentFieldCliError(error.to_string()))?;
+    let base =
+        crate::cli::execute_cli(args, None).map_err(DevelopmentFieldCliError::from_native)?;
     if !json {
         return Ok(format!(
             "{base}\ndevelopment-field commands: {}\ndevelopment-field contract: {}",
@@ -82,18 +89,18 @@ fn extend_capabilities(args: &[String]) -> Result<String, DevelopmentFieldCliErr
     let mut value: Value = serde_json::from_str(&base)?;
     let object = value
         .as_object_mut()
-        .ok_or_else(|| DevelopmentFieldCliError("invalid base capabilities document".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("invalid base capabilities document"))?;
     let commands = object
         .get_mut("commands")
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| DevelopmentFieldCliError("base capabilities omit commands".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("base capabilities omit commands"))?;
     for command in FIELD_COMMANDS {
         commands.push(Value::String((*command).to_owned()));
     }
     let contracts = object
         .get_mut("nativeContracts")
         .and_then(Value::as_array_mut)
-        .ok_or_else(|| DevelopmentFieldCliError("base capabilities omit nativeContracts".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("base capabilities omit nativeContracts"))?;
     contracts.push(Value::String(DEVELOPMENT_FIELD_READING_CONTRACT.into()));
     serde_json::to_string_pretty(&value).map_err(Into::into)
 }
@@ -106,57 +113,65 @@ fn field_command(
     let json = remove_flag(&mut args, "--json");
     let operation = args
         .first()
-        .ok_or_else(|| DevelopmentFieldCliError("missing Development Field operation".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("missing Development Field operation"))?;
     let ledger_root = args
         .get(1)
-        .ok_or_else(|| DevelopmentFieldCliError("missing development ledger root".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("missing development ledger root"))?;
     let run_ref = args
         .get(2)
-        .ok_or_else(|| DevelopmentFieldCliError("missing run-ref".into()))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("missing run-ref"))?;
     let run_ref = RunRef::from_str(run_ref)
-        .map_err(|error| DevelopmentFieldCliError(format!("invalid run-ref: {error}")))?;
+        .map_err(|error| DevelopmentFieldCliError::new(format!("invalid run-ref: {error}")))?;
     let store = FileProjectDevelopmentStore::new(ledger_root);
 
     let reading = match operation.as_str() {
         "read" => load_required(&store, &run_ref)?.development_field_reading()?,
         "set" => {
-            let mut ledger = load_or_new(&store, &run_ref)?;
             let request_path = args.get(3).map(String::as_str).unwrap_or("-");
             let field: DevelopmentField =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
-            ledger.set_development_field(field)?;
-            store.save(&ledger)?;
+            let ledger = store.transact(&run_ref, true, |ledger| {
+                ledger
+                    .set_development_field(field)
+                    .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
+            })?;
             ledger.development_field_reading()?
         }
         "operative" => {
-            let mut ledger = load_required(&store, &run_ref)?;
             let request_path = args.get(3).map(String::as_str).unwrap_or("-");
             let operative: AikitOperativeReferences =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
-            ledger.set_development_field_operative(operative)?;
-            store.save(&ledger)?;
+            let ledger = store.transact(&run_ref, false, |ledger| {
+                ledger
+                    .set_development_field_operative(operative)
+                    .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
+            })?;
             ledger.development_field_reading()?
         }
         "bind-material" => {
-            let mut ledger = load_required(&store, &run_ref)?;
             let request_path = args.get(3).map(String::as_str).unwrap_or("-");
             let binding: DevelopmentMaterialBinding =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
-            ledger.add_development_field_material(binding)?;
-            store.save(&ledger)?;
+            let ledger = store.transact(&run_ref, false, |ledger| {
+                ledger
+                    .add_development_field_material(binding)
+                    .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
+            })?;
             ledger.development_field_reading()?
         }
         "return" => {
-            let mut ledger = load_required(&store, &run_ref)?;
             let request_path = args.get(3).map(String::as_str).unwrap_or("-");
             let returned: DevelopmentFieldReturn =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
-            ledger.add_development_field_return(returned)?;
-            store.save(&ledger)?;
+            let ledger = store.transact(&run_ref, false, |ledger| {
+                ledger
+                    .add_development_field_return(returned)
+                    .map_err(|error| ProjectDevelopmentStoreError::Native(error.to_string()))
+            })?;
             ledger.development_field_reading()?
         }
         other => {
-            return Err(DevelopmentFieldCliError(format!(
+            return Err(DevelopmentFieldCliError::new(format!(
                 "unknown Development Field operation `{other}`"
             )))
         }
@@ -170,17 +185,8 @@ fn load_required(
     run_ref: &RunRef,
 ) -> Result<ProjectDevelopmentLedger, DevelopmentFieldCliError> {
     store.load(run_ref)?.ok_or_else(|| {
-        DevelopmentFieldCliError(format!("development ledger not found for {run_ref}"))
+        DevelopmentFieldCliError::new(format!("development ledger not found for {run_ref}"))
     })
-}
-
-fn load_or_new(
-    store: &FileProjectDevelopmentStore,
-    run_ref: &RunRef,
-) -> Result<ProjectDevelopmentLedger, DevelopmentFieldCliError> {
-    Ok(store
-        .load(run_ref)?
-        .unwrap_or_else(|| ProjectDevelopmentLedger::new(run_ref.clone())))
 }
 
 fn render_reading(
@@ -268,31 +274,42 @@ fn read_input(
 }
 
 #[derive(Debug)]
-pub struct DevelopmentFieldCliError(String);
-
+pub struct DevelopmentFieldCliError(crate::cli::CliError);
+impl DevelopmentFieldCliError {
+    fn new(message: impl Into<String>) -> Self {
+        Self(crate::cli::CliError::new(message))
+    }
+    fn from_native(error: impl Error + Send + Sync + 'static) -> Self {
+        Self(crate::cli::CliError::from_native(error))
+    }
+}
 impl Display for DevelopmentFieldCliError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(&self.0)
+        Display::fmt(&self.0, formatter)
     }
 }
 
-impl Error for DevelopmentFieldCliError {}
+impl Error for DevelopmentFieldCliError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.0)
+    }
+}
 
 impl From<std::io::Error> for DevelopmentFieldCliError {
     fn from(error: std::io::Error) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 impl From<serde_json::Error> for DevelopmentFieldCliError {
     fn from(error: serde_json::Error) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 impl From<crate::project_development::ProjectDevelopmentError> for DevelopmentFieldCliError {
     fn from(error: crate::project_development::ProjectDevelopmentError) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
@@ -300,7 +317,7 @@ impl From<crate::project_development_store::ProjectDevelopmentStoreError>
     for DevelopmentFieldCliError
 {
     fn from(error: crate::project_development_store::ProjectDevelopmentStoreError) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
@@ -347,6 +364,56 @@ mod tests {
             },
         )
         .unwrap()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn actual_development_field_publication_failure_preserves_typed_dispatch_cause() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempdir().unwrap();
+        let run_ref: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap();
+        let store = FileProjectDevelopmentStore::new(root.path());
+        store
+            .save(&ProjectDevelopmentLedger::new(run_ref.clone()))
+            .unwrap();
+        let path =
+            std::fs::canonicalize(root.path().join(format!("{}.json", run_ref.as_ref().id())))
+                .unwrap();
+        crate::native_file_transaction::observe_next_publication(|published| {
+            std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777)).unwrap();
+        });
+        let args = vec![
+            "development".into(),
+            "field".into(),
+            "set".into(),
+            root.path().display().to_string(),
+            run_ref.to_string(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let error = crate::attempt_cli::execute(
+            &args,
+            Some(&serde_json::to_string(&field(run_ref.clone())).unwrap()),
+        )
+        .unwrap_err();
+        let envelope = crate::native_publication_failure(&error).unwrap();
+        assert_eq!(envelope["error"]["code"], "factory.publication_uncertain");
+        assert_eq!(
+            envelope["error"]["details"]["source_path"],
+            path.display().to_string()
+        );
+        assert_eq!(envelope["error"]["details"]["published"], true);
+        assert_eq!(envelope["error"]["details"]["automatic_retry"], false);
+        assert!(store
+            .load(&run_ref)
+            .unwrap()
+            .unwrap()
+            .development_field
+            .is_some());
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o7777,
+            0o777
+        );
     }
 
     #[test]

@@ -10,6 +10,7 @@ use crate::attempt_runtime::{
     FactoryAttemptReading, FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt,
     FACTORY_ATTEMPT_ACTION,
 };
+use crate::cli::CliError;
 use crate::core::run::RunRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -251,9 +252,9 @@ fn retain(
     store: &mut FileAttemptStore,
     request: &CentralAttemptRequest,
     receipt: &OwnerOperationReceipt,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(|error| error.to_string())?;
+        let reading = store.reading().map_err(CliError::from_native)?;
         if let Some(existing) = record(&reading, &request.attempt_ref)?
             .observations
             .iter()
@@ -272,9 +273,11 @@ fn retain(
         match store.apply(action(request, reading.revision, operation)) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
-                {
-                    return Err(error.to_string());
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(CliError::from_native(error));
+                }
+                if store.reading().map_err(CliError::from_native)?.revision == reading.revision {
+                    return Err(CliError::from_native(error));
                 }
             }
         }
@@ -285,9 +288,9 @@ fn retain_fact(
     store: &mut FileAttemptStore,
     request: &CentralAttemptRequest,
     fact: AttemptTrackingFact,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(|error| error.to_string())?;
+        let reading = store.reading().map_err(CliError::from_native)?;
         if let Some(existing) = record(&reading, &request.attempt_ref)?
             .tracking
             .iter()
@@ -306,9 +309,11 @@ fn retain_fact(
         match store.apply(action(request, reading.revision, operation)) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
-                {
-                    return Err(error.to_string());
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(CliError::from_native(error));
+                }
+                if store.reading().map_err(CliError::from_native)?.revision == reading.revision {
+                    return Err(CliError::from_native(error));
                 }
             }
         }
@@ -579,7 +584,7 @@ pub(crate) fn preflight(
     ))
 }
 
-pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, String> {
+pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, CliError> {
     if request.contract != CENTRAL_ACTION
         || request.request_ref.trim().is_empty()
         || request.projection_ref.trim().is_empty()
@@ -593,18 +598,18 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
     {
         return Err("Central preparation requires exact identities, pinned endpoint and bounded absolute destinations".into());
     }
-    let mut store = FileAttemptStore::open_run(path, request.run_ref.clone())
-        .map_err(|error| error.to_string())?;
-    let reading = store.reading().map_err(|error| error.to_string())?;
+    let mut store =
+        FileAttemptStore::open_run(path, request.run_ref.clone()).map_err(CliError::from_native)?;
+    let reading = store.reading().map_err(CliError::from_native)?;
     let attempt = record(&reading, &request.attempt_ref)?.clone();
-    let mut identity = serde_json::to_value(&request).map_err(|error| error.to_string())?;
+    let mut identity = serde_json::to_value(&request).map_err(CliError::from_native)?;
     for key in ["recover", "expectedRevision", "projectionRef"] {
         identity
             .as_object_mut()
             .expect("request object")
             .remove(key);
     }
-    let digest = blake3::hash(&serde_json::to_vec(&identity).map_err(|error| error.to_string())?)
+    let digest = blake3::hash(&serde_json::to_vec(&identity).map_err(CliError::from_native)?)
         .to_hex()
         .to_string();
     let operation_ref = format!("factory-attempt-central:{}", request.request_ref);
@@ -638,7 +643,7 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
         reading.revision,
         operation.clone(),
     ))
-    .map_err(|error| error.to_string())?;
+    .map_err(CliError::from_native)?;
     if let Some(previous) = &previous {
         if previous.payload["requestDigest"] != digest {
             return Err(
@@ -689,7 +694,7 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
     if previous.is_none() {
         store
             .apply(action(&request, reading.revision, operation))
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
     } else {
         intent = previous.clone().expect("previous checked");
         // Explicit refresh invalidates the old proof before any new owner call.
@@ -709,7 +714,7 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
                     receipt: intent.clone(),
                 },
             ))
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
     }
     let deadline = Instant::now() + Duration::from_millis(request.timeout_ms.unwrap_or(30_000));
     let mut observed = Vec::new();
@@ -775,7 +780,7 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
                                 &revision,
                                 &settled.receipt_ref
                             ))
-                            .map_err(|error| error.to_string())?
+                            .map_err(CliError::from_native)?
                             .as_bytes()
                         )
                         .to_hex()
@@ -799,14 +804,22 @@ pub fn execute(path: &Path, request: CentralAttemptRequest) -> Result<Value, Str
         retain(&mut store, &request, &settled)
     })();
     let current = store.reading();
-    Ok(
-        json!({"contract":CENTRAL_RECEIPT,"replayed":false,"requestRef":request.request_ref,"attemptRef":request.attempt_ref,
+    let publication_uncertainty = retention
+        .as_ref()
+        .err()
+        .and_then(|error| crate::native_publication_uncertainty(error))
+        .map(|publication| publication.details());
+    let mut result = json!({"contract":CENTRAL_RECEIPT,"replayed":false,"requestRef":request.request_ref,"attemptRef":request.attempt_ref,
         "needsReconciliation":phase!=OwnerOperationPhase::Observed||retention.is_err()||current.is_err(),
-        "observation":settled,"retentionError":retention.err(),"reading":current.ok(),"workerEnforcementEstablished":false}),
-    )
+        "observation":settled,"retentionError":retention.err().map(|error|error.to_string()),"reading":current.ok(),"workerEnforcementEstablished":false});
+    if let Some(details) = publication_uncertainty {
+        result["publicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
+    }
+    Ok(result)
 }
 
-pub fn execute_cli(args: &[String], input: Option<&str>) -> Result<String, String> {
+pub fn execute_cli(args: &[String], input: Option<&str>) -> Result<String, CliError> {
     if args.is_empty() || matches!(args[0].as_str(), "help" | "--help" | "-h") {
         return Ok(format!("Factory native Central preparation\n\nfactory attempt prepare <state> <request-json|-> [--json]\n\n{CENTRAL_ACTION}\nCalls native policy/NOW allocation/path validation. Dispatch rechecks the retained exact bases. This does not install a worker guard."));
     }
@@ -819,26 +832,156 @@ pub fn execute_cli(args: &[String], input: Option<&str>) -> Result<String, Strin
     }
     let request_path = positional.get(1).map(|value| value.as_str()).unwrap_or("-");
     let body = if request_path != "-" {
-        std::fs::read_to_string(request_path).map_err(|error| error.to_string())?
+        std::fs::read_to_string(request_path).map_err(CliError::from_native)?
     } else if let Some(input) = input {
         input.to_owned()
     } else {
         let mut body = String::new();
         std::io::stdin()
             .read_to_string(&mut body)
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         body
     };
     let result = execute(
         Path::new(positional[0]),
-        serde_json::from_str(&body).map_err(|error| error.to_string())?,
+        serde_json::from_str(&body).map_err(CliError::from_native)?,
     )?;
     if args.iter().any(|value| value == "--json") {
-        serde_json::to_string_pretty(&result).map_err(|error| error.to_string())
+        serde_json::to_string_pretty(&result).map_err(CliError::from_native)
     } else {
         Ok(format!(
             "{CENTRAL_RECEIPT}\nNeeds reconciliation: {}\nWorker enforcement established: false",
             result["needsReconciliation"]
         ))
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{native_observation, native_retention_source};
+    use std::cell::Cell;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::rc::Rc;
+    #[test]
+    fn actual_central_observation_and_tracking_retention_stop_after_committed_uncertainty() {
+        for tracking in [false, true] {
+            let (root, mut store, base) = native_retention_source();
+            let before = store.reading().unwrap().revision;
+            // Endpoint metadata is not invoked; this exercises the real attempt
+            // publication and retry boundary, never substitutes a Central result.
+            let request = CentralAttemptRequest {
+                contract: CENTRAL_ACTION.into(),
+                request_ref: base.request_ref,
+                projection_ref: base.projection_ref,
+                caller: base.caller,
+                run_ref: base.run_ref,
+                expected_revision: before,
+                authority: base.authority,
+                attempt_ref: base.attempt_ref,
+                central: CentralReceivingEndpoint {
+                    binary: std::env::current_exe().unwrap(),
+                    root: root.path().to_path_buf(),
+                    contract_revision: CENTRAL_CONTRACT_REVISION.into(),
+                    project: None,
+                },
+                working_directory: root.path().to_path_buf(),
+                destinations: BTreeSet::new(),
+                recover: false,
+                timeout_ms: None,
+            };
+            let observation = native_observation(&store);
+            let mut fact = AttemptTrackingFact {
+                fact_ref: "tracking:actual-retention".into(),
+                kind: "source-revision".into(),
+                owner_ref: "factory".into(),
+                subject_ref: root.path().join("state.json").display().to_string(),
+                source_revision: observation.source_revision.clone(),
+                evidence_refs: BTreeSet::new(),
+            };
+            if tracking {
+                // Preserve the original failure: source-revision belongs to
+                // Central, so a Factory-owned reading cannot claim that kind.
+                // This real semantic refusal must precede any fault observer.
+                let before_bytes = std::fs::read(root.path().join("state.json")).unwrap();
+                let refused = retain_fact(&mut store, &request, fact.clone()).unwrap_err();
+                assert_eq!(
+                    refused.to_string(),
+                    r#"Factory attempt error: InvalidOperation("native developmental transaction: Factory attempt error: InvalidOperation(\"tracking fact misattributes its native owner\")")"#
+                );
+                assert!(crate::native_publication_uncertainty(&refused).is_none());
+                assert_eq!(
+                    std::fs::read(root.path().join("state.json")).unwrap(),
+                    before_bytes,
+                    "misattributed native fact is refused without a write"
+                );
+                assert_eq!(store.reading().unwrap().revision, before);
+                // The tested receipt is an actual Factory source reading,
+                // never a fabricated Central response. Retain it as evidence
+                // for a Factory-owned, non-Central-specific tracking fact.
+                retain(&mut store, &request, &observation).unwrap();
+                fact.kind = "native-source-reading".into();
+                fact.evidence_refs.insert(observation.receipt_ref.clone());
+            }
+            let before_fault = store.reading().unwrap().revision;
+            let lexical = root.path().join("state.json");
+            let physical = lexical.canonicalize().unwrap();
+            let expected = physical.clone();
+            let publications = Rc::new(Cell::new(0));
+            let observed_publications = publications.clone();
+            crate::native_file_transaction::observe_next_publication(move |published| {
+                assert_eq!(
+                    published, lexical,
+                    "publisher retains its raw public address"
+                );
+                // Mac's /var and /private/var are distinct spellings of this
+                // same source. Bind their actual file identity before the fault;
+                // never resolve a moved or missing path after publication.
+                assert_eq!(published.canonicalize().unwrap(), expected);
+                let published_file = std::fs::File::open(published).unwrap();
+                let physical_file = std::fs::File::open(&expected).unwrap();
+                let published_identity = published_file.metadata().unwrap();
+                let physical_identity = physical_file.metadata().unwrap();
+                assert_eq!(
+                    (published_identity.dev(), published_identity.ino()),
+                    (physical_identity.dev(), physical_identity.ino())
+                );
+                observed_publications.set(observed_publications.get() + 1);
+                std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                    .unwrap();
+            });
+            let error = if tracking {
+                retain_fact(&mut store, &request, fact.clone()).unwrap_err()
+            } else {
+                retain(&mut store, &request, &observation).unwrap_err()
+            };
+            let publication = crate::native_publication_uncertainty(&error).unwrap_or_else(|| {
+                panic!("actual publication cause missing (tracking={tracking}): {error}")
+            });
+            let details = publication.details();
+            assert_eq!(details.source_path, physical);
+            assert!(details.published);
+            assert_eq!(details.outcome, "unknown");
+            assert!(!details.automatic_retry);
+            assert_eq!(publications.get(), 1);
+            let current =
+                FileAttemptStore::open_run(root.path().join("state.json"), request.run_ref.clone())
+                    .unwrap()
+                    .reading()
+                    .unwrap();
+            assert_eq!(
+                current.revision,
+                before_fault + 1,
+                "one actual commit; no changed-revision retry"
+            );
+            let current_attempt = record(&current, &request.attempt_ref).unwrap();
+            assert!(current_attempt.observations.contains(&observation));
+            if tracking {
+                assert_eq!(current_attempt.tracking, vec![fact]);
+            } else {
+                assert!(current_attempt.tracking.is_empty());
+            }
+            assert!(current_attempt.readable_return.is_none());
+        }
     }
 }

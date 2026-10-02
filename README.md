@@ -222,6 +222,31 @@ relations each attempt already records, with absent foreign refs marked absent.
 Without a state path these commands use the nearest `.factory/project.json`. See
 the O:I World inhabitation contract v1, section 3.
 
+The Build-only `FactoryBuildFileProvider` (`factory.build-local-provider-state/v1`)
+keeps explicit cached reads while evaluating each Action against current durable
+owner state under its file lock, with a two-second acquisition deadline. Bootstrap
+refuses an existing destination; mutation delegates to `FactoryActionExecutor`,
+publishes a unique synced replacement, then updates the handle and returns the
+receipt. The Build and developmental file providers and Run ledger share one
+private physical publisher: held directory/source/lock/stage descriptors,
+no-follow regular-file admission, exclusive bootstrap, source write admission,
+and exact byte/permission/ownership/ACL/xattr readback. Mac and Linux metadata
+preservation is bounded to 1,024 xattrs and 4 MiB of attribute data (plus 4 MiB of
+Mac ACL text); unsupported metadata refuses replacement. Failed refresh or
+pre-publication mutation leaves the prior cached reading intact. A failure after
+replacement retains its native source path and original I/O cause through
+projected Actions and CLI dispatch. Under `--json`, the existing native failure
+route reports `factory.publication-failure/v1` with `published=true`, unknown
+outcome and no automatic retry; success schemas stay unchanged. Native readback
+is required before another mutation. Failed
+publication retains its hidden candidate stage and never deletes a pathname
+that could now designate foreign state. Explicit empty v1 fields stay on the
+same native record; ambiguous transfer and unsupported nonempty extension data
+refuse mutation without erasure. This provider and the Run developmental ledger remain
+distinct native stores; neither requires another suite product. The ledger's
+current-state transaction and old-writer cutover are specified in
+[Project Development Orientation and Recursive Return](docs/canon/PROJECT-DEVELOPMENT-ORIENTATION-AND-RETURN.md#native-ledger-retention-and-mutation).
+
 This repository now contains several layers with different authority:
 
 ```text

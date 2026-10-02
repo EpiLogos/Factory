@@ -1,0 +1,61 @@
+{
+  "schema": "factory.actual-prior-native-continuation-evidence/v1",
+  "binary": "/Users/admin/Library/Application Support/OI/products/software-factory/c1b663307336a096a4e84c62c88c0d04f52e0968536d42ce8e374172184b5202/bin/factory",
+  "binarySha256": "c1b663307336a096a4e84c62c88c0d04f52e0968536d42ce8e374172184b5202",
+  "reportedVersion": "factory 0.1.0 (34b6143ce56d)",
+  "createdAtUtc": "2026-10-01T09:50:42.896550+00:00",
+  "sourceFixture": "/Users/admin/Central/worktrees/env-3/factory/contracts/factory/fixtures/agent-workflow-source.json",
+  "sourceFixtureSha256": "7bb335ede1a5d3dbc8b82fbef24646fd92761ff702fe9582dcdface948ea40ea",
+  "semanticContentUnchanged": true,
+  "sourceDigestUnchanged": true,
+  "commissionRef": "commission:previous-native-opaque-continuation-fac1ab94fb70",
+  "journeyRef": "journey:01M3VDGMEREWJR27C3RBGJSBMP",
+  "originRunRef": "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+  "successorRunRef": "run:01ARZ3NDEKTSV4RRFFQ69G5FBE",
+  "originSource": {
+    "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "revision": "legacy%20@origin:é/v1",
+    "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "temporalRef": "flow-time:2026-09-08",
+    "flowRef": "flow:factory-197"
+  },
+  "successorSource": {
+    "ref": "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    "revision": "legacy%2520@successor:漢/v2",
+    "digest": "fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "temporalRef": "flow-time:2026-09-08",
+    "flowRef": "flow:factory-197"
+  },
+  "legacyBasisRefs": [
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%20@origin:é/v1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX@legacy%2520@successor:漢/v2:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+  ],
+  "retainedSuccessorBasisRefs": [
+    "commission:previous-native-opaque-continuation-fac1ab94fb70",
+    "factory-continuation-relation:bounded-contribution",
+    "run:01M3VDGMERT7R889QAYJ0JQ2SY",
+    "source:prior-native-opaque-continuation",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAV@legacy%20@origin:é/v1:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX",
+    "workflow-source:01ARZ3NDEKTSV4RRFFQ69G5FAX@legacy%2520@successor:漢/v2:fe0d731ce9880dff648cfb7e3b25c129ab247fa836ad9265373ba3f36343fc3e"
+  ],
+  "state": {
+    "file": "genuine-prior-owner-state.json",
+    "sha256": "9b972047532625d75233f0a6a5b4175db7d13106d0017ed0e4408fcca3d2c279"
+  },
+  "continuationRequest": {
+    "file": "continuation-request.json",
+    "sha256": "880e4029ffce98e0945acd73c4d07e99d0ba9146af45a60828651063e237283d"
+  },
+  "nativeInvocations": 16,
+  "restartReadbacks": true,
+  "publicOldJourneyProjection": "runRefs only; full immutable ancestry is in native owner state and Commission traversal",
+  "exactReplayStatus": "already-applied",
+  "exactReplayAndReadsLeaveBytesUnchanged": true,
+  "wholeCompletion": false,
+  "workerOrModelExecuted": false,
+  "repairRunTouched": false,
+  "privateAuthorityOrCredentialUsed": false,
+  "standing": "actual installed previous Factory native owner bytes; isolated bounded regression state, not a repair undertaking or execution proof"
+}

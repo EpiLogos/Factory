@@ -39,6 +39,21 @@ pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compil
 fn failure(e: impl fmt::Display) -> Diagnostic {
     error("workflow.operation", e.to_string())
 }
+fn publication_failure(error: impl std::error::Error + Send + Sync + 'static) -> Diagnostic {
+    let mut diagnostic = failure(&error);
+    diagnostic.publication_uncertainty =
+        crate::native_publication_uncertainty(&error).map(|cause| cause.details());
+    diagnostic.publication_cause = Some(std::sync::Arc::new(error));
+    diagnostic
+}
+fn after_commission_failure(
+    error: impl std::error::Error + Send + Sync + 'static,
+    result: &Value,
+) -> Diagnostic {
+    let mut diagnostic = publication_failure(error);
+    diagnostic.native_result = Some(result.clone());
+    diagnostic
+}
 fn read_request(path: &str) -> Result<FactoryCommissionRequest, Diagnostic> {
     let before = fs::symlink_metadata(path).map_err(failure)?;
     if !before.is_file() {
@@ -165,14 +180,17 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
                 request,
                 loaded.source.clone(),
             )
-            .map_err(failure)?;
+            .map_err(publication_failure)?;
+            let native_result = json!({"commission":receipt,"source":summary(&loaded.source),"execution":"not-requested"});
             let store = FileAttemptStore::attach(
                 &args[0],
                 receipt.commission.run_ref.clone(),
                 &loaded.source.source.reference.to_string(),
             )
-            .map_err(failure)?;
-            let reading = store.reading().map_err(failure)?;
+            .map_err(|error| after_commission_failure(error, &native_result))?;
+            let reading = store
+                .reading()
+                .map_err(|error| after_commission_failure(error, &native_result))?;
             Ok(
                 json!({"contract":"factory.workflow-commission-receipt/v1","commission":receipt,"source":summary(&loaded.source),
                 "attempts":reading,"execution":"not-requested","nextCommand":"factory attempt action"}),
@@ -329,5 +347,122 @@ pub fn main(args: &[String]) -> ExitCode {
             }
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::build::FactoryBuildState;
+    use crate::core::run::{Project, Run};
+    use crate::developmental_read::FactoryDevelopmentalState;
+    #[test]
+    fn actual_workflow_commission_dispatch_retains_prior_receipt_after_attach_publication_failure()
+    {
+        let root = tempfile::tempdir().unwrap();
+        let request_path = root.path().join("commission.json");
+        let source_path = root.path().join("work.workflow.ts");
+        fs::write(
+            &request_path,
+            include_str!("../../workflow-sdk/examples/commission.json"),
+        )
+        .unwrap();
+        fs::write(
+            &source_path,
+            include_str!("../../workflow-sdk/examples/single.workflow.ts"),
+        )
+        .unwrap();
+        let initialized =
+            crate::project_setup::setup(root.path(), "source-inspection-example", None).unwrap();
+        let state_path = Path::new(initialized["statePath"].as_str().unwrap()).to_path_buf();
+        let physical = state_path.canonicalize().unwrap();
+        let observed_source = physical.clone();
+        // Commission commits first; the subsequent actual attachment commit
+        // changes privacy before owner readback. No error or owner is mocked.
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            assert_eq!(published, observed_source);
+            crate::native_file_transaction::observe_next_publication(|published| {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(published, fs::Permissions::from_mode(0o777)).unwrap();
+            });
+        });
+        let args = vec![
+            "workflow".into(),
+            "commission".into(),
+            state_path.display().to_string(),
+            request_path.display().to_string(),
+            source_path.display().to_string(),
+            "--json".into(),
+        ];
+        let diagnostic = execute(&args).unwrap_err();
+        let native = crate::native_publication_uncertainty(&diagnostic).unwrap();
+        assert_eq!(native.source_path, physical);
+        let result = diagnostic.native_result.as_ref().unwrap();
+        assert_eq!(result["execution"], "not-requested");
+        let prior_run = result["commission"]["commission"]["runRef"]
+            .as_str()
+            .unwrap();
+        let current = FactoryDevelopmentalFileProvider::open(&state_path).unwrap();
+        assert_eq!(
+            current.state().commissions.len(),
+            1,
+            "one actual Commission, no recommission"
+        );
+        let run = prior_run.parse().unwrap();
+        assert!(current.state().build.run(&run).is_some());
+        assert!(
+            current.state().attempt_states.contains_key(&run),
+            "attachment actually published although privacy readback was uncertain"
+        );
+        let value = serde_json::to_value(&diagnostic).unwrap();
+        assert_eq!(value["nativeResult"], *result);
+        assert_eq!(value["publicationUncertainty"]["published"], true);
+        assert_eq!(value["publicationUncertainty"]["automatic_retry"], false);
+    }
+
+    #[test]
+    fn real_commission_provider_error_keeps_native_cause_in_workflow_diagnostic() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("actual-developmental.json");
+        let retained = root.path().join("actual-committed-developmental.json");
+        let physical = std::fs::canonicalize(root.path())
+            .unwrap()
+            .join("actual-developmental.json");
+        let project = "project:01ARZ3NDEKTSV4RRFFQ69G5FCA".parse().unwrap();
+        let run = Run::new(
+            "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap(),
+            project,
+            "Native diagnostic cause",
+            "factory-test",
+        )
+        .unwrap();
+        let state = FactoryDevelopmentalState::new(
+            FactoryBuildState::new(Project::new(run.project_ref().clone()), run).unwrap(),
+            vec![],
+        )
+        .unwrap();
+        let observed = retained.clone();
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            std::fs::rename(published, observed).unwrap();
+        });
+        let diagnostic = publication_failure(
+            FactoryDevelopmentalFileProvider::create_new(&path, state).unwrap_err(),
+        );
+        let native = crate::native_publication_uncertainty(&diagnostic).unwrap();
+        assert_eq!(native.cause.raw_os_error(), Some(libc::ENOENT));
+        let value = serde_json::to_value(&diagnostic).unwrap();
+        let details = &value["publicationUncertainty"];
+        assert_eq!(details["source_path"], physical.display().to_string());
+        assert_eq!(details["published"], true);
+        assert_eq!(details["outcome"], "unknown");
+        assert_eq!(details["automatic_retry"], false);
+        assert_eq!(details["cause"]["raw_os_error"], libc::ENOENT);
+        assert!(FactoryDevelopmentalFileProvider::open(retained).is_ok());
+        assert!(!path.exists());
+        // Ordinary diagnostics retain their existing serialized fields.
+        assert!(serde_json::to_value(failure("ordinary refusal"))
+            .unwrap()
+            .get("publicationUncertainty")
+            .is_none());
     }
 }

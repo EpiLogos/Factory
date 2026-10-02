@@ -8,6 +8,7 @@ use crate::attempt_runtime::{
     FactoryAttemptActionRequest, FactoryAttemptOperation, FactoryAttemptReading,
     FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt, FACTORY_ATTEMPT_ACTION,
 };
+use crate::cli::CliError;
 use crate::native_owner::{
     invoke_native_owner_bounded, NativeOwnerInvocation, WorkcellWorldOperation,
     DEFAULT_OWNER_TIMEOUT_MS, WORKCELL_CAW_CONTRACT_REVISION,
@@ -153,9 +154,9 @@ fn retain(
     store: &mut FileAttemptStore,
     request: &FactoryAttemptOwnerRequest,
     receipt: &OwnerOperationReceipt,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(|error| error.to_string())?;
+        let reading = store.reading().map_err(CliError::from_native)?;
         let attempt = record(&reading, &request.attempt_ref)?;
         if let Some(existing) = attempt
             .observations
@@ -171,9 +172,11 @@ fn retain(
         match store.apply(action(request, reading.revision, receipt.clone())) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
-                {
-                    return Err(error.to_string());
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(CliError::from_native(error));
+                }
+                if store.reading().map_err(CliError::from_native)?.revision == reading.revision {
+                    return Err(CliError::from_native(error));
                 }
             }
         }
@@ -186,7 +189,7 @@ fn result(
     request: &FactoryAttemptOwnerRequest,
     receipt: OwnerOperationReceipt,
     replayed: bool,
-    mut retention_error: Option<String>,
+    mut retention_error: Option<CliError>,
 ) -> FactoryAttemptOwnerReceipt {
     let owner_receipt = receipt
         .payload
@@ -196,7 +199,9 @@ fn result(
     let reading = match store.reading() {
         Ok(reading) => Some(reading),
         Err(error) => {
-            retention_error = Some(error.to_string());
+            if retention_error.is_none() {
+                retention_error = Some(CliError::from_native(error));
+            }
             None
         }
     };
@@ -204,6 +209,10 @@ fn result(
         .as_ref()
         .and_then(|reading| record(reading, &request.attempt_ref).ok())
         .is_none_or(|record| calls(record).values().any(|receipt| pending(receipt.phase)));
+    let publication_uncertainty = retention_error
+        .as_ref()
+        .and_then(|error| crate::native_publication_uncertainty(error))
+        .map(|publication| publication.details());
     FactoryAttemptOwnerReceipt {
         contract: MATERIAL_RECEIPT.into(),
         request_ref: request.request_ref.clone(),
@@ -213,7 +222,8 @@ fn result(
         needs_reconciliation: unresolved || pending(receipt.phase) || retention_error.is_some(),
         transport_observation: receipt,
         owner_receipt,
-        retention_error,
+        retention_error: retention_error.map(|error| error.to_string()),
+        publication_uncertainty,
         reading,
     }
 }
@@ -366,7 +376,7 @@ fn settle_read_calls(
     store: &mut FileAttemptStore,
     request: &FactoryAttemptOwnerRequest,
     outcome: &OwnerOperationReceipt,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     if outcome.phase != OwnerOperationPhase::Observed
         || outcome.payload["detail"]["validated"] != true
         || !matches!(
@@ -376,7 +386,7 @@ fn settle_read_calls(
     {
         return Ok(());
     }
-    let reading = store.reading().map_err(|error| error.to_string())?;
+    let reading = store.reading().map_err(CliError::from_native)?;
     let attempt = record(&reading, &request.attempt_ref)?;
     let prior = calls(attempt)
         .values()
@@ -411,7 +421,7 @@ fn settle_read_calls(
 /// Workcell at another World after admission. It is not a new material store.
 struct TransportReceipt(PathBuf);
 impl TransportReceipt {
-    fn new(bytes: &[u8]) -> Result<Self, String> {
+    fn new(bytes: &[u8]) -> Result<Self, CliError> {
         let directory =
             std::env::temp_dir().join(format!("factory-material-{}", ulid::Ulid::new()));
         let mut builder = fs::DirBuilder::new();
@@ -420,9 +430,7 @@ impl TransportReceipt {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
-        builder
-            .create(&directory)
-            .map_err(|error| error.to_string())?;
+        builder.create(&directory).map_err(CliError::from_native)?;
         let staging = Self(directory);
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
@@ -433,10 +441,10 @@ impl TransportReceipt {
         }
         let mut file = options
             .open(staging.path())
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         file.write_all(bytes)
             .and_then(|()| file.sync_all())
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         Ok(staging)
     }
     fn path(&self) -> PathBuf {
@@ -453,7 +461,7 @@ impl Drop for TransportReceipt {
 pub fn execute(
     state_path: &Path,
     request: FactoryAttemptOwnerRequest,
-) -> Result<FactoryAttemptOwnerReceipt, String> {
+) -> Result<FactoryAttemptOwnerReceipt, CliError> {
     if request.contract != MATERIAL_ACTION || request.request_ref.trim().is_empty() {
         return Err("invalid material Action contract or request identity".into());
     }
@@ -482,11 +490,11 @@ pub fn execute(
         return Err("material Action requires the pinned owner, explicit endpoint and absolute receipt path".into());
     }
     let digest =
-        blake3::hash(&serde_json::to_vec(&request).map_err(|error| error.to_string())?).to_string();
+        blake3::hash(&serde_json::to_vec(&request).map_err(CliError::from_native)?).to_string();
     let operation_ref = format!("factory-attempt-material:{}", request.request_ref);
     let mut store = FileAttemptStore::open_run(state_path, request.run_ref.clone())
-        .map_err(|error| error.to_string())?;
-    let reading = store.reading().map_err(|error| error.to_string())?;
+        .map_err(CliError::from_native)?;
+    let reading = store.reading().map_err(CliError::from_native)?;
     let attempt = record(&reading, &request.attempt_ref)?;
     let probe = OwnerOperationReceipt {
         owner_ref: "factory".into(),
@@ -504,7 +512,7 @@ pub fn execute(
         reading.revision,
         probe.clone(),
     ))
-    .map_err(|error| error.to_string())?;
+    .map_err(CliError::from_native)?;
     // The original call may have preceded execution binding. Exact replay keeps
     // its original basis and never acts; a new call must name current identity.
     if let Some(previous) = calls(attempt).get(operation_ref.as_str()) {
@@ -527,14 +535,14 @@ pub fn execute(
         .ok_or("attempt has no Workcell binding")?;
     let mut bytes = Vec::new();
     fs::File::open(receipt)
-        .map_err(|error| error.to_string())?
+        .map_err(CliError::from_native)?
         .take(MAX_RECEIPT + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| error.to_string())?;
+        .map_err(CliError::from_native)?;
     if bytes.len() as u64 > MAX_RECEIPT {
         return Err("material receipt exceeds four MiB".into());
     }
-    let input: Value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+    let input: Value = serde_json::from_slice(&bytes).map_err(CliError::from_native)?;
     let world = validate_world(&input, workcell)?;
     if !known_world(attempt, world) {
         return Err("material receipt is not bound to this attempt".into());
@@ -557,7 +565,7 @@ pub fn execute(
         }
         validate_shared_effect(state_path, &request, *world_operation, workcell, world)?;
     }
-    let operation = serde_json::to_value(world_operation).map_err(|error| error.to_string())?;
+    let operation = serde_json::to_value(world_operation).map_err(CliError::from_native)?;
     let mut intent = probe;
     intent.payload = json!({"requestDigest":digest,"worldRef":world,"workcellRef":workcell,
         "receiptDigest":format!("blake3:{}",blake3::hash(&bytes)),"operation":operation,
@@ -569,14 +577,14 @@ pub fn execute(
     );
     store
         .apply(action(&request, request.expected_revision, intent.clone()))
-        .map_err(|error| error.to_string())?;
+        .map_err(CliError::from_native)?;
     let staging = match TransportReceipt::new(&bytes) {
         Ok(staging) => staging,
         Err(error) => {
             let failed = stamped(
                 intent,
                 OwnerOperationPhase::Failed,
-                json!({"failure":error,"ownerInvoked":false}),
+                json!({"failure":error.to_string(),"ownerInvoked":false}),
             );
             let retained = retain(&mut store, &request, &failed).err();
             return Ok(result(&store, &request, failed, false, retained));
@@ -641,7 +649,7 @@ pub fn execute(
     Ok(result(&store, &request, outcome, false, retention_error))
 }
 
-pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliError> {
     let positional = args
         .iter()
         .filter(|arg| arg.as_str() != "--json")
@@ -657,24 +665,75 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
     }
     let input_path = positional.get(1).map(|arg| arg.as_str()).unwrap_or("-");
     let input = if input_path != "-" {
-        fs::read_to_string(input_path).map_err(|error| error.to_string())?
+        fs::read_to_string(input_path).map_err(CliError::from_native)?
     } else if let Some(stdin) = stdin {
         stdin.to_owned()
     } else {
         let mut input = String::new();
         std::io::stdin()
             .read_to_string(&mut input)
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         input
     };
     let receipt = execute(
         Path::new(positional[0]),
-        serde_json::from_str(&input).map_err(|error| error.to_string())?,
+        serde_json::from_str(&input).map_err(CliError::from_native)?,
     )?;
     if args.iter().any(|arg| arg == "--json") {
-        serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())
+        serde_json::to_string_pretty(&receipt).map_err(CliError::from_native)
     } else {
         Ok(format!("{}\nAttempt: {}\nMaterial call: {}\nReplayed: {}\nNeeds reconciliation: {}\nWorker continuation, quiescence and task Return are separate operations.",
             receipt.contract,receipt.attempt_ref,receipt.request_ref,receipt.replayed,receipt.needs_reconciliation))
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{
+        change_actual_published_privacy, native_observation, native_retention_source,
+    };
+    #[test]
+    fn actual_material_retention_stops_before_followup_after_native_publication_uncertainty() {
+        let (root, mut store, base) = native_retention_source();
+        let before = store.reading().unwrap().revision;
+        let request = FactoryAttemptOwnerRequest {
+            contract: MATERIAL_ACTION.into(),
+            request_ref: base.request_ref,
+            projection_ref: base.projection_ref,
+            caller: base.caller,
+            run_ref: base.run_ref,
+            expected_revision: before,
+            authority: base.authority,
+            attempt_ref: base.attempt_ref,
+            execution_ref: "execution:retention-only".into(),
+            invocation: NativeOwnerInvocation::WorkcellWorld {
+                binary: std::env::current_exe().unwrap(),
+                receipt: root.path().join("state.json"),
+                world_operation: WorkcellWorldOperation::Inspect,
+                endpoint: None,
+                authorization: None,
+                contract_revision: WORKCELL_CAW_CONTRACT_REVISION.into(),
+            },
+        };
+        let observation = native_observation(&store);
+        change_actual_published_privacy();
+        let followup = std::cell::Cell::new(false);
+        let failure = retain(&mut store, &request, &observation)
+            .and_then(|()| {
+                followup.set(true);
+                settle_read_calls(&mut store, &request, &observation)
+            })
+            .unwrap_err();
+        assert!(!followup.get());
+        assert!(crate::native_publication_uncertainty(&failure).is_some());
+        assert_eq!(store.reading().unwrap().revision, before + 1);
+        let returned = result(&store, &request, observation, false, Some(failure));
+        assert!(returned.publication_uncertainty.is_some());
+        assert!(returned.needs_reconciliation);
+        assert!(
+            returned.owner_receipt.is_none(),
+            "no Workcell invocation or fabricated material result"
+        );
     }
 }

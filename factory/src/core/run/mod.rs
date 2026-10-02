@@ -6,8 +6,9 @@ mod thought;
 mod topology;
 
 pub use model::{
-    CommandOutcome, Project, Run, RunContractError, RunLifecycle, RunMutationAuthority,
-    RunRegistry, RunThoughtCommand, RunThoughtOutcome, RunTopologyCommand, WriteAuthority,
+    CommandOutcome, Project, Run, RunContractError, RunLifecycle, RunLifecycleCommand,
+    RunLifecycleOutcome, RunLifecycleReceipt, RunMutationAuthority, RunRegistry, RunThoughtCommand,
+    RunThoughtOutcome, RunTopologyCommand, WriteAuthority,
 };
 pub use projection::{resolve_run_projection, RunProjectionIdentity};
 pub use refs::{ProjectRef, RunMapAddress, RunRef, TypedRefError, WorkflowUnitRef};

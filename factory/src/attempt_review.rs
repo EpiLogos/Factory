@@ -2,16 +2,16 @@
 //! engine. Returned native work, exact selected material and distinct actual
 //! identities are necessary; this does not infer creative quality or Recognition.
 use crate::attempt_runtime::{
-    FactoryAttemptError, FactoryAttemptRecord, OwnerOperationPhase, StoredAttemptState,
-    VerificationOutcome,
+    has_passing_verification, FactoryAttemptError, FactoryAttemptRecord, OwnerOperationPhase,
+    StoredAttemptState,
 };
 use crate::core::run::WorkflowUnitRef;
-use crate::orchestration::{ExecutableOrchestration, LegStatus};
+use crate::orchestration::ExecutableOrchestration;
 use std::collections::BTreeSet;
 fn invalid(message: impl Into<String>) -> FactoryAttemptError {
     FactoryAttemptError::InvalidOperation(message.into())
 }
-fn settled<'a>(
+pub(crate) fn settled<'a>(
     state: &'a StoredAttemptState,
     engine: &ExecutableOrchestration,
     id: &str,
@@ -27,23 +27,13 @@ fn settled<'a>(
     let leg = engine
         .leg(&record.workflow_unit_ref)
         .ok_or_else(|| invalid("review/synthesis leg is absent"))?;
-    if leg.status != LegStatus::Returned
+    if !engine.is_current_return(&record.workflow_unit_ref)
         || &leg.execution_ref != execution
         || record.readable_return.is_none()
     {
         return Err(invalid("review/synthesis needs this exact current returned attempt, not a failed, pending or historical result"));
     }
-    let verification = record
-        .verifications
-        .last()
-        .ok_or_else(|| invalid("review/synthesis requires current verification"))?;
-    if verification.outcome != VerificationOutcome::Passed
-        || verification.evidence_refs.is_empty()
-        || !record
-            .disposition
-            .verification_obligations
-            .is_subset(&verification.obligations)
-    {
+    if !has_passing_verification(record) {
         return Err(invalid(
             "failed, missing or superseded verification cannot establish review/synthesis",
         ));

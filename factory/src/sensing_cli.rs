@@ -320,7 +320,7 @@ fn collect(args: &Arguments) -> Result<Value, CliError> {
         current.sensing.revision += 1;
         Ok(receipt)
     })
-    .map_err(err)?;
+    .map_err(CliError::from_native)?;
     Ok(
         json!({"schema":COLLECTION_SCHEMA,"project_world_ref":policy.project_world_ref,"collection":receipt,"work_created":false,"basis":"collection observes; classification and authorised commissioning are separate operations"}),
     )
@@ -436,7 +436,7 @@ fn classify(args: &Arguments) -> Result<Value, CliError> {
         if request["source_revision"]!=signal.observation.source_revision {return Err(store_err("source changed: classification is bound to a stale source revision"));}
         signal.decisions.push(Decision{classification,source_revision:signal.observation.source_revision.clone(),evidence_refs:evidence,reason,decision_needed:request["decision_needed"].as_str().map(str::to_owned),boundary_ref:request["boundary_ref"].as_str().map(str::to_owned),actor_ref:auth.actor,authority_ref:auth.reference,recorded_at_unix_ms:now_ms()});
         state.sensing.revision+=1;Ok(json!({"schema":"factory.signal-decision-receipt/v1","revision":state.sensing.revision,"signal":signal,"work_created":false}))
-    }).map_err(err)
+    }).map_err(CliError::from_native)
 }
 
 fn commission(args: &Arguments) -> Result<Value, CliError> {
@@ -539,7 +539,7 @@ fn commission(args: &Arguments) -> Result<Value, CliError> {
         let work=WorkRelation{custody_ref:custody.custody.custody_ref,work_ref:reference.clone(),run_ref:Some(admitted.commission.run_ref.to_string()),position_ref:position,now_ref:None,authority_ref:auth.reference,created_at_unix_ms:now_ms()};
         state.sensing.signals.get_mut(&reference).ok_or_else(||store_err("signal vanished"))?.work=Some(work.clone());state.sensing.revision+=1;
         Ok(json!({"schema":"factory.signal-work-receipt/v1","result":"applied","work":work,"commission":admitted}))
-    }).map_err(err)?;
+    }).map_err(CliError::from_native)?;
     // Child NOW is an idempotent cross-owner join. A failure cannot erase
     // committed custody or cause a replacement Run on retry.
     attach_now(args, &policy.project_world_ref, &reference, result)
@@ -641,7 +641,7 @@ fn attach_now(
                 }
                 Ok(())
             })
-            .map_err(err)?;
+            .map_err(CliError::from_native)?;
             result["now_ref"] = json!(now_ref);
         }
         Err(error) => {
@@ -725,7 +725,7 @@ fn record_return(args: &Arguments) -> Result<Value, CliError> {
         if returned.source_revision!=signal.observation.source_revision{return Err(store_err("Return source basis is stale; reread and independently verify"));}
         signal.returns.push(returned.clone());state.sensing.revision+=1;
         Ok(json!({"schema":"factory.signal-return-receipt/v1","result":"applied","signal_ref":reference,"returned":returned,"human_recognition":false}))
-    }).map_err(err)
+    }).map_err(CliError::from_native)
 }
 
 fn read_merge_basis(
@@ -1263,4 +1263,64 @@ fn render(document: &Value) -> String {
         out.push_str("Partial reading: display limit reached.\n");
     }
     out
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::build::FactoryBuildState;
+    use crate::core::run::Project;
+    use crate::developmental_read::FactoryDevelopmentalFileProvider;
+    #[test]
+    fn actual_native_sensing_collection_commit_preserves_errno_through_public_cli() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("native-sensing.json");
+        let retained = root.path().join("retained-committed-sensing.json");
+        let policy_path = root.path().join("native-policy.json");
+        let project = "project:01ARZ3NDEKTSV4RRFFQ69G5FAE".parse().unwrap();
+        let state =
+            FactoryDevelopmentalState::new(FactoryBuildState::empty(Project::new(project)), vec![])
+                .unwrap();
+        let world = state.project_ref().to_string();
+        FactoryDevelopmentalFileProvider::create_new(&path, state).unwrap();
+        let policy = json!({"schema":POLICY_SCHEMA,"version":1,"project_world_ref":world,
+            "sources":[{"id":"custody","provider":"factory","scope":world,
+                "source_ref":"factory:actual-local-custody","arguments":{"kind":"custody"}}],
+            "workflows":{"collect":{"enabled":true,"sources":["custody"]}}});
+        std::fs::write(&policy_path, serde_json::to_vec_pretty(&policy).unwrap()).unwrap();
+        let physical = std::fs::canonicalize(&path).unwrap();
+        let observer = retained.clone();
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            std::fs::rename(published, observer).unwrap();
+        });
+        let args = vec![
+            "telemetry".into(),
+            "collect".into(),
+            path.display().to_string(),
+            "--policy".into(),
+            policy_path.display().to_string(),
+            "--json".into(),
+        ];
+        let error = crate::attempt_cli::execute(&args, None).unwrap_err();
+        let failure = crate::native_publication_failure(&error).unwrap();
+        assert_eq!(
+            failure["error"]["details"]["source_path"],
+            physical.display().to_string()
+        );
+        assert_eq!(failure["error"]["details"]["published"], true);
+        assert_eq!(failure["error"]["details"]["automatic_retry"], false);
+        assert_eq!(
+            failure["error"]["details"]["cause"]["raw_os_error"],
+            libc::ENOENT
+        );
+        let actual = FactoryDevelopmentalFileProvider::open(retained).unwrap();
+        assert_eq!(actual.state().sensing.collections.len(), 1);
+        assert_eq!(actual.state().sensing.collections[0].coverage.len(), 1);
+        assert_eq!(
+            actual.state().sensing.collections[0].coverage[0].source_ref,
+            "factory:actual-local-custody"
+        );
+        assert!(!path.exists());
+        // Only native Factory reads participated; optional hosted products are absent.
+    }
 }

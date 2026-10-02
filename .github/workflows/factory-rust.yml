@@ -86,6 +86,8 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Test all native targets
         run: cargo test --workspace --all-targets --locked
+      - name: Actual foreign uid and gid publication in an owned native fixture
+        run: python3 scripts/test_native_publication_privacy.py
       - name: Installed authoring front door without an ambient companion runtime
         run: |
           cargo install --path factory --locked --debug --root "$RUNNER_TEMP/factory-installed"
@@ -99,11 +101,37 @@ jobs:
           python3 scripts/validate_routine_continuation.py
           python3 scripts/validate_self_hosting_commission.py
 
-  # The former prelocal-build artifact job now depends on the SAME exact-source
-  # native gate. Packaging/attestation is unchanged; no second test build.
+  factory-native-macos:
+    # Mac descriptor/ACL/fcopyfile/rename paths need actual Mac qualification.
+    # Keep the existing required Linux check name stable.
+    runs-on: macos-14
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: factory-native-macos
+          workspaces: '. -> target'
+          cache-on-failure: true
+      - name: Mac native caller and platform compilation
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: All actual Mac native targets including ACL and restart cases
+        run: cargo test --workspace --all-targets --locked
+      - name: Actual foreign uid and gid publication in an owned native Mac fixture
+        run: python3 scripts/test_native_publication_privacy.py
+
+  # Component publication needs both actual native platform gates.
   artifact:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: factory-rust
+    needs: [factory-rust, factory-native-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

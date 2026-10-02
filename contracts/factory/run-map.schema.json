@@ -98,6 +98,31 @@
         }
       }
     },
+    "runLifecycle": {
+      "enum": ["seeded", "active", "waiting_human", "suspended", "finishing", "finished", "aborted", "archived"]
+    },
+    "runLifecycleCommand": {
+      "type": "object",
+      "required": ["commandId", "expectedRevision", "lifecycle"],
+      "additionalProperties": false,
+      "properties": {
+        "commandId": {"type": "string", "minLength": 1},
+        "expectedRevision": {"$ref": "#/$defs/revision"},
+        "lifecycle": {"$ref": "#/$defs/runLifecycle"}
+      }
+    },
+    "runLifecycleReceipt": {
+      "type": "object",
+      "required": ["command", "previousLifecycle", "nextRevision", "authorityOwner", "authorityEpoch"],
+      "additionalProperties": false,
+      "properties": {
+        "command": {"$ref": "#/$defs/runLifecycleCommand"},
+        "previousLifecycle": {"$ref": "#/$defs/runLifecycle"},
+        "nextRevision": {"$ref": "#/$defs/revision"},
+        "authorityOwner": {"type": "string", "minLength": 1},
+        "authorityEpoch": {"type": "integer", "minimum": 1}
+      }
+    },
     "run": {
       "type": "object",
       "required": ["ref", "projectRef", "revision", "destination", "lifecycle", "writeAuthority", "map", "appliedCommandIds"],
@@ -107,7 +132,7 @@
         "projectRef": {"$ref": "#/$defs/projectRef"},
         "revision": {"$ref": "#/$defs/revision"},
         "destination": {"type": "string", "minLength": 1},
-        "lifecycle": {"enum": ["seeded", "active", "waiting_human", "suspended", "finishing", "finished", "aborted", "archived"]},
+        "lifecycle": {"$ref": "#/$defs/runLifecycle"},
         "writeAuthority": {
           "type": "object",
           "required": ["owner", "epoch"],
@@ -119,7 +144,12 @@
           "$ref": "#/$defs/runThoughtField",
           "description": "Canonical new writes include this field. It is optional in v1 schema so historical Run records without it remain readable as an empty cognitive field."
         },
-        "appliedCommandIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+        "appliedCommandIds": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "lifecycleCommands": {
+          "type": "object",
+          "description": "Exact optional lifecycle command receipts retained by the native Run owner; historical records without the field remain readable.",
+          "additionalProperties": {"$ref": "#/$defs/runLifecycleReceipt"}
+        }
       }
     }
   }

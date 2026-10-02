@@ -115,19 +115,88 @@ pub fn config_main(args: &[String]) -> ExitCode {
     }
 }
 
+/// The existing owner document and its original native cause travel together.
+/// Ordinary configuration documents remain byte-for-byte compatible.
+#[derive(Debug)]
+pub struct ConfigError {
+    document: String,
+    native_document: Option<Value>,
+    cause: Option<Box<dyn std::error::Error + Send + Sync>>,
+}
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.document)
+    }
+}
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.cause
+            .as_ref()
+            .map(|cause| cause.as_ref() as &(dyn std::error::Error + 'static))
+    }
+}
+impl ConfigError {
+    pub(crate) fn native_document(&self) -> Option<&Value> {
+        self.native_document.as_ref()
+    }
+}
+impl From<String> for ConfigError {
+    fn from(document: String) -> Self {
+        Self {
+            document,
+            native_document: None,
+            cause: None,
+        }
+    }
+}
+fn native_config_failure(
+    error: crate::developmental_read::FactoryDevelopmentalProviderError,
+    context: &str,
+    setting_ref: &str,
+    scope_kind: &str,
+) -> ConfigError {
+    let publication = crate::native_publication_uncertainty(&error).map(|cause| cause.details());
+    let mut document = error_value(
+        if publication.is_some() {
+            "internal"
+        } else {
+            "validation_failed"
+        },
+        &format!("{context}: {error}"),
+        Some(setting_ref),
+        Some(scope_kind),
+    );
+    if let Some(details) = publication {
+        document["retryable"] = json!(false);
+        document["native_error_code"] = json!("factory.publication_uncertain");
+        document["publicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
+    }
+    ConfigError {
+        document: serde_json::to_string_pretty(&document).expect("error document serialises"),
+        native_document: Some(document),
+        cause: Some(Box::new(error)),
+    }
+}
+
 /// Execute `config-contribution` / `config <verb>`. `json` is supplied by the
 /// caller because the shared CLI dispatcher strips `--json` before dispatch.
 /// The `Err` payload is the complete serialized `oi.config-error/v1` document.
-pub fn execute_config(args: &[String], stdin: Option<&str>, json: bool) -> Result<String, String> {
+pub fn execute_config(
+    args: &[String],
+    stdin: Option<&str>,
+    json: bool,
+) -> Result<String, ConfigError> {
     match args.first().map(String::as_str) {
-        Some("config-contribution") => config_contribution_command(json),
+        Some("config-contribution") => config_contribution_command(json).map_err(ConfigError::from),
         Some("config") => config_verb_command(&args[1..], json, stdin),
         _ => Err(error_document(
             "internal",
             "configuration commands are `config-contribution` and `config <verb>`",
             None,
             None,
-        )),
+        )
+        .into()),
     }
 }
 
@@ -159,7 +228,11 @@ fn config_contribution_command(json_out: bool) -> Result<String, String> {
     ))
 }
 
-fn config_verb_command(args: &[String], json: bool, stdin: Option<&str>) -> Result<String, String> {
+fn config_verb_command(
+    args: &[String],
+    json: bool,
+    stdin: Option<&str>,
+) -> Result<String, ConfigError> {
     let verb = args.first().map(String::as_str).ok_or_else(|| {
         error_document(
             "validation_failed",
@@ -170,8 +243,8 @@ fn config_verb_command(args: &[String], json: bool, stdin: Option<&str>) -> Resu
     })?;
     let parsed = parse_verb_args(&args[1..])?;
     match verb {
-        "validate" => validate_command(&parsed, json, stdin),
-        "plan" => plan_command(&parsed, json, stdin),
+        "validate" => validate_command(&parsed, json, stdin).map_err(ConfigError::from),
+        "plan" => plan_command(&parsed, json, stdin).map_err(ConfigError::from),
         "apply" => apply_command(&parsed, json, stdin),
         "reset" => reset_command(&parsed, json),
         other => Err(error_document(
@@ -179,7 +252,8 @@ fn config_verb_command(args: &[String], json: bool, stdin: Option<&str>) -> Resu
             &format!("unknown config verb `{other}`; expected validate, plan, apply or reset"),
             None,
             None,
-        )),
+        )
+        .into()),
     }
 }
 
@@ -1234,7 +1308,11 @@ fn plan_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<St
     ))
 }
 
-fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<String, String> {
+fn apply_command(
+    parsed: &VerbArgs,
+    json: bool,
+    stdin: Option<&str>,
+) -> Result<String, ConfigError> {
     let plan_file = parsed
         .plan_file
         .as_deref()
@@ -1257,7 +1335,8 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             ),
             None,
             None,
-        ));
+        )
+        .into());
     }
     let plan: ConfigPlan = serde_json::from_value(requested).map_err(|error| {
         error_document(
@@ -1279,7 +1358,7 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             ),
             Some(&plan.setting_ref),
             Some(&plan.scope.scope_kind),
-        ));
+        ).into());
     }
     let changeset_id = match parsed.changeset.as_deref() {
         Some(changeset) => valid_changeset(changeset)?,
@@ -1315,7 +1394,7 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             original_receipt_id: Some(original.receipt_id.clone()),
             error: None,
         };
-        return emit_receipt(&state_path, replay, json);
+        return emit_receipt(&state_path, replay, json).map_err(ConfigError::from);
     }
 
     // The plan carries the caller-visible change; the value itself is
@@ -1349,7 +1428,8 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             ),
             Some(&plan.setting_ref),
             Some(&plan.scope.scope_kind),
-        ));
+        )
+        .into());
     }
     if is_telemetry_setting(&plan.setting_ref) {
         let (valid, _) = evaluate_telemetry_value(&plan.setting_ref, &stored.value)?;
@@ -1359,7 +1439,8 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
                 "the planned telemetry value no longer validates",
                 Some(&plan.setting_ref),
                 Some(&plan.scope.scope_kind),
-            ));
+            )
+            .into());
         }
         let sidecar = telemetry_settings_path(&state_path);
         let mut effective: serde_json::Map<String, Value> = std::fs::read_to_string(&sidecar)
@@ -1394,7 +1475,7 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
             original_receipt_id: None,
             error: None,
         };
-        return emit_receipt(&state_path, receipt, json);
+        return emit_receipt(&state_path, receipt, json).map_err(ConfigError::from);
     }
     let (central_project_ref, source_path) = central_project_value(&stored.value)?;
 
@@ -1405,11 +1486,11 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
         source_path: source_path.clone(),
     };
     let native = state.admit_central_project_link(request).map_err(|error| {
-        error_document(
-            "validation_failed",
-            &format!("native admission refused the binding: {error}"),
-            Some(&plan.setting_ref),
-            Some(&plan.scope.scope_kind),
+        native_config_failure(
+            error,
+            "native admission refused the binding",
+            &plan.setting_ref,
+            &plan.scope.scope_kind,
         )
     })?;
     let (outcome, original_receipt_id) = match native.result.as_str() {
@@ -1428,7 +1509,8 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
                 &format!("native admission returned an unknown result `{other}`"),
                 Some(&plan.setting_ref),
                 None,
-            ))
+            )
+            .into())
         }
     };
 
@@ -1451,10 +1533,10 @@ fn apply_command(parsed: &VerbArgs, json: bool, stdin: Option<&str>) -> Result<S
         original_receipt_id,
         error: None,
     };
-    emit_receipt(&state_path, receipt, json)
+    emit_receipt(&state_path, receipt, json).map_err(ConfigError::from)
 }
 
-fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
+fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, ConfigError> {
     let setting_ref = parsed
         .setting
         .as_deref()
@@ -1492,7 +1574,7 @@ fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
             original_receipt_id: Some(original.receipt_id.clone()),
             error: None,
         };
-        return emit_receipt(&state_path, replay, json);
+        return emit_receipt(&state_path, replay, json).map_err(ConfigError::from);
     }
 
     if is_telemetry_setting(setting_ref) {
@@ -1535,15 +1617,15 @@ fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
             original_receipt_id: None,
             error: None,
         };
-        return emit_receipt(&state_path, receipt, json);
+        return emit_receipt(&state_path, receipt, json).map_err(ConfigError::from);
     }
     let mut state = open_state(&scope)?;
     let removed = state.remove_central_project_link().map_err(|error| {
-        error_document(
-            "validation_failed",
-            &format!("native unbind refused: {error}"),
-            Some(setting_ref),
-            Some(&scope.scope_kind),
+        native_config_failure(
+            error,
+            "native unbind refused",
+            setting_ref,
+            &scope.scope_kind,
         )
     })?;
     let native_ref = removed.map(|link| {
@@ -1576,7 +1658,7 @@ fn reset_command(parsed: &VerbArgs, json: bool) -> Result<String, String> {
         original_receipt_id: None,
         error: None,
     };
-    emit_receipt(&state_path, receipt, json)
+    emit_receipt(&state_path, receipt, json).map_err(ConfigError::from)
 }
 
 fn emit_receipt(state_path: &Path, receipt: ConfigReceipt, json: bool) -> Result<String, String> {
@@ -1775,6 +1857,16 @@ fn error_document(
     setting_ref: Option<&str>,
     scope_kind: Option<&str>,
 ) -> String {
+    serde_json::to_string_pretty(&error_value(code, message, setting_ref, scope_kind))
+        .expect("error document serialises")
+}
+
+fn error_value(
+    code: &str,
+    message: &str,
+    setting_ref: Option<&str>,
+    scope_kind: Option<&str>,
+) -> Value {
     let mut document = Map::new();
     document.insert("schema".into(), json!(CONFIG_ERROR_SCHEMA));
     document.insert("error_code".into(), json!(code));
@@ -1785,7 +1877,7 @@ fn error_document(
     if let Some(scope_kind) = scope_kind {
         document.insert("scope_kind".into(), json!(scope_kind));
     }
-    serde_json::to_string_pretty(&Value::Object(document)).expect("error document serialises")
+    Value::Object(document)
 }
 
 fn internal_error(error: serde_json::Error) -> String {
@@ -1799,6 +1891,280 @@ fn internal_io_document(context: &str, error: &io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn actual_config_link_invalid_changeset_refuses_before_publication_and_keeps_source_bytes() {
+        // Retain the exact invalid identities from the hosted failure. They
+        // fail native admission before publication, so they cannot exercise
+        // the post-publication cause oracle below.
+        for reset in [false, true] {
+            for public_dispatch in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let state_path = root.path().join("developmental.json");
+                crate::conformance::create_developmental_conformance_state(&state_path).unwrap();
+                let source_path = root.path().join("central-project.json");
+                fs::write(&source_path,r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I"},"wiki":{"schema":"central.wiki/v1"}}"#).unwrap();
+                let value =
+                    json!([{"central_project_ref":"project:o-i","source_path":source_path}]);
+                let scope = format!("project:{}", state_path.display());
+                let plan_args = vec![
+                    "config".into(),
+                    "plan".into(),
+                    "--setting".into(),
+                    CENTRAL_PROJECT_SETTING_REF.into(),
+                    "--scope".into(),
+                    scope.clone(),
+                    "--value".into(),
+                    value.to_string(),
+                ];
+                let plan = execute_config(&plan_args, None, true).unwrap();
+                let plan_path = root.path().join("native-plan.json");
+                fs::write(&plan_path, plan).unwrap();
+                let apply_args = vec![
+                    "config".into(),
+                    "apply".into(),
+                    "--plan-file".into(),
+                    plan_path.display().to_string(),
+                    "--changeset".into(),
+                    "cs-actual-apply-proof".into(),
+                ];
+                if reset {
+                    execute_config(&apply_args, None, true).unwrap();
+                }
+                let invalid_changeset = if reset {
+                    "actual-reset-proof"
+                } else {
+                    "actual-apply-proof"
+                };
+                let mut args = if reset {
+                    vec![
+                        "config".into(),
+                        "reset".into(),
+                        "--setting".into(),
+                        CENTRAL_PROJECT_SETTING_REF.into(),
+                        "--scope".into(),
+                        scope,
+                        "--changeset".into(),
+                        invalid_changeset.into(),
+                    ]
+                } else {
+                    let mut args = apply_args;
+                    *args.last_mut().unwrap() = invalid_changeset.into();
+                    args
+                };
+                let state_before = fs::read(&state_path).unwrap();
+                let journal_before = fs::read(journal_path(&state_path)).unwrap();
+                let source_before = fs::read(&source_path).unwrap();
+                let error = if public_dispatch {
+                    args.push("--json".into());
+                    crate::cli::execute_cli(&args, None).unwrap_err()
+                } else {
+                    crate::cli::CliError::from_native(
+                        execute_config(&args, None, true).unwrap_err(),
+                    )
+                };
+                let document: Value = serde_json::from_str(&error.to_string()).unwrap();
+                assert_eq!(document["schema"], CONFIG_ERROR_SCHEMA);
+                assert_eq!(document["error_code"], "validation_failed");
+                assert!(document["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains(invalid_changeset));
+                assert!(document["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("must be `cs-`"));
+                assert!(crate::native_publication_uncertainty(&error).is_none());
+                assert!(document.get("publicationUncertainty").is_none());
+                assert_eq!(fs::read(&state_path).unwrap(), state_before);
+                assert_eq!(fs::read(journal_path(&state_path)).unwrap(), journal_before);
+                assert_eq!(fs::read(&source_path).unwrap(), source_before);
+                assert_eq!(
+                    FactoryDevelopmentalFileProvider::open(&state_path)
+                        .unwrap()
+                        .central_project_link()
+                        .is_some(),
+                    reset,
+                    "invalid changeset cannot apply or remove the native link"
+                );
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn actual_config_link_apply_and_reset_publication_failure_keeps_owner_document_and_cause() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        for reset in [false, true] {
+            for move_after_publication in [false, true] {
+                for public_dispatch in [false, true] {
+                    let root = tempfile::tempdir().unwrap();
+                    let state_path = root.path().join("developmental.json");
+                    crate::conformance::create_developmental_conformance_state(&state_path)
+                        .unwrap();
+                    let source_path = root.path().join("central-project.json");
+                    fs::write(&source_path,r#"{"schema":"central.project/v1","project_id":"project:o-i","human_source":{"title":"O:I"},"wiki":{"schema":"central.wiki/v1"}}"#).unwrap();
+                    let central_source_before = fs::read(&source_path).unwrap();
+                    let central_source_metadata = fs::metadata(&source_path).unwrap();
+                    let central_source_identity =
+                        (central_source_metadata.dev(), central_source_metadata.ino());
+                    let value =
+                        json!([{"central_project_ref":"project:o-i","source_path":source_path}]);
+                    let scope = format!("project:{}", state_path.display());
+                    let plan_args = vec![
+                        "config".into(),
+                        "plan".into(),
+                        "--setting".into(),
+                        CENTRAL_PROJECT_SETTING_REF.into(),
+                        "--scope".into(),
+                        scope.clone(),
+                        "--value".into(),
+                        value.to_string(),
+                    ];
+                    let plan = execute_config(&plan_args, None, true).unwrap();
+                    let plan_path = root.path().join("native-plan.json");
+                    fs::write(&plan_path, plan).unwrap();
+                    let apply_args = vec![
+                        "config".into(),
+                        "apply".into(),
+                        "--plan-file".into(),
+                        plan_path.display().to_string(),
+                        "--changeset".into(),
+                        "cs-actual-apply-proof".into(),
+                    ];
+                    if reset {
+                        execute_config(&apply_args, None, true).unwrap();
+                    }
+                    let mut args = if reset {
+                        vec![
+                            "config".into(),
+                            "reset".into(),
+                            "--setting".into(),
+                            CENTRAL_PROJECT_SETTING_REF.into(),
+                            "--scope".into(),
+                            scope,
+                            "--changeset".into(),
+                            "cs-actual-reset-proof".into(),
+                        ]
+                    } else {
+                        apply_args
+                    };
+                    assert_eq!(
+                        FactoryDevelopmentalFileProvider::open(&state_path)
+                            .unwrap()
+                            .central_project_link()
+                            .is_some(),
+                        reset,
+                        "publication adversity starts from the actual apply/reset owner state"
+                    );
+                    let physical = state_path.canonicalize().unwrap();
+                    let expected_published = state_path.clone();
+                    let expected_physical = physical.clone();
+                    let retained = root.path().join("retained-published-native-link.json");
+                    let observer = retained.clone();
+                    crate::native_file_transaction::observe_next_publication(move |published| {
+                        assert_eq!(
+                            published, expected_published,
+                            "native publication retains the provided owner address"
+                        );
+                        // Resolve aliases before the deliberate move: the raw
+                        // owner address and canonical path must name the same
+                        // actual replacement inode, not merely similar strings.
+                        assert_eq!(published.canonicalize().unwrap(), expected_physical);
+                        let provided_metadata = fs::metadata(published).unwrap();
+                        let physical_metadata = fs::metadata(&expected_physical).unwrap();
+                        let published_identity = (provided_metadata.dev(), provided_metadata.ino());
+                        assert_eq!(
+                            published_identity,
+                            (physical_metadata.dev(), physical_metadata.ino())
+                        );
+                        let published_bytes = fs::read(published).unwrap();
+                        if move_after_publication {
+                            fs::rename(published, &observer).unwrap();
+                        } else {
+                            fs::set_permissions(published, fs::Permissions::from_mode(0o777))
+                                .unwrap();
+                        }
+                        let retained_path = if move_after_publication {
+                            observer.as_path()
+                        } else {
+                            published
+                        };
+                        let retained_metadata = fs::metadata(retained_path).unwrap();
+                        assert_eq!(
+                            (retained_metadata.dev(), retained_metadata.ino()),
+                            published_identity,
+                            "the actual fault preserves the published inode"
+                        );
+                        assert_eq!(fs::read(retained_path).unwrap(), published_bytes);
+                    });
+                    let error = if public_dispatch {
+                        args.push("--json".into());
+                        crate::cli::execute_cli(&args, None).unwrap_err()
+                    } else {
+                        crate::cli::CliError::from_native(
+                            execute_config(&args, None, true).unwrap_err(),
+                        )
+                    };
+                    let publication = crate::native_publication_uncertainty(&error).unwrap_or_else(|| {
+                        panic!("expected actual native post-publication uncertainty for reset={reset}, move_after_publication={move_after_publication}, public_dispatch={public_dispatch}; owner refused: {error}")
+                    });
+                    assert_eq!(publication.source_path, physical);
+                    if move_after_publication {
+                        assert_eq!(publication.cause.raw_os_error(), Some(libc::ENOENT));
+                    }
+                    let document: Value = serde_json::from_str(&error.to_string()).unwrap();
+                    assert_eq!(document["schema"], CONFIG_ERROR_SCHEMA);
+                    assert_eq!(error.native_publication_failure().unwrap(),document,"shared dispatch preserves native configuration document, not JSON inside error prose");
+                    assert_eq!(document["error_code"], "internal");
+                    assert_eq!(document["setting_ref"], CENTRAL_PROJECT_SETTING_REF);
+                    assert_eq!(document["scope_kind"], "project");
+                    assert_eq!(document["retryable"], false);
+                    assert_eq!(
+                        document["native_error_code"],
+                        "factory.publication_uncertain"
+                    );
+                    assert_eq!(document["publicationUncertainty"]["published"], true);
+                    assert_eq!(document["publicationUncertainty"]["outcome"], "unknown");
+                    assert_eq!(
+                        document["publicationUncertainty"]["source_path"],
+                        physical.display().to_string(),
+                        "the public error keeps the physical address captured before publication"
+                    );
+                    assert_eq!(fs::read(&source_path).unwrap(), central_source_before);
+                    let current_source_metadata = fs::metadata(&source_path).unwrap();
+                    assert_eq!(
+                        (current_source_metadata.dev(), current_source_metadata.ino()),
+                        central_source_identity,
+                        "configuration adversity leaves Central source identity unchanged"
+                    );
+                    let schema: Value = serde_json::from_str(include_str!(
+                        "../tests/support/configuration-schemas/oi.config-error-v1.schema.json"
+                    ))
+                    .unwrap();
+                    assert!(
+                        jsonschema::Validator::new(&schema)
+                            .unwrap()
+                            .is_valid(&document),
+                        "frozen native configuration error schema remains valid"
+                    );
+                    let current =
+                        FactoryDevelopmentalFileProvider::open(if move_after_publication {
+                            &retained
+                        } else {
+                            &state_path
+                        })
+                        .unwrap();
+                    assert_eq!(
+                        current.central_project_link().is_none(),
+                        reset,
+                        "actual native committed link state retained"
+                    );
+                }
+            }
+        }
+    }
 
     const READ_ONLY_ENTRY: SettingEntry = SettingEntry {
         setting_ref: "software-factory:binding:disclosure-only",

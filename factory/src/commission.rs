@@ -133,6 +133,10 @@ pub struct FactoryCommissionEdge {
 pub struct FactoryCommissionReading {
     pub contract: String,
     pub commission: FactoryCommission,
+    /// Later bounded candidates come from canonical continuation records. The
+    /// Commission's original Run identity remains its immutable admission basis.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub continuation_run_refs: Vec<RunRef>,
     pub traversal: Vec<FactoryCommissionEdge>,
 }
 
@@ -143,6 +147,22 @@ pub struct FactoryMutationSource {
     pub reference: String,
     pub revision: String,
     pub standing: String,
+}
+
+/// A corrected source replaces one candidate's admission; a bounded
+/// contribution retains its broader predecessor as unfinished current work.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CommissionContinuationRelation {
+    #[default]
+    SupersedingSource,
+    BoundedContribution,
+}
+
+impl CommissionContinuationRelation {
+    pub fn is_superseding_source(&self) -> bool {
+        *self == Self::SupersedingSource
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -156,6 +176,35 @@ pub enum FactoryDevelopmentalMutation {
     AttachWorkflowSource {
         run_ref: RunRef,
         workflow_source: WorkflowSource,
+    },
+    /// A new bounded candidate under the existing Commission and Journey.
+    /// The predecessor and its exact source/attempt history are retained.
+    ContinueCommission {
+        #[serde(
+            default,
+            skip_serializing_if = "CommissionContinuationRelation::is_superseding_source"
+        )]
+        continuation_relation: CommissionContinuationRelation,
+        commission_ref: String,
+        journey_ref: JourneyRef,
+        predecessor_run_ref: RunRef,
+        expected_journey_revision: Revision,
+        expected_predecessor_run_revision: Revision,
+        predecessor_source_ref: Ref,
+        predecessor_source_revision: String,
+        predecessor_source_digest: String,
+        successor_run_ref: RunRef,
+        workflow_source: Box<WorkflowSource>,
+        reason: String,
+        basis_refs: Vec<String>,
+    },
+    /// Join an actual ordinary Central Flow to this same admitted Run/source.
+    /// The source tuple and native observation are retained, not rewritten.
+    AssociateRunFlow {
+        association: Box<crate::flow_association::FactoryRunFlowAssociation>,
+        expected_provider_revision: Revision,
+        expected_journey_revision: Revision,
+        expected_run_revision: Revision,
     },
     CorrelateOwnerActivity {
         journey_ref: JourneyRef,
@@ -440,6 +489,7 @@ impl FactoryCommission {
         FactoryCommissionReading {
             contract: FACTORY_COMMISSION_READING.into(),
             commission: self.clone(),
+            continuation_run_refs: Vec::new(),
             traversal,
         }
     }
@@ -628,16 +678,84 @@ impl FactoryDevelopmentalState {
         &self,
         request_ref: &str,
     ) -> Result<FactoryCommissionReading, CommissionError> {
-        self.commissions
+        let commission = self
+            .commissions
             .iter()
             .find(|item| item.request.request_ref == request_ref)
-            .map(FactoryCommission::reading)
-            .ok_or_else(|| CommissionError::NotFound(request_ref.into()))
+            .ok_or_else(|| CommissionError::NotFound(request_ref.into()))?;
+        let mut reading = commission.reading();
+        let journey = self
+            .journeys
+            .iter()
+            .find(|journey| journey.journey_ref == commission.journey_ref)
+            .ok_or(CommissionError::InvalidStored)?;
+        for link in &journey.runs {
+            let Some((predecessor, mutation)) =
+                self.developmental_mutations.iter().find_map(|record| {
+                    match &record.request.mutation {
+                        FactoryDevelopmentalMutation::ContinueCommission {
+                            commission_ref,
+                            journey_ref,
+                            predecessor_run_ref,
+                            successor_run_ref,
+                            ..
+                        } if commission_ref == request_ref
+                            && journey_ref == &commission.journey_ref
+                            && successor_run_ref == &link.run_ref =>
+                        {
+                            Some((predecessor_run_ref, &record.request.mutation))
+                        }
+                        _ => None,
+                    }
+                })
+            else {
+                continue;
+            };
+            reading.continuation_run_refs.push(link.run_ref.clone());
+            reading.traversal.extend([
+                edge(
+                    &commission.journey_ref.to_string(),
+                    "bounded-as",
+                    &link.run_ref.to_string(),
+                    "factory",
+                ),
+                edge(
+                    &link.run_ref.to_string(),
+                    "continued-from",
+                    &predecessor.to_string(),
+                    "factory",
+                ),
+                edge(
+                    &commission.request.root_act.act_ref,
+                    "bounds",
+                    &link.run_ref.to_string(),
+                    "factory",
+                ),
+                edge(
+                    &crate::commission_continuation::retained_source_basis_ref(
+                        mutation,
+                        &link.basis_refs,
+                    )?,
+                    "source-basis-for",
+                    &link.run_ref.to_string(),
+                    "factory",
+                ),
+            ]);
+        }
+        Ok(reading)
     }
 
     pub fn apply_developmental_mutation(
         &mut self,
         request: FactoryDevelopmentalMutationRequest,
+    ) -> Result<FactoryDevelopmentalMutationReceipt, CommissionError> {
+        self.apply_developmental_mutation_with_flow_admission(request, None)
+    }
+
+    pub(crate) fn apply_developmental_mutation_with_flow_admission(
+        &mut self,
+        request: FactoryDevelopmentalMutationRequest,
+        admission: Option<&crate::flow_association::NativeFlowAdmission>,
     ) -> Result<FactoryDevelopmentalMutationReceipt, CommissionError> {
         request.validate()?;
         if let Some(existing) = self.developmental_mutations.iter().find(|item| {
@@ -659,7 +777,14 @@ impl FactoryDevelopmentalState {
                 run_ref,
                 workflow_source,
             } => {
+                if candidate.attempt_states.contains_key(run_ref) {
+                    return Err(CommissionError::Conflict(
+                        "Run already has a native attempt field; continue-commission retains its source and receipts while admitting a successor".into(),
+                    ));
+                }
                 let compiled = compile_workflow(workflow_source.clone()).map_err(debug)?;
+                crate::orchestration::validate_initial_subject_revisions(&compiled)
+                    .map_err(debug)?;
                 if candidate
                     .workflow_sources
                     .iter()
@@ -690,6 +815,12 @@ impl FactoryDevelopmentalState {
                 candidate
                     .workflow_sources
                     .sort_by_key(|source| source.source.reference.to_string());
+            }
+            FactoryDevelopmentalMutation::ContinueCommission { .. } => {
+                crate::commission_continuation::apply(&mut candidate, &request.mutation)?;
+            }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::apply(&mut candidate, &request, admission)?;
             }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity {
                 journey_ref,
@@ -804,10 +935,10 @@ impl FactoryDevelopmentalMutationRequest {
             ("occurrenceRef", &self.occurrence_ref),
             ("source.owner", &self.source.owner),
             ("source.reference", &self.source.reference),
-            ("source.revision", &self.source.revision),
         ] {
             stable_ref(value, name)?;
         }
+        validate_source_revision(&self.source.revision, "source.revision")?;
         if self.source.standing != "owner-native-observation" {
             return Err(CommissionError::Invalid("source.standing".into()));
         }
@@ -817,6 +948,12 @@ impl FactoryDevelopmentalMutationRequest {
                 workflow_source, ..
             } if self.source.reference != workflow_source.source.reference.to_string() => {
                 return Err(CommissionError::Invalid("source.reference".into()))
+            }
+            FactoryDevelopmentalMutation::ContinueCommission { .. } => {
+                crate::commission_continuation::validate_request(self)?;
+            }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::validate_request(self)?;
             }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity { activity_ref, .. }
                 if self.source.reference != *activity_ref =>
@@ -894,6 +1031,12 @@ impl FactoryDevelopmentalMutationRecord {
                 {
                     return Err(CommissionError::InvalidStored);
                 }
+            }
+            FactoryDevelopmentalMutation::ContinueCommission { .. } => {
+                crate::commission_continuation::validate_record(state, &self.request.mutation)?;
+            }
+            FactoryDevelopmentalMutation::AssociateRunFlow { .. } => {
+                crate::flow_association::validate_record(state, &self.request)?;
             }
             FactoryDevelopmentalMutation::CorrelateOwnerActivity {
                 journey_ref,
@@ -1089,6 +1232,16 @@ fn deterministic_ulid(timestamp_ms: u64, basis: &[u8]) -> Ulid {
 }
 fn required(value: &str, field: &str) -> Result<(), CommissionError> {
     if value.trim().is_empty() || value != value.trim() || value.chars().any(char::is_control) {
+        Err(CommissionError::Invalid(field.into()))
+    } else {
+        Ok(())
+    }
+}
+/// A Source revision is an opaque observed value, not a reference.
+/// Preserve its exact bytes; Source compilation and native observation own
+/// their normalization and comparison rules.
+pub(crate) fn validate_source_revision(value: &str, field: &str) -> Result<(), CommissionError> {
+    if value.trim().is_empty() {
         Err(CommissionError::Invalid(field.into()))
     } else {
         Ok(())

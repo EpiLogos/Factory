@@ -25,7 +25,7 @@ use crate::developmental_read::{
 use crate::journey::JourneyRef;
 use crate::project_development::{
     DevelopmentObservation, DevelopmentObservationKind, OwnerReturnProposal,
-    ProjectDevelopmentLedger, PROJECT_DEVELOPMENT_VERSION,
+    PROJECT_DEVELOPMENT_VERSION,
 };
 use crate::project_development_store::{FileProjectDevelopmentStore, ProjectDevelopmentStore};
 use crate::routine_continuation::{
@@ -79,6 +79,11 @@ pub fn cli_main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(error) => {
+            if args.iter().any(|arg| arg == "--json") {
+                if let Some(result) = error.native_publication_failure() {
+                    println!("{result}");
+                }
+            }
             eprintln!("factory: {error}");
             ExitCode::from(2)
         }
@@ -97,7 +102,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
             option_env!("SUITE_BUILD_REVISION").unwrap_or("unknown")
         )),
         Some("capabilities") => render_capabilities(json),
-        Some("project") => crate::project_setup::execute(&args[1..]).map_err(CliError),
+        Some("project") => crate::project_setup::execute(&args[1..]),
         Some("build") => build_command(&args[1..], json),
         Some("conformance") => conformance_command(&args[1..], json),
         Some("development") => development_command(&args[1..], json, stdin_override),
@@ -105,10 +110,11 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         Some("action") => action_command(&args[1..], json, stdin_override),
         Some("system") => crate::system::system_command(json),
         Some("config-contribution") | Some("config") => {
-            crate::configuration::execute_config(&args, stdin_override, json).map_err(CliError)
+            crate::configuration::execute_config(&args, stdin_override, json)
+                .map_err(CliError::from_native)
         }
         Some("verify") => verify_command(&args[1..], json),
-        Some(command) => Err(CliError(format!(
+        Some(command) => Err(CliError::new(format!(
             "unknown command `{command}`; run `factory help`"
         ))),
     }
@@ -146,9 +152,12 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.project",
             "development.journey",
             "development.run",
+            "development.build",
             "development.workflow-units",
             "development.workflow-unit",
             "development.execution-telemetry",
+            "development.central-project-link",
+            "development.central-project-link-read",
             "development.commission",
             "development.commission-read",
             "development.mutate",
@@ -164,6 +173,7 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.inhabitation",
             "action.list",
             "action.invoke",
+            "system",
             "config-contribution",
             "config.validate",
             "config.plan",
@@ -191,6 +201,7 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "verify",
         ],
         native_contracts: vec![
+            crate::FACTORY_PUBLICATION_FAILURE_CONTRACT,
             FACTORY_BUILD_VIEW_CONTRACT,
             FACTORY_BUILD_PROVIDER_CONTRACT,
             FACTORY_BUILD_LOCAL_PROVIDER_STATE,
@@ -238,17 +249,17 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
 fn conformance_command(args: &[String], json: bool) -> Result<String, CliError> {
     let operation = args
         .first()
-        .ok_or_else(|| CliError("missing conformance operation".into()))?;
+        .ok_or_else(|| CliError::new("missing conformance operation"))?;
     if operation != "developmental-state" {
-        return Err(CliError(format!(
+        return Err(CliError::new(format!(
             "unknown conformance operation `{operation}`"
         )));
     }
     let output = args
         .get(1)
-        .ok_or_else(|| CliError("missing conformance state output path".into()))?;
+        .ok_or_else(|| CliError::new("missing conformance state output path"))?;
     let manifest = create_developmental_conformance_state(std::path::Path::new(output))
-        .map_err(|error| CliError(error.to_string()))?;
+        .map_err(CliError::from_boxed)?;
     if json {
         serde_json::to_string_pretty(&manifest).map_err(CliError::from)
     } else {
@@ -283,13 +294,13 @@ fn render_capabilities(json: bool) -> Result<String, CliError> {
 fn build_command(args: &[String], json: bool) -> Result<String, CliError> {
     let operation = args
         .first()
-        .ok_or_else(|| CliError("missing build operation".into()))?;
+        .ok_or_else(|| CliError::new("missing build operation"))?;
     let (state_path, selection) = selection_from_args(&args[1..])?;
     let mut provider = BuildStateDocument::open(&state_path, selection)?;
     let snapshot = match operation.as_str() {
         "snapshot" => provider.snapshot()?,
         "refresh" => provider.refresh()?,
-        other => return Err(CliError(format!("unknown build operation `{other}`"))),
+        other => return Err(CliError::new(format!("unknown build operation `{other}`"))),
     };
     if json {
         return snapshot.to_json().map_err(CliError::from);
@@ -325,7 +336,7 @@ fn development_command(
 ) -> Result<String, CliError> {
     let operation = args
         .first()
-        .ok_or_else(|| CliError("missing development operation".into()))?;
+        .ok_or_else(|| CliError::new("missing development operation"))?;
 
     // The run-scoped development ledger is a different provider from the
     // developmental read state: it retains the observations a Run returns to
@@ -337,44 +348,43 @@ fn development_command(
         // World inhabitation verbs locate their own state and refuse in three
         // parts; the process entry prints those refusals as documents.
         "custody" | "current-work" | "inhabitation" => {
-            return crate::inhabitation_cli::execute(args, json)
-                .map_err(|refusal| CliError(refusal.to_string()));
+            return crate::inhabitation_cli::execute(args, json).map_err(CliError::from_native);
         }
         "observe" => {
             let ledger_root = args
                 .get(1)
-                .ok_or_else(|| CliError("missing development ledger root".into()))?;
+                .ok_or_else(|| CliError::new("missing development ledger root"))?;
             return observe_operation(ledger_root, &args[2..], json, stdin_override);
         }
         "observations" => {
             let ledger_root = args
                 .get(1)
-                .ok_or_else(|| CliError("missing development ledger root".into()))?;
+                .ok_or_else(|| CliError::new("missing development ledger root"))?;
             return observations_operation(ledger_root, &args[2..], json);
         }
         "central-project-link" => {
             let state_path = args
                 .get(1)
-                .ok_or_else(|| CliError("missing developmental state path".into()))?;
+                .ok_or_else(|| CliError::new("missing developmental state path"))?;
             let request_path = args.get(2).map(String::as_str).unwrap_or("-");
             let request: FactoryCentralProjectLinkRequest =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let mut provider = FactoryDevelopmentalFileProvider::open(state_path)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             let receipt = provider
                 .admit_central_project_link(request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             return serde_json::to_string_pretty(&receipt).map_err(CliError::from);
         }
         "commission" => {
             let state_path = args
                 .get(1)
-                .ok_or_else(|| CliError("missing developmental state path".into()))?;
+                .ok_or_else(|| CliError::new("missing developmental state path"))?;
             let request_path = args.get(2).map(String::as_str).unwrap_or("-");
             let request: FactoryCommissionRequest =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let receipt = FactoryDevelopmentalFileProvider::commission(state_path, request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             return if json {
                 serde_json::to_string_pretty(&receipt).map_err(CliError::from)
             } else {
@@ -394,29 +404,29 @@ fn development_command(
 
     let state_path = args
         .get(1)
-        .ok_or_else(|| CliError("missing developmental state path".into()))?;
-    let mut provider = FactoryDevelopmentalFileProvider::open(state_path)
-        .map_err(|error| CliError(error.to_string()))?;
+        .ok_or_else(|| CliError::new("missing developmental state path"))?;
+    let mut provider =
+        FactoryDevelopmentalFileProvider::open(state_path).map_err(CliError::from_native)?;
 
     match operation.as_str() {
         "central-project-link-read" => {
             let central_project_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing central-project-ref".into()))?;
+                .ok_or_else(|| CliError::new("missing central-project-ref"))?;
             let reading = provider
                 .central_project_link_reading(central_project_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             serde_json::to_string_pretty(&reading).map_err(CliError::from)
         }
         "project" => {
             let project_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing project-ref".into()))?
+                .ok_or_else(|| CliError::new("missing project-ref"))?
                 .parse::<ProjectRef>()
-                .map_err(|error| CliError(format!("invalid project-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid project-ref: {error}")))?;
             let reading = provider
                 .project_reading(&project_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -437,12 +447,12 @@ fn development_command(
         "journey" => {
             let journey_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing journey-ref".into()))?
+                .ok_or_else(|| CliError::new("missing journey-ref"))?
                 .parse::<JourneyRef>()
-                .map_err(|error| CliError(format!("invalid journey-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid journey-ref: {error}")))?;
             let reading = provider
                 .journey_reading(&journey_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -465,12 +475,12 @@ fn development_command(
         "run" => {
             let run_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing run-ref".into()))?
+                .ok_or_else(|| CliError::new("missing run-ref"))?
                 .parse::<RunRef>()
-                .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))?;
             let reading = provider
                 .run_reading(&run_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -489,12 +499,12 @@ fn development_command(
         "build" => {
             let run_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing run-ref".into()))?
+                .ok_or_else(|| CliError::new("missing run-ref"))?
                 .parse::<RunRef>()
-                .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))?;
             let snapshot = provider
                 .build_snapshot(&run_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 snapshot.to_json().map_err(CliError::from)
             } else {
@@ -513,12 +523,12 @@ fn development_command(
                 .map(|value| {
                     value
                         .parse::<RunRef>()
-                        .map_err(|error| CliError(format!("invalid run-ref: {error}")))
+                        .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))
                 })
                 .transpose()?;
             let reading = provider
                 .workflow_units_reading(run_ref.as_ref())
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else if reading.units.is_empty() {
@@ -539,20 +549,20 @@ fn development_command(
         "workflow-unit" => {
             let workflow_unit_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing workflow-unit-ref".into()))?
+                .ok_or_else(|| CliError::new("missing workflow-unit-ref"))?
                 .parse::<WorkflowUnitRef>()
-                .map_err(|error| CliError(format!("invalid workflow-unit-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid workflow-unit-ref: {error}")))?;
             let run_ref = args
                 .get(3)
                 .map(|value| {
                     value
                         .parse::<RunRef>()
-                        .map_err(|error| CliError(format!("invalid run-ref: {error}")))
+                        .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))
                 })
                 .transpose()?;
             let reading = provider
                 .workflow_unit_reading(&workflow_unit_ref, run_ref.as_ref())
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -571,12 +581,12 @@ fn development_command(
         "execution-telemetry" => {
             let telemetry_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing telemetry-ref".into()))?
+                .ok_or_else(|| CliError::new("missing telemetry-ref"))?
                 .parse::<crate::core::identity::Ref>()
-                .map_err(|error| CliError(format!("invalid telemetry-ref: {error}")))?;
+                .map_err(|error| CliError::new(format!("invalid telemetry-ref: {error}")))?;
             let reading = provider
                 .execution_telemetry_reading(&telemetry_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -595,10 +605,10 @@ fn development_command(
         "commission-read" => {
             let request_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing commission request-ref".into()))?;
+                .ok_or_else(|| CliError::new("missing commission request-ref"))?;
             let reading = provider
                 .commission_reading(request_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -618,7 +628,7 @@ fn development_command(
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let receipt = provider
                 .apply_developmental_mutation(request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&receipt).map_err(CliError::from)
             } else {
@@ -637,7 +647,7 @@ fn development_command(
             let request: FactoryRoutineContinuationRequest = serde_json::from_str(&input)?;
             let admission = provider
                 .admit_routine_continuation(request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&admission).map_err(CliError::from)
             } else {
@@ -654,10 +664,10 @@ fn development_command(
         "routine-continuation" => {
             let invocation_ref = args
                 .get(2)
-                .ok_or_else(|| CliError("missing invocation-ref".into()))?;
+                .ok_or_else(|| CliError::new("missing invocation-ref"))?;
             let reading = provider
                 .routine_continuation_reading(invocation_ref)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&reading).map_err(CliError::from)
             } else {
@@ -675,7 +685,7 @@ fn development_command(
             let input = read_input(request_path, stdin_override)?;
             let request: FactoryActionProjectionRequest = serde_json::from_str(&input)?;
             let receipt = execute_projected_factory_action(&mut provider, &request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&receipt).map_err(CliError::from)
             } else {
@@ -688,7 +698,9 @@ fn development_command(
                 ))
             }
         }
-        other => Err(CliError(format!("unknown development operation `{other}`"))),
+        other => Err(CliError::new(format!(
+            "unknown development operation `{other}`"
+        ))),
     }
 }
 
@@ -749,28 +761,24 @@ fn observe_operation(
 ) -> Result<String, CliError> {
     let run_ref = args
         .first()
-        .ok_or_else(|| CliError("missing run-ref".into()))?
+        .ok_or_else(|| CliError::new("missing run-ref"))?
         .parse::<RunRef>()
-        .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+        .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))?;
     let request_path = args.get(1).map(String::as_str).unwrap_or("-");
     let input = read_input(request_path, stdin_override)?;
     let request: ObservationRequest = serde_json::from_str(&input)?;
     if let Some(declared) = &request.run_ref {
         let declared = declared
             .parse::<RunRef>()
-            .map_err(|error| CliError(format!("invalid run_ref in request: {error}")))?;
+            .map_err(|error| CliError::new(format!("invalid run_ref in request: {error}")))?;
         if declared != run_ref {
-            return Err(CliError(format!(
+            return Err(CliError::new(format!(
                 "request run_ref {declared} does not match the addressed Run {run_ref}"
             )));
         }
     }
 
     let store = FileProjectDevelopmentStore::new(ledger_root);
-    let mut ledger = store
-        .load(&run_ref)
-        .map_err(|error| CliError(error.to_string()))?
-        .unwrap_or_else(|| ProjectDevelopmentLedger::new(run_ref.clone()));
 
     let observation = DevelopmentObservation {
         run_ref: run_ref.clone(),
@@ -781,12 +789,15 @@ fn observe_operation(
         evidence_refs: request.evidence_refs,
         owner_return: request.owner_return,
     };
-    ledger
-        .add_observation(observation)
-        .map_err(|error| CliError(error.to_string()))?;
-    store
-        .save(&ledger)
-        .map_err(|error| CliError(error.to_string()))?;
+    let ledger = store
+        .transact(&run_ref, true, |ledger| {
+            ledger.add_observation(observation).map_err(|error| {
+                crate::project_development_store::ProjectDevelopmentStoreError::Native(
+                    error.to_string(),
+                )
+            })
+        })
+        .map_err(CliError::from_native)?;
 
     let recorded = ledger
         .observations
@@ -828,13 +839,11 @@ fn observations_operation(
 ) -> Result<String, CliError> {
     let run_ref = args
         .first()
-        .ok_or_else(|| CliError("missing run-ref".into()))?
+        .ok_or_else(|| CliError::new("missing run-ref"))?
         .parse::<RunRef>()
-        .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+        .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))?;
     let store = FileProjectDevelopmentStore::new(ledger_root);
-    let ledger = store
-        .load(&run_ref)
-        .map_err(|error| CliError(error.to_string()))?;
+    let ledger = store.load(&run_ref).map_err(CliError::from_native)?;
     let observations = ledger
         .as_ref()
         .map(|ledger| ledger.observations.as_slice())
@@ -887,7 +896,7 @@ fn action_command(
 ) -> Result<String, CliError> {
     let operation = args
         .first()
-        .ok_or_else(|| CliError("missing action operation".into()))?;
+        .ok_or_else(|| CliError::new("missing action operation"))?;
     let (state_path, selection) = selection_from_args(&args[1..])?;
     let mut provider = BuildStateDocument::open(&state_path, selection)?;
 
@@ -916,7 +925,7 @@ fn action_command(
             let input = read_input(request_path, stdin_override)?;
             let request: FactoryActionProjectionRequest = serde_json::from_str(&input)?;
             let receipt = execute_projected_factory_action(&mut provider, &request)
-                .map_err(|error| CliError(error.to_string()))?;
+                .map_err(CliError::from_native)?;
             if json {
                 serde_json::to_string_pretty(&receipt).map_err(CliError::from)
             } else {
@@ -933,7 +942,7 @@ fn action_command(
                 ))
             }
         }
-        other => Err(CliError(format!("unknown action operation `{other}`"))),
+        other => Err(CliError::new(format!("unknown action operation `{other}`"))),
     }
 }
 
@@ -964,12 +973,12 @@ fn verify_command(args: &[String], json: bool) -> Result<String, CliError> {
 
 fn selection_from_args(args: &[String]) -> Result<(String, FactoryBuildSelection), CliError> {
     if args.len() < 3 {
-        return Err(CliError("expected <state> <project-ref> <run-ref>".into()));
+        return Err(CliError::new("expected <state> <project-ref> <run-ref>"));
     }
     let project_ref = ProjectRef::from_str(&args[1])
-        .map_err(|error| CliError(format!("invalid project-ref: {error}")))?;
+        .map_err(|error| CliError::new(format!("invalid project-ref: {error}")))?;
     let run_ref = RunRef::from_str(&args[2])
-        .map_err(|error| CliError(format!("invalid run-ref: {error}")))?;
+        .map_err(|error| CliError::new(format!("invalid run-ref: {error}")))?;
     Ok((
         args[0].clone(),
         FactoryBuildSelection {
@@ -1007,9 +1016,9 @@ impl BuildStateDocument {
             ))),
             FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER => {
                 let provider = FactoryDevelopmentalFileProvider::open(path)
-                    .map_err(|error| CliError(error.to_string()))?;
+                    .map_err(CliError::from_native)?;
                 if provider.project_ref() != &selection.project_ref {
-                    return Err(CliError(format!(
+                    return Err(CliError::new(format!(
                         "developmental state {} carries Project {}; the selection names {}",
                         path,
                         provider.project_ref(),
@@ -1021,7 +1030,7 @@ impl BuildStateDocument {
                     selection,
                 })
             }
-            other => Err(CliError(format!(
+            other => Err(CliError::new(format!(
                 "state document {path} declares schema `{other}`; expected `{FACTORY_BUILD_LOCAL_PROVIDER_STATE}` or `{FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER}`"
             ))),
         }
@@ -1066,7 +1075,7 @@ impl FactoryProjectedActionProvider for BuildStateDocument {
         match self {
             Self::Build(provider) => provider
                 .execute_projected_action(invocation, authority)
-                .map_err(|error| FactoryActionProjectionError::Provider(error.to_string())),
+                .map_err(|error| FactoryActionProjectionError::Provider(Box::new(error))),
             Self::Developmental {
                 provider,
                 selection,
@@ -1074,14 +1083,16 @@ impl FactoryProjectedActionProvider for BuildStateDocument {
                 // Parity with the Build provider: an invoked Action must land
                 // on the Run named in the command's selection.
                 if invocation.run_ref != selection.run_ref {
-                    Err(FactoryActionProjectionError::Provider(format!(
-                        "Action Run {} does not match provider-selected Run {}",
-                        invocation.run_ref, selection.run_ref
+                    Err(FactoryActionProjectionError::Provider(Box::new(
+                        CliError::new(format!(
+                            "Action Run {} does not match provider-selected Run {}",
+                            invocation.run_ref, selection.run_ref
+                        )),
                     )))
                 } else {
                     provider
                         .execute_projected_action(invocation, authority)
-                        .map_err(|error| FactoryActionProjectionError::Provider(error.to_string()))
+                        .map_err(|error| FactoryActionProjectionError::Provider(Box::new(error)))
                 }
             }
         }
@@ -1093,19 +1104,20 @@ impl FactoryProjectedActionProvider for BuildStateDocument {
 /// field error (`missing field 'project'`) that names nothing.
 fn document_schema(path: &str) -> Result<String, CliError> {
     let bytes = fs::read(path)?;
-    let value: serde_json::Value = serde_json::from_slice(&bytes)
-        .map_err(|error| CliError(format!("state document {path} is not valid JSON: {error}")))?;
+    let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+        CliError::new(format!("state document {path} is not valid JSON: {error}"))
+    })?;
     if let Some(schema) = value.get("schema").and_then(|schema| schema.as_str()) {
         return Ok(schema.to_owned());
     }
     if value.get("contract").and_then(|contract| contract.as_str())
         == Some(FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST)
     {
-        return Err(CliError(format!(
+        return Err(CliError::new(format!(
             "state document {path} is a `{FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST}` locator (the stdout of `factory conformance developmental-state`), not a provider state document"
         )));
     }
-    Err(CliError(format!(
+    Err(CliError::new(format!(
         "state document {path} carries no top-level `schema`; it is not a Factory provider state document"
     )))
 }
@@ -1129,52 +1141,426 @@ fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
 }
 
 #[derive(Debug)]
-pub struct CliError(String);
+pub struct CliError {
+    cause: Box<dyn Error + Send + Sync>,
+    display_message: Option<String>,
+    native_result: Option<serde_json::Value>,
+}
+#[derive(Debug)]
+struct CliMessage(String);
 
+impl Display for CliMessage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl Error for CliMessage {}
 impl CliError {
-    /// Sibling CLI modules (telemetry, attempts) report through the same
-    /// error type the dispatcher prints; the field stays private so message
-    /// construction keeps one doorway.
     pub fn new(message: impl Into<String>) -> Self {
-        Self(message.into())
+        Self::from_native(CliMessage(message.into()))
+    }
+    pub fn from_native(error: impl Error + Send + Sync + 'static) -> Self {
+        Self::from_boxed(Box::new(error))
+    }
+    pub fn from_boxed(cause: Box<dyn Error + Send + Sync>) -> Self {
+        Self {
+            cause,
+            display_message: None,
+            native_result: None,
+        }
+    }
+    /// Preserve compatibility text without replacing the original native cause.
+    pub(crate) fn with_message(mut self, message: String) -> Self {
+        self.display_message = Some(message);
+        self
+    }
+    /// Retain only a result actually returned by this invocation after a typed
+    /// uncertain publication. This transports evidence, never grants authority.
+    pub(crate) fn with_native_result(mut self, result: serde_json::Value) -> Self {
+        if crate::native_publication_uncertainty(&self).is_some() {
+            self.native_result = Some(result);
+        }
+        self
+    }
+    pub fn native_publication_failure(&self) -> Option<serde_json::Value> {
+        crate::native_publication_uncertainty(self)?;
+        if let Some(owner) = self
+            .cause
+            .downcast_ref::<crate::configuration::ConfigError>()
+        {
+            if let Some(document) = owner.native_document() {
+                return Some(document.clone());
+            }
+        }
+        let mut failure = crate::native_publication_failure(self)?;
+        if let Some(result) = &self.native_result {
+            failure["error"]["details"]["native_result"] = result.clone();
+        }
+        Some(failure)
     }
 }
 
 impl Display for CliError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
+        if let Some(message) = &self.display_message {
+            formatter.write_str(message)
+        } else {
+            Display::fmt(&self.cause, formatter)
+        }
     }
 }
 
-impl Error for CliError {}
+impl Error for CliError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(self.cause.as_ref())
+    }
+}
+impl From<String> for CliError {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+impl From<&str> for CliError {
+    fn from(message: &str) -> Self {
+        Self::new(message)
+    }
+}
 
 impl From<io::Error> for CliError {
     fn from(error: io::Error) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 impl From<serde_json::Error> for CliError {
     fn from(error: serde_json::Error) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 impl From<crate::build_provider::FactoryBuildProviderError> for CliError {
     fn from(error: crate::build_provider::FactoryBuildProviderError) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 impl From<crate::developmental_read::FactoryDevelopmentalProviderError> for CliError {
     fn from(error: crate::developmental_read::FactoryDevelopmentalProviderError) -> Self {
-        Self(error.to_string())
+        Self::from_native(error)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    fn publication_state() -> crate::build::FactoryBuildState {
+        use crate::build::{CandidateRecord, FactoryBuildState};
+        use crate::core::run::{Project, Run};
+        let project: ProjectRef = "project:01ARZ3NDEKTSV4RRFFQ69G5FCA".parse().unwrap();
+        let run: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap();
+        let mut state = FactoryBuildState::new(
+            Project::new(project.clone()),
+            Run::new(
+                run.clone(),
+                project,
+                "Native CLI publication uncertainty",
+                "factory-test",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        state
+            .insert_candidate(CandidateRecord {
+                run_ref: run,
+                candidate_ref: "candidate:publication-proof".into(),
+                revision: 1,
+                label: "Actual owner action".into(),
+                status: "ready".into(),
+                producing_execution_refs: vec![],
+                claim_refs: vec![],
+                evidence_refs: vec![],
+                artifact_refs: vec![],
+                preview_ref: None,
+                tradeoffs: vec![],
+            })
+            .unwrap();
+        state
+    }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    fn assert_publication_envelope(
+        error: &(dyn Error + 'static),
+        path: &std::path::Path,
+    ) -> serde_json::Value {
+        let failure = crate::native_publication_failure(error)
+            .expect("actual native cause survives the consumer chain");
+        assert_eq!(failure["contract"], "factory.publication-failure/v1");
+        assert_eq!(failure["ok"], false);
+        assert_eq!(failure["error"]["code"], "factory.publication_uncertain");
+        let details = &failure["error"]["details"];
+        assert_eq!(details["source_path"], path.display().to_string());
+        assert_eq!(details["published"], true);
+        assert_eq!(details["outcome"], "unknown");
+        assert_eq!(details["automatic_retry"], false);
+        assert!(details.get("operation_ref").is_none());
+        assert!(!details["cause"]["message"].as_str().unwrap().is_empty());
+        failure
+    }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    #[test]
+    fn actual_build_and_developmental_action_publication_failure_reaches_native_cli() {
+        use crate::build::{
+            REQUEST_MORE_EVIDENCE_ACTION_REF, REQUEST_MORE_EVIDENCE_CAPABILITY_REF,
+        };
+        use crate::developmental_read::FactoryDevelopmentalState;
+        use std::os::unix::fs::PermissionsExt;
+        for developmental in [false, true] {
+            // Both a privacy drift and a genuine ENOENT occur after real rename;
+            // no fake provider, fake error or string matching supplies the result.
+            for move_after_publication in [false, true] {
+                let root = tempfile::tempdir().unwrap();
+                let path = root.path().join("native-state.json");
+                let retained = root.path().join("retained-committed-state.json");
+                let state = publication_state();
+                let before = state.revision().get();
+                let selection = FactoryBuildSelection {
+                    project_ref: state.project().reference().clone(),
+                    run_ref: "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap(),
+                };
+                if developmental {
+                    FactoryDevelopmentalFileProvider::create_new(
+                        &path,
+                        FactoryDevelopmentalState::new(state, vec![]).unwrap(),
+                    )
+                    .unwrap();
+                } else {
+                    FactoryBuildFileProvider::create(&path, selection.clone(), state).unwrap();
+                }
+                let physical = std::fs::canonicalize(&path).unwrap();
+                let retained_for_observer = retained.clone();
+                crate::native_file_transaction::observe_next_publication(move |published| {
+                    if move_after_publication {
+                        std::fs::rename(published, &retained_for_observer).unwrap();
+                    } else {
+                        std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                            .unwrap();
+                    }
+                });
+                let request = serde_json::json!({"contract":FACTORY_ACTION_PROJECTION_CONTRACT,
+                    "projectionRef":"projection:actual-publication-proof",
+                    "caller":{"callerRef":"agent:publication-proof","projectionKind":"situated-agent","lineage":["agent:publication-proof"]},
+                    "actionRef":REQUEST_MORE_EVIDENCE_ACTION_REF,"subjectRef":"candidate:publication-proof","runRef":selection.run_ref,
+                    "authority":{"authorityRef":"authority:publication-proof","nativeOwner":FACTORY_NATIVE_OWNER,
+                        "capabilityRef":REQUEST_MORE_EVIDENCE_CAPABILITY_REF,"capabilityGranted":true,"actionAuthorised":true}});
+                let args = vec![
+                    "action".into(),
+                    "invoke".into(),
+                    path.display().to_string(),
+                    selection.project_ref.to_string(),
+                    selection.run_ref.to_string(),
+                    "-".into(),
+                    "--json".into(),
+                ];
+                let error =
+                    crate::attempt_cli::execute(&args, Some(&request.to_string())).unwrap_err();
+                let failure = assert_publication_envelope(&error, &physical);
+                let actual_path = if move_after_publication {
+                    &retained
+                } else {
+                    &path
+                };
+                if move_after_publication {
+                    assert_eq!(
+                        failure["error"]["details"]["cause"]["raw_os_error"],
+                        libc::ENOENT
+                    );
+                    assert_eq!(
+                        crate::native_publication_uncertainty(&error)
+                            .unwrap()
+                            .cause
+                            .raw_os_error(),
+                        Some(libc::ENOENT)
+                    );
+                    assert!(!path.exists());
+                } else {
+                    assert_eq!(failure["error"]["details"]["cause"]["kind"], "InvalidData");
+                    assert_eq!(
+                        std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+                        0o777
+                    );
+                }
+                let after = if developmental {
+                    FactoryDevelopmentalFileProvider::open(actual_path)
+                        .unwrap()
+                        .state()
+                        .build
+                        .revision()
+                        .get()
+                } else {
+                    FactoryBuildFileProvider::open(actual_path, selection)
+                        .unwrap()
+                        .snapshot()
+                        .unwrap()
+                        .revision
+                };
+                assert!(
+                    after > before,
+                    "the native mutation really committed; reporting failure must not erase it"
+                );
+            }
+        }
+    }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    #[test]
+    fn actual_ledger_observation_publication_failure_keeps_result_and_typed_cli_cause() {
+        use crate::project_development::ProjectDevelopmentLedger;
+        use crate::project_development_store::ProjectDevelopmentStore;
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let run: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap();
+        let store = FileProjectDevelopmentStore::new(root.path());
+        store
+            .save(&ProjectDevelopmentLedger::new(run.clone()))
+            .unwrap();
+        let path =
+            std::fs::canonicalize(root.path().join(format!("{}.json", run.as_ref().id()))).unwrap();
+        crate::native_file_transaction::observe_next_publication(|published| {
+            std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777)).unwrap();
+        });
+        let request = serde_json::json!({"observation_ref":"observation:actual-publication-proof","kind":"insufficient-evidence",
+            "statement":"Actual retained evidence after native rename","subject_refs":[run.to_string()],"evidence_refs":["evidence:actual-owner-readback"]});
+        let args = vec![
+            "development".into(),
+            "observe".into(),
+            root.path().display().to_string(),
+            run.to_string(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let error = crate::attempt_cli::execute(&args, Some(&request.to_string())).unwrap_err();
+        assert_publication_envelope(&error, &path);
+        let retained = store.load(&run).unwrap().unwrap();
+        assert_eq!(retained.observations.len(), 1);
+        assert_eq!(
+            retained.observations[0].observation_ref,
+            "observation:actual-publication-proof"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+            0o777
+        );
+    }
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    #[test]
+    fn actual_owner_reading_and_physical_cause_remain_separate_in_cli_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("native-build.json");
+        let retained = root.path().join("retained-native-build.json");
+        let state = publication_state();
+        let selection = FactoryBuildSelection {
+            project_ref: state.project().reference().clone(),
+            run_ref: "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap(),
+        };
+        FactoryBuildFileProvider::create(&path, selection.clone(), state).unwrap();
+        let observed = retained.clone();
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            std::fs::rename(published, observed).unwrap();
+        });
+        let request = serde_json::json!({"contract":FACTORY_ACTION_PROJECTION_CONTRACT,
+            "projectionRef":"projection:actual-evidence-transport",
+            "caller":{"callerRef":"agent:publication-proof","projectionKind":"situated-agent","lineage":["agent:publication-proof"]},
+            "actionRef":crate::build::REQUEST_MORE_EVIDENCE_ACTION_REF,"subjectRef":"candidate:publication-proof","runRef":selection.run_ref,
+            "authority":{"authorityRef":"authority:publication-proof","nativeOwner":FACTORY_NATIVE_OWNER,
+                "capabilityRef":crate::build::REQUEST_MORE_EVIDENCE_CAPABILITY_REF,"capabilityGranted":true,"actionAuthorised":true}});
+        let args = vec![
+            "action".into(),
+            "invoke".into(),
+            path.display().to_string(),
+            selection.project_ref.to_string(),
+            selection.run_ref.to_string(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let native_error = execute_cli(&args, Some(&request.to_string())).unwrap_err();
+        // This tests existing evidence transport using an actual owner reading;
+        // it does not stand in for Central submit or an executed worker Return.
+        let actual_result = serde_json::to_value(
+            FactoryBuildFileProvider::open(&retained, selection)
+                .unwrap()
+                .snapshot()
+                .unwrap(),
+        )
+        .unwrap();
+        let error = native_error.with_native_result(actual_result.clone());
+        let failure = error.native_publication_failure().unwrap();
+        assert_eq!(failure["error"]["details"]["native_result"], actual_result);
+        assert_eq!(
+            failure["error"]["details"]["cause"]["raw_os_error"],
+            libc::ENOENT
+        );
+        assert_eq!(failure["error"]["details"]["published"], true);
+        assert!(failure["error"]["details"].get("operation_ref").is_none());
+        let before_effect =
+            CliError::new("ordinary pre-effect refusal").with_native_result(actual_result);
+        assert!(before_effect.native_publication_failure().is_none());
+    }
+
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    #[test]
+    fn actual_attempt_bootstrap_errno_is_preserved_through_store_runtime_and_cli() {
+        use crate::attempt_runtime::{FactoryAttemptReading, FactoryAttemptSeed};
+        use crate::core::run::Run;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("attempts.json");
+        let retained = root.path().join("retained-actual-attempts.json");
+        let seed = FactoryAttemptSeed {
+            run: Run::new(
+                "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap(),
+                "project:01ARZ3NDEKTSV4RRFFQ69G5FCA".parse().unwrap(),
+                "Real native bootstrap uncertainty",
+                "factory-test",
+            )
+            .unwrap(),
+            workflow_source: serde_json::from_str(include_str!(
+                "../../contracts/factory/fixtures/agent-workflow-source.json"
+            ))
+            .unwrap(),
+        };
+        let physical = std::fs::canonicalize(root.path())
+            .unwrap()
+            .join("attempts.json");
+        let observed = retained.clone();
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            std::fs::rename(published, observed).unwrap();
+        });
+        let args = vec![
+            "attempt".into(),
+            "init".into(),
+            path.display().to_string(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let error =
+            crate::attempt_cli::execute(&args, Some(&serde_json::to_string(&seed).unwrap()))
+                .unwrap_err();
+        let failure = assert_publication_envelope(&error, &physical);
+        assert_eq!(
+            failure["error"]["details"]["cause"]["raw_os_error"],
+            libc::ENOENT
+        );
+        let reading: FactoryAttemptReading =
+            crate::attempt_native_store::FileAttemptStore::open(&retained)
+                .unwrap()
+                .reading()
+                .unwrap();
+        assert!(
+            reading.attempts.is_empty(),
+            "bootstrap is not evidence a worker ran"
+        );
+        assert_eq!(reading.run_ref, seed.run.reference().clone());
+        assert!(!path.exists());
+    }
 
     #[test]
     fn version_and_help_are_native_and_stable() {

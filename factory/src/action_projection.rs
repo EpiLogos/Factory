@@ -128,7 +128,7 @@ where
     };
     let native_result = provider
         .execute_projected_action(&invocation, &authority)
-        .map_err(|error| FactoryActionProjectionError::Provider(error.to_string()))?;
+        .map_err(|error| FactoryActionProjectionError::Provider(Box::new(error)))?;
 
     if native_result.action_ref != request.action_ref
         || native_result.subject_ref != request.subject_ref
@@ -184,7 +184,7 @@ pub enum FactoryActionProjectionError {
     WrongNativeOwner(String),
     InvalidRunRef(String),
     NativeResultIdentityDrift,
-    Provider(String),
+    Provider(Box<dyn Error + Send + Sync>),
 }
 
 impl Display for FactoryActionProjectionError {
@@ -199,9 +199,16 @@ impl Display for FactoryActionProjectionError {
             Self::WrongNativeOwner(owner) => write!(formatter, "Factory Action projection cannot substitute native owner `{owner}`"),
             Self::InvalidRunRef(error) => write!(formatter, "invalid Factory Run ref: {error}"),
             Self::NativeResultIdentityDrift => write!(formatter, "Factory native Action result drifted from projected Action/subject/authority identity"),
-            Self::Provider(error) => formatter.write_str(error),
+            Self::Provider(error) => Display::fmt(error, formatter),
         }
     }
 }
 
-impl Error for FactoryActionProjectionError {}
+impl Error for FactoryActionProjectionError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Provider(error) => Some(error.as_ref()),
+            _ => None,
+        }
+    }
+}
