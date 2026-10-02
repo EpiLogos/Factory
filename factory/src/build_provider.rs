@@ -10,10 +10,13 @@ use crate::build::{
     FactoryBuildError, FactoryBuildSelection, FactoryBuildSnapshot, FactoryBuildState,
     FactoryBuildViewProvider,
 };
+use crate::native_file_transaction::{
+    lock_name, read_native, retain_empty_fields, unsupported_field, NativeFileTransaction,
+    PublicationError,
+};
 use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -48,7 +51,8 @@ impl FactoryBuildFileProvider {
             state,
         };
         provider.validate_selection()?;
-        provider.persist()?;
+        let transaction = provider.lock()?;
+        provider.persist_state(&transaction, &provider.state, true)?;
         Ok(provider)
     }
 
@@ -57,15 +61,11 @@ impl FactoryBuildFileProvider {
         selection: FactoryBuildSelection,
     ) -> Result<Self, FactoryBuildProviderError> {
         let path = path.into();
-        let input = fs::read(&path)?;
-        let stored: StoredFactoryBuildState = serde_json::from_slice(&input)?;
-        if stored.schema != FACTORY_BUILD_LOCAL_PROVIDER_STATE {
-            return Err(FactoryBuildProviderError::UnsupportedSchema(stored.schema));
-        }
+        let state = Self::read_state(&path, false)?;
         let provider = Self {
             path,
             selection,
-            state: stored.state,
+            state,
         };
         provider.validate_selection()?;
         Ok(provider)
@@ -86,14 +86,10 @@ impl FactoryBuildFileProvider {
     /// Re-read the Factory-owned canonical state file. This is the explicit local
     /// change-observation seam; no watcher or ACTIVE state is fabricated.
     pub fn refresh(&mut self) -> Result<FactoryBuildSnapshot, FactoryBuildProviderError> {
-        let input = fs::read(&self.path)?;
-        let stored: StoredFactoryBuildState = serde_json::from_slice(&input)?;
-        if stored.schema != FACTORY_BUILD_LOCAL_PROVIDER_STATE {
-            return Err(FactoryBuildProviderError::UnsupportedSchema(stored.schema));
-        }
-        self.state = stored.state;
-        self.validate_selection()?;
-        self.snapshot()
+        let candidate = Self::read_state(&self.path, false)?;
+        let snapshot = FactoryBuildViewProvider.snapshot(&candidate, &self.selection)?;
+        self.state = candidate;
+        Ok(snapshot)
     }
 
     pub fn execute_action(
@@ -107,8 +103,18 @@ impl FactoryBuildFileProvider {
                 invocation.run_ref, self.selection.run_ref
             )));
         }
-        let receipt = FactoryActionExecutor.execute(&mut self.state, invocation, authority)?;
-        self.persist()?;
+        let transaction = self.lock()?;
+        let mut candidate = Self::decode_state(
+            transaction.current().ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "Build provider state not found")
+            })?,
+            true,
+        )?;
+        FactoryBuildViewProvider.snapshot(&candidate, &self.selection)?;
+        let receipt = FactoryActionExecutor.execute(&mut candidate, invocation, authority)?;
+        FactoryBuildViewProvider.snapshot(&candidate, &self.selection)?;
+        self.persist_state(&transaction, &candidate, false)?;
+        self.state = candidate;
         Ok(receipt)
     }
 
@@ -119,34 +125,73 @@ impl FactoryBuildFileProvider {
             .map_err(FactoryBuildProviderError::Factory)
     }
 
-    fn persist(&self) -> Result<(), FactoryBuildProviderError> {
-        let parent = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty());
-        if let Some(parent) = parent {
-            fs::create_dir_all(parent)?;
+    fn lock(&self) -> Result<NativeFileTransaction, FactoryBuildProviderError> {
+        Ok(NativeFileTransaction::acquire(
+            &self.path,
+            &lock_name(&self.path)?,
+            true,
+        )?)
+    }
+
+    fn read_state(
+        path: &Path,
+        for_mutation: bool,
+    ) -> Result<FactoryBuildState, FactoryBuildProviderError> {
+        Self::decode_state(&read_native(path)?, for_mutation)
+    }
+
+    fn decode_state(
+        input: &[u8],
+        for_mutation: bool,
+    ) -> Result<FactoryBuildState, FactoryBuildProviderError> {
+        let stored: StoredFactoryBuildState = serde_json::from_slice(input)?;
+        if stored.schema != FACTORY_BUILD_LOCAL_PROVIDER_STATE {
+            return Err(FactoryBuildProviderError::UnsupportedSchema(stored.schema));
         }
+        if for_mutation {
+            let raw: serde_json::Value = serde_json::from_slice(input)?;
+            if let Some(field) = unsupported_field(&raw, &serde_json::to_value(&stored)?, "$") {
+                return Err(FactoryBuildProviderError::UnsupportedField(field));
+            }
+        }
+        Ok(stored.state)
+    }
+
+    fn persist_state(
+        &self,
+        transaction: &NativeFileTransaction,
+        state: &FactoryBuildState,
+        create_new: bool,
+    ) -> Result<(), FactoryBuildProviderError> {
         let stored = StoredFactoryBuildState {
             schema: FACTORY_BUILD_LOCAL_PROVIDER_STATE.into(),
-            state: self.state.clone(),
+            state: state.clone(),
         };
-        let bytes = serde_json::to_vec_pretty(&stored)?;
-        let temporary = temporary_path(&self.path);
-        fs::write(&temporary, bytes)?;
-        fs::rename(&temporary, &self.path).inspect_err(|_| {
-            let _ = fs::remove_file(&temporary);
-        })?;
-        Ok(())
+        let mut encoded = serde_json::to_value(&stored)?;
+        if let Some(input) = transaction.current() {
+            let raw: serde_json::Value = serde_json::from_slice(input)?;
+            let previous: StoredFactoryBuildState = serde_json::from_slice(input)?;
+            // Build records are keyed by the existing canonical maps. An array
+            // with omitted data may only retain its unchanged native shape;
+            // this owner grants no positional extension-reassociation authority.
+            retain_empty_fields(
+                &raw,
+                &serde_json::to_value(previous)?,
+                &mut encoded,
+                "$",
+                |_| None,
+                |_| None,
+            )
+            .map_err(FactoryBuildProviderError::UnsupportedField)?;
+        }
+        match transaction.publish(&serde_json::to_vec_pretty(&encoded)?, create_new) {
+            Ok(()) => Ok(()),
+            Err(PublicationError::Before(error)) => Err(error.into()),
+            Err(PublicationError::Uncertain(error)) => {
+                Err(FactoryBuildProviderError::PublicationUncertain(error))
+            }
+        }
     }
-}
-
-fn temporary_path(path: &Path) -> PathBuf {
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("factory-build-state.json");
-    path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id()))
 }
 
 #[derive(Debug)]
@@ -155,6 +200,8 @@ pub enum FactoryBuildProviderError {
     Json(serde_json::Error),
     Factory(FactoryBuildError),
     UnsupportedSchema(String),
+    UnsupportedField(String),
+    PublicationUncertain(crate::NativePublicationUncertainty),
     SelectionMismatch(String),
 }
 
@@ -188,9 +235,20 @@ impl Display for FactoryBuildProviderError {
                     "unsupported Factory Build provider schema `{schema}`"
                 )
             }
+            Self::UnsupportedField(field) => write!(formatter, "Factory Build mutation refused: unsupported stored field {field}; retained bytes unchanged"),
+            Self::PublicationUncertain(error) => write!(formatter, "Factory Build publication is uncertain after replacement; read back owner state before retry: {error}"),
             Self::SelectionMismatch(detail) => write!(formatter, "{detail}"),
         }
     }
 }
 
-impl Error for FactoryBuildProviderError {}
+impl Error for FactoryBuildProviderError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::PublicationUncertain(error) => Some(error),
+            Self::Io(error) => Some(error),
+            Self::Json(error) => Some(error),
+            _ => None,
+        }
+    }
+}

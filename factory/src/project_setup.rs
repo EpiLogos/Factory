@@ -1,5 +1,6 @@
 //! Factory-owned per-project placement. A Project is available before its
 //! first Commission; setup never creates execution or participant evidence.
+use crate::cli::CliError;
 use crate::commission::project_ref_for_key;
 use crate::core::run::Project;
 use crate::developmental_read::{
@@ -89,13 +90,13 @@ pub fn setup(
     root: &Path,
     project_key: &str,
     central_source: Option<&Path>,
-) -> Result<Value, String> {
+) -> Result<Value, CliError> {
     setup_bound(root, project_key, central_source, project_key)
 }
 
 /// Central identities may contain spaces. Encode the whole native identity
 /// into an injective Factory key without changing Central's source identity.
-pub fn setup_central(root: &Path, central_ref: &str, source: &Path) -> Result<Value, String> {
+pub fn setup_central(root: &Path, central_ref: &str, source: &Path) -> Result<Value, CliError> {
     let mut key = String::from("central-project:");
     for byte in central_ref.bytes() {
         if byte.is_ascii_alphanumeric() || b"-_.".contains(&byte) {
@@ -128,7 +129,7 @@ fn setup_bound(
     project_key: &str,
     central_source: Option<&Path>,
     central_ref: &str,
-) -> Result<Value, String> {
+) -> Result<Value, CliError> {
     let root = root.canonicalize().map_err(error)?;
     if !root.is_dir() {
         return Err("Factory Project root must be a directory".into());
@@ -196,7 +197,7 @@ fn setup_bound(
         Project::new(project_ref),
         link,
     )
-    .map_err(error)?;
+    .map_err(CliError::from_native)?;
     if !placement_path.exists() {
         let bytes = serde_json::to_vec_pretty(&placement).map_err(error)?;
         let nonce = std::time::SystemTime::now()
@@ -228,9 +229,10 @@ fn setup_bound(
             "created"
         },
     )
+    .map_err(CliError::new)
 }
 
-pub fn execute(args: &[String]) -> Result<String, String> {
+pub fn execute(args: &[String]) -> Result<String, CliError> {
     let value = match args {
         [action, root, reference, source] if action == "setup-central" => setup_central(Path::new(root), reference, Path::new(source))?,
         [action, root] if action == "locate" => locate(Path::new(root))?,
@@ -238,5 +240,62 @@ pub fn execute(args: &[String]) -> Result<String, String> {
         [action, root, key, flag, source] if action == "setup" && flag == "--central-source" => setup(Path::new(root), key, Some(Path::new(source)))?,
         _ => return Err("usage: factory project setup <project-root> <native-project-key> [--central-source <project.json>] [--json] | factory project setup-central <project-root> <central-project-ref> <project.json> [--json] | factory project locate <project-root> [--json]".into()),
     };
-    serde_json::to_string_pretty(&value).map_err(error)
+    serde_json::to_string_pretty(&value).map_err(CliError::from_native)
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    #[test]
+    fn actual_project_setup_publication_errno_reaches_public_dispatch_without_claiming_placement() {
+        for move_after_publication in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let source = root
+                .path()
+                .canonicalize()
+                .unwrap()
+                .join(".factory/development-state.json");
+            let retained = root.path().join("retained-native-project.json");
+            let observed = retained.clone();
+            crate::native_file_transaction::observe_next_publication(move |published| {
+                if move_after_publication {
+                    std::fs::rename(published, observed).unwrap();
+                } else {
+                    std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                        .unwrap();
+                }
+            });
+            let args = vec![
+                "project".into(),
+                "setup".into(),
+                root.path().display().to_string(),
+                "actual-setup-publication".into(),
+                "--json".into(),
+            ];
+            let error = crate::cli::execute_cli(&args, None).unwrap_err();
+            let physical = crate::native_publication_uncertainty(&error).unwrap();
+            assert_eq!(physical.source_path, source);
+            let failure = error.native_publication_failure().unwrap();
+            assert_eq!(failure["error"]["details"]["published"], true);
+            assert_eq!(failure["error"]["details"]["outcome"], "unknown");
+            assert_eq!(failure["error"]["details"]["automatic_retry"], false);
+            assert!(failure["error"]["details"].get("native_result").is_none());
+            if move_after_publication {
+                assert_eq!(physical.cause.raw_os_error(), Some(libc::ENOENT));
+            }
+            assert!(!root.path().join(".factory/project.json").exists());
+            let state = FactoryDevelopmentalFileProvider::open(if move_after_publication {
+                &retained
+            } else {
+                &source
+            })
+            .unwrap();
+            assert_eq!(
+                state.state().build.project().reference(),
+                &project_ref_for_key("actual-setup-publication").unwrap()
+            );
+            assert_eq!(state.state().build.run_count(), 0);
+        }
+    }
 }

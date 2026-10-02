@@ -255,7 +255,7 @@ fn read_state(
     path: &Path,
 ) -> Result<crate::developmental_read::FactoryDevelopmentalState, Refusal> {
     read_developmental_state(path).map_err(|error| {
-        let mut refusal = state_refusal(path, &error);
+        let mut refusal = state_refusal(path, error);
         refusal.consequence = NOTHING_READ.into();
         refusal
     })

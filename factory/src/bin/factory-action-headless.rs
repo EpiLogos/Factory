@@ -9,6 +9,9 @@ use std::str::FromStr;
 
 fn main() {
     if let Err(error) = run() {
+        if let Some(result) = epilogos_factory::native_publication_failure(error.as_ref()) {
+            println!("{result}");
+        }
         eprintln!("{error}");
         std::process::exit(1);
     }

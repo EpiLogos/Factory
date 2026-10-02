@@ -113,7 +113,14 @@ impl FileAttemptStore {
             .attempt_states
             .insert(run_ref.clone(), FactoryRunAttempts::from_view(&view));
         FactoryDevelopmentalFileProvider::create_new(&path, native)
-            .map_err(|error| invalid(&error.to_string()))?;
+            .map_err(|error| {
+            let legacy_message = error.to_string();
+            match error {
+                crate::developmental_read::FactoryDevelopmentalProviderError::PublicationUncertain(cause) =>
+                    FactoryAttemptError::PublicationUncertain { cause, legacy_message },
+                other => invalid(&other.to_string()),
+            }
+        })?;
         Ok(Self { path, run_ref })
     }
 
@@ -447,5 +454,14 @@ fn store_error(error: FactoryAttemptError) -> ProjectDevelopmentStoreError {
     ProjectDevelopmentStoreError::Native(error.to_string())
 }
 fn native_error(error: ProjectDevelopmentStoreError) -> FactoryAttemptError {
-    invalid(&error.to_string())
+    let legacy_message = error.to_string();
+    match error {
+        ProjectDevelopmentStoreError::PublicationUncertain(cause) => {
+            FactoryAttemptError::PublicationUncertain {
+                cause,
+                legacy_message,
+            }
+        }
+        other => invalid(&other.to_string()),
+    }
 }

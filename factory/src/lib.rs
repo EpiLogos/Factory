@@ -45,7 +45,12 @@ pub mod journey_build;
 pub mod journey_commission;
 pub mod journey_praxis;
 pub mod native_aikit_route;
+mod native_file_transaction;
 pub mod native_gateway;
+pub use native_file_transaction::{
+    native_publication_failure, native_publication_uncertainty, NativePublicationCause,
+    NativePublicationDetails, NativePublicationUncertainty, FACTORY_PUBLICATION_FAILURE_CONTRACT,
+};
 pub mod native_owner;
 pub mod native_process;
 pub mod orchestration;

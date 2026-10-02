@@ -65,7 +65,7 @@ pub struct AuthoredBasis {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub adapters: BTreeMap<String, domain::AdapterBasis>,
 }
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Diagnostic {
     pub code: String,
@@ -73,7 +73,25 @@ pub struct Diagnostic {
     pub location: Option<Box<SourceLocation>>,
     pub field: Option<String>,
     pub unit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_uncertainty: Option<crate::NativePublicationDetails>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_result: Option<serde_json::Value>,
+    #[serde(skip)]
+    pub(crate) publication_cause: Option<std::sync::Arc<dyn std::error::Error + Send + Sync>>,
 }
+impl PartialEq for Diagnostic {
+    fn eq(&self, other: &Self) -> bool {
+        self.code == other.code
+            && self.message == other.message
+            && self.location == other.location
+            && self.field == other.field
+            && self.unit == other.unit
+            && self.publication_uncertainty == other.publication_uncertainty
+            && self.native_result == other.native_result
+    }
+}
+impl Eq for Diagnostic {}
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(loc) = &self.location {
@@ -86,7 +104,13 @@ impl fmt::Display for Diagnostic {
         Ok(())
     }
 }
-impl std::error::Error for Diagnostic {}
+impl std::error::Error for Diagnostic {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.publication_cause
+            .as_ref()
+            .map(|cause| cause.as_ref() as &(dyn std::error::Error + 'static))
+    }
+}
 pub(crate) fn error(code: &str, message: impl Into<String>) -> Diagnostic {
     Diagnostic {
         code: code.into(),
@@ -94,6 +118,9 @@ pub(crate) fn error(code: &str, message: impl Into<String>) -> Diagnostic {
         location: None,
         field: None,
         unit: None,
+        publication_uncertainty: None,
+        native_result: None,
+        publication_cause: None,
     }
 }
 #[derive(Debug, Clone, Serialize)]

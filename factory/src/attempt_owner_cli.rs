@@ -7,6 +7,7 @@
 use crate::attempt_owner_dispatch::{
     execute_attempt_owner_action, FactoryAttemptOwnerRequest, FACTORY_ATTEMPT_OWNER_ACTION,
 };
+use crate::cli::CliError;
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
@@ -14,7 +15,7 @@ use std::path::Path;
 pub fn execute_attempt_owner_cli(
     args: &[String],
     stdin_override: Option<&str>,
-) -> Result<String, String> {
+) -> Result<String, CliError> {
     if matches!(
         args.first().map(String::as_str),
         None | Some("help") | Some("--help") | Some("-h")
@@ -32,27 +33,27 @@ pub fn execute_attempt_owner_cli(
         .ok_or_else(|| "missing attempt state path".to_owned())?;
     let request_path = positional.get(1).map(|value| value.as_str()).unwrap_or("-");
     let input = if request_path != "-" {
-        fs::read_to_string(request_path).map_err(|error| error.to_string())?
+        fs::read_to_string(request_path).map_err(CliError::from_native)?
     } else if let Some(input) = stdin_override {
         input.to_owned()
     } else {
         let mut input = String::new();
         io::stdin()
             .read_to_string(&mut input)
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         input
     };
     let request: FactoryAttemptOwnerRequest =
-        serde_json::from_str(&input).map_err(|error| error.to_string())?;
+        serde_json::from_str(&input).map_err(CliError::from_native)?;
     if request.contract != FACTORY_ATTEMPT_OWNER_ACTION {
-        return Err(format!(
+        return Err(CliError::new(format!(
             "owner Action contract must be {FACTORY_ATTEMPT_OWNER_ACTION}"
-        ));
+        )));
     }
     let receipt = execute_attempt_owner_action(Path::new(state.as_str()), request)
-        .map_err(|error| error.to_string())?;
+        .map_err(CliError::from_native)?;
     if args.iter().any(|arg| arg == "--json") {
-        serde_json::to_string_pretty(&receipt).map_err(|error| error.to_string())
+        serde_json::to_string_pretty(&receipt).map_err(CliError::from_native)
     } else {
         Ok(format!(
             "{}\nRun: {}\nAttempt: {}\nRequest: {}\nReplayed: {}\nNeeds reconciliation: {}\nOwner phase: {:?}",

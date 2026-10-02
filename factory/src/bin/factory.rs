@@ -4,9 +4,8 @@ fn main() -> std::process::ExitCode {
         return epilogos_factory::workflow_authoring::cli::main(&args);
     }
     // The configuration plane contract (C0 §6) puts its structured failure
-    // document on stdout while the process still exits non-zero. The attempt
-    // CLI flattens errors into strings for stderr, so these two command heads
-    // are routed to their own entry before that chain.
+    // document on stdout while the process still exits non-zero. These command
+    // heads retain their own configuration failure contract and entrypoint.
     if epilogos_factory::configuration::is_config_command(args.first().map(String::as_str)) {
         return epilogos_factory::configuration::config_main(&args);
     }
@@ -23,6 +22,11 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
+            if args.iter().any(|arg| arg == "--json") {
+                if let Some(result) = error.native_publication_failure() {
+                    println!("{result}");
+                }
+            }
             eprintln!("factory: {error}");
             std::process::ExitCode::from(2)
         }

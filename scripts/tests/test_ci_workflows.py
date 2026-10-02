@@ -38,7 +38,7 @@ class NativeWorkflowTests(unittest.TestCase):
 
     def test_source_packaging_remains_exact_main_and_test_gated(self):
         job = self.workflow['jobs']['artifact']
-        self.assertEqual('factory-rust', job['needs'])
+        self.assertEqual(['factory-rust', 'factory-native-macos'], job['needs'])
         self.assertIn("github.ref == 'refs/heads/main'", job['if'])
         self.assertTrue(any(step.get('uses') == 'actions/attest@v4' for step in job['steps']))
         body = '\n'.join(step.get('run', '') for step in job['steps'])
@@ -50,6 +50,15 @@ class NativeWorkflowTests(unittest.TestCase):
         self.assertTrue({'factory/**', 'contracts/factory/**', 'skills/**', 'scripts/**',
                          '.oi/product.json', 'Cargo.toml', 'Cargo.lock'} <= paths)
         self.assertLessEqual(int(self.workflow['jobs']['factory-rust']['timeout-minutes']), 20)
+
+    def test_actual_macos_native_gate_and_foreign_owner_case_are_required_for_publication(self):
+        mac = self.workflow['jobs']['factory-native-macos']
+        self.assertEqual('macos-14', mac['runs-on'])
+        commands = '\n'.join(step.get('run', '') for step in mac['steps'])
+        self.assertIn('cargo test --workspace --all-targets --locked', commands)
+        self.assertIn('cargo clippy --workspace --all-targets --locked -- -D warnings', commands)
+        self.assertIn('python3 scripts/test_native_publication_privacy.py', commands)
+        self.assertIn('python3 scripts/test_native_publication_privacy.py', self.commands)
 
 
 if __name__ == '__main__':

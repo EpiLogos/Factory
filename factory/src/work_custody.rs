@@ -179,15 +179,36 @@ impl FactoryWorkCustody {
 }
 
 /// Three-part refusal (fact, consequence, action) with a stable code. Every
-/// refusal is raised before any write, so the consequence always says so.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// semantic refusal is raised before any write. Actual publication uncertainty
+/// is carried separately and must not claim the source stayed unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Refusal {
     pub schema: String,
     pub code: String,
     pub fact: String,
     pub consequence: String,
     pub action: String,
+    #[serde(
+        default,
+        rename = "publicationUncertainty",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub publication_uncertainty: Option<crate::NativePublicationDetails>,
+    #[serde(skip)]
+    publication_cause: Option<std::sync::Arc<crate::NativePublicationUncertainty>>,
 }
+
+impl PartialEq for Refusal {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema == other.schema
+            && self.code == other.code
+            && self.fact == other.fact
+            && self.consequence == other.consequence
+            && self.action == other.action
+            && self.publication_uncertainty == other.publication_uncertainty
+    }
+}
+impl Eq for Refusal {}
 
 pub const NOTHING_PERSISTED: &str = "Nothing was persisted; the developmental state is unchanged.";
 pub const NOTHING_READ: &str = "No reading was produced; the developmental state is unchanged.";
@@ -205,6 +226,8 @@ impl Refusal {
             fact: fact.into(),
             consequence: consequence.into(),
             action: action.into(),
+            publication_uncertainty: None,
+            publication_cause: None,
         }
     }
 
@@ -227,7 +250,13 @@ impl Display for Refusal {
     }
 }
 
-impl std::error::Error for Refusal {}
+impl std::error::Error for Refusal {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.publication_cause
+            .as_ref()
+            .map(|cause| cause.as_ref() as &(dyn std::error::Error + 'static))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AssignRequest {
@@ -858,7 +887,7 @@ fn transact(
     operation: impl FnOnce(&mut FactoryDevelopmentalState) -> Result<CustodyReceipt, Refusal>,
 ) -> Result<CustodyReceipt, Refusal> {
     transact_developmental_state(path, |state| Ok(operation(state)))
-        .map_err(|error| state_refusal(path, &error))?
+        .map_err(|error| state_refusal(path, error))?
 }
 
 pub fn assign(path: &Path, request: AssignRequest) -> Result<CustodyReceipt, Refusal> {
@@ -981,16 +1010,22 @@ fn confirm_current_generation(actor: &CustodyActor) -> Result<(), Refusal> {
     ))
 }
 
-pub(crate) fn state_refusal(path: &Path, error: &ProjectDevelopmentStoreError) -> Refusal {
-    Refusal::new(
-        "factory.state.unavailable",
-        format!(
-            "the developmental state at {} could not be read or written: {error}",
-            path.display()
-        ),
+pub(crate) fn state_refusal(path: &Path, error: ProjectDevelopmentStoreError) -> Refusal {
+    let fact = format!(
+        "the developmental state at {} could not be read or written: {error}",
+        path.display()
+    );
+    if let ProjectDevelopmentStoreError::PublicationUncertain(cause) = error {
+        let mut refusal = Refusal::new("factory.publication_uncertain", fact,
+            "A candidate source was published; durability or native readback is unknown.",
+            "inspect the original native source before another mutation; do not retry automatically");
+        refusal.publication_uncertainty = Some(cause.details());
+        refusal.publication_cause = Some(std::sync::Arc::new(cause));
+        return refusal;
+    }
+    Refusal::new("factory.state.unavailable",fact,
         "The outcome was not applied; the state file was not replaced.",
-        "check the path with `factory project locate <project-root>` and retry against the statePath it reports",
-    )
+        "check the path with `factory project locate <project-root>` and retry against the statePath it reports")
 }
 
 #[cfg(test)]
@@ -1031,6 +1066,113 @@ mod tests {
         assert_eq!(refusal.consequence, NOTHING_PERSISTED);
         assert!(!refusal.fact.is_empty() && !refusal.action.is_empty());
         refusal.code
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn actual_custody_public_dispatch_keeps_native_postpublication_cause() {
+        use crate::developmental_read::FactoryDevelopmentalFileProvider;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("native-custody.json");
+        let retained = root.path().join("retained-committed-custody.json");
+        FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+        let physical = std::fs::canonicalize(&path).unwrap();
+        let observed = retained.clone();
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            std::fs::rename(published, observed).unwrap();
+        });
+        let args = vec![
+            "development".into(),
+            "custody".into(),
+            "assign".into(),
+            path.display().to_string(),
+            "--position".into(),
+            P.into(),
+            "--work".into(),
+            "work:real-dispatch-publication".into(),
+            "--reason".into(),
+            "Native public dispatch effect test".into(),
+            "--json".into(),
+        ];
+        let error = crate::cli::execute_cli(&args, None).unwrap_err();
+        let cause = crate::native_publication_uncertainty(&error).unwrap();
+        assert_eq!(cause.source_path, physical);
+        assert_eq!(cause.cause.raw_os_error(), Some(libc::ENOENT));
+        let failure = error.native_publication_failure().unwrap();
+        assert_eq!(failure["error"]["details"]["published"], true);
+        assert_eq!(failure["error"]["details"]["automatic_retry"], false);
+        assert_eq!(
+            FactoryDevelopmentalFileProvider::open(&retained)
+                .unwrap()
+                .state()
+                .work_custody
+                .len(),
+            1
+        );
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn actual_custody_cli_commit_never_returns_unchanged_after_readback_failure() {
+        use crate::developmental_read::FactoryDevelopmentalFileProvider;
+        use std::os::unix::fs::PermissionsExt;
+        for move_after_publication in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("native-custody.json");
+            let retained = root.path().join("retained-committed-custody.json");
+            FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+            let physical = std::fs::canonicalize(&path).unwrap();
+            let observer = retained.clone();
+            crate::native_file_transaction::observe_next_publication(move |published| {
+                if move_after_publication {
+                    std::fs::rename(published, observer).unwrap();
+                } else {
+                    std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                        .unwrap();
+                }
+            });
+            let args = vec![
+                "custody".into(),
+                "assign".into(),
+                path.display().to_string(),
+                "--position".into(),
+                P.into(),
+                "--work".into(),
+                "work:real-publication-proof".into(),
+                "--reason".into(),
+                "Native source effect test".into(),
+            ];
+            let refusal = crate::inhabitation_cli::execute(&args, true).unwrap_err();
+            assert_eq!(refusal.code, "factory.publication_uncertain");
+            assert_ne!(refusal.consequence, NOTHING_PERSISTED);
+            assert!(refusal.consequence.contains("published"));
+            let cause = crate::native_publication_uncertainty(&refusal).unwrap();
+            let value = serde_json::to_value(&refusal).unwrap();
+            assert_eq!(
+                value["publicationUncertainty"]["source_path"],
+                physical.display().to_string()
+            );
+            assert_eq!(value["publicationUncertainty"]["published"], true);
+            assert_eq!(value["publicationUncertainty"]["outcome"], "unknown");
+            assert_eq!(value["publicationUncertainty"]["automatic_retry"], false);
+            if move_after_publication {
+                assert_eq!(cause.cause.raw_os_error(), Some(libc::ENOENT));
+            }
+            let retained_path = if move_after_publication {
+                &retained
+            } else {
+                &path
+            };
+            let current = FactoryDevelopmentalFileProvider::open(retained_path).unwrap();
+            assert_eq!(current.state().work_custody.len(), 1);
+            assert_eq!(
+                current.state().work_custody[0].work_ref,
+                "work:real-publication-proof"
+            );
+            // Cloning the existing structured result must keep the original native cause.
+            assert_eq!(refusal.clone(), refusal);
+            assert!(crate::native_publication_uncertainty(&refusal.clone()).is_some());
+        }
     }
 
     #[test]

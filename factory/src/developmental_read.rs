@@ -26,6 +26,10 @@ use crate::journey::{
     Journey, JourneyCommission, JourneyParticipant, JourneyRecognitionLink, JourneyRef,
     JourneyReturn, JourneyStatus,
 };
+use crate::native_file_transaction::{
+    lock_name, read_native, retain_empty_fields, unsupported_field, NativeFileTransaction,
+    PublicationError,
+};
 use crate::routine_continuation::{
     FactoryRoutineContinuation, FactoryRoutineContinuationAdmission,
     FactoryRoutineContinuationAdmissionStatus, FactoryRoutineContinuationReading,
@@ -36,13 +40,11 @@ use crate::workflow::{
     WorkflowSource,
 };
 use crate::workflow_reference::WorkflowSubjectRef;
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::fs;
-use std::fs::OpenOptions;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -1238,9 +1240,9 @@ impl FactoryDevelopmentalFileProvider {
     ) -> Result<(Self, bool), FactoryDevelopmentalProviderError> {
         let path = path.into();
         let lock = Self::lock_path(&path)?;
-        let existed = path.exists();
+        let existed = lock.current().is_some();
         let mut state = if existed {
-            Self::read_state(&path)?
+            Self::read_locked(&lock)?
         } else {
             FactoryDevelopmentalState::new(FactoryBuildState::empty(project.clone()), vec![])?
         };
@@ -1288,13 +1290,14 @@ impl FactoryDevelopmentalFileProvider {
         let provider = if existed {
             let provider = Self { path, state };
             if changed {
-                provider.persist()?;
+                provider.persist_state(&lock, &provider.state, lock.current().is_none())?;
             }
             provider
         } else {
-            Self::create_new(path, state)?
+            let provider = Self { path, state };
+            provider.persist_state(&lock, &provider.state, true)?;
+            provider
         };
-        FileExt::unlock(&lock)?;
         Ok((provider, existed))
     }
 
@@ -1306,22 +1309,21 @@ impl FactoryDevelopmentalFileProvider {
     ) -> Result<FactoryCommissionReceipt, FactoryDevelopmentalProviderError> {
         let path = path.into();
         let lock = Self::lock_path(&path)?;
-        if path.exists() {
+        if lock.current().is_some() {
             let mut provider = Self {
-                state: Self::read_state(&path)?,
+                state: Self::read_locked(&lock)?,
                 path,
             };
             let receipt = provider.state.admit_commission(request)?;
             provider.state.validate()?;
             if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
-                provider.persist()?;
+                provider.persist_state(&lock, &provider.state, lock.current().is_none())?;
             }
-            FileExt::unlock(&lock)?;
             return Ok(receipt);
         }
         let (state, receipt) = FactoryDevelopmentalState::from_commission(request)?;
-        Self::create_new(&path, state)?;
-        FileExt::unlock(&lock)?;
+        let provider = Self { path, state };
+        provider.persist_state(&lock, &provider.state, true)?;
         Ok(receipt)
     }
 
@@ -1338,9 +1340,9 @@ impl FactoryDevelopmentalFileProvider {
         let lock = Self::lock_path(&path)?;
         let request_ref = request.request_ref.clone();
         let commissioned_at = request.commissioned_at.clone();
-        let (mut provider, commission) = if path.exists() {
+        let (mut provider, commission) = if lock.current().is_some() {
             let mut provider = Self {
-                state: Self::read_state(&path)?,
+                state: Self::read_locked(&lock)?,
                 path,
             };
             let commission = provider.state.admit_commission(request)?;
@@ -1370,9 +1372,8 @@ impl FactoryDevelopmentalFileProvider {
         if commission.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied
             || attachment.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied
         {
-            provider.persist()?;
+            provider.persist_state(&lock, &provider.state, lock.current().is_none())?;
         }
-        FileExt::unlock(&lock)?;
         Ok(FactoryWorkflowCommissionReceipt {
             status: commission.status,
             commission: commission.commission,
@@ -1389,12 +1390,12 @@ impl FactoryDevelopmentalFileProvider {
             path: path.into(),
             state,
         };
-        provider.persist()?;
+        let lock = provider.lock()?;
+        provider.persist_state(&lock, &provider.state, lock.current().is_none())?;
         Ok(provider)
     }
 
     /// Create a new provider state without ever replacing an existing path.
-    /// This is the safe boundary for generated conformance state.
     pub fn create_new(
         path: impl Into<PathBuf>,
         state: FactoryDevelopmentalState,
@@ -1404,34 +1405,8 @@ impl FactoryDevelopmentalFileProvider {
             path: path.into(),
             state,
         };
-        if let Some(parent) = provider
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent)?;
-        }
-        let stored = StoredFactoryDevelopmentalState {
-            schema: FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER.into(),
-            state: provider.state.clone(),
-        };
-        let bytes = serde_json::to_vec_pretty(&stored)?;
-        let mut file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&provider.path)?;
-        use std::io::Write;
-        if let Err(error) = file.write_all(&bytes).and_then(|_| file.sync_all()) {
-            let _ = fs::remove_file(&provider.path);
-            return Err(error.into());
-        }
-        if let Some(parent) = provider
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            fs::File::open(parent)?.sync_all()?;
-        }
+        let lock = provider.lock()?;
+        provider.persist_state(&lock, &provider.state, true)?;
         Ok(provider)
     }
 
@@ -1456,14 +1431,13 @@ impl FactoryDevelopmentalFileProvider {
         request: FactoryCentralProjectLinkRequest,
     ) -> Result<FactoryCentralProjectLinkReceipt, FactoryDevelopmentalProviderError> {
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let receipt = candidate.admit_central_project_link(request)?;
         candidate.validate()?;
         if receipt.result == "applied" {
-            self.persist_state(&candidate)?;
+            self.persist_state(&lock, &candidate, false)?;
         }
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(receipt)
     }
     pub fn central_project_link_reading(
@@ -1481,14 +1455,13 @@ impl FactoryDevelopmentalFileProvider {
         &mut self,
     ) -> Result<Option<FactoryCentralProjectLink>, FactoryDevelopmentalProviderError> {
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let removed = candidate.remove_central_project_link();
         if removed.is_some() {
             candidate.validate()?;
-            self.persist_state(&candidate)?;
+            self.persist_state(&lock, &candidate, false)?;
         }
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(removed)
     }
 
@@ -1576,14 +1549,13 @@ impl FactoryDevelopmentalFileProvider {
         request: FactoryCommissionRequest,
     ) -> Result<FactoryCommissionReceipt, FactoryDevelopmentalProviderError> {
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let receipt = candidate.admit_commission(request)?;
         candidate.validate()?;
         if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
-            self.persist_state(&candidate)?;
+            self.persist_state(&lock, &candidate, false)?;
         }
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(receipt)
     }
 
@@ -1602,34 +1574,32 @@ impl FactoryDevelopmentalFileProvider {
             None
         };
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let receipt = candidate
             .apply_developmental_mutation_with_flow_admission(request, admission.as_ref())?;
         candidate.validate()?;
         if receipt.status != crate::commission::FactoryAdmissionStatus::AlreadyApplied {
-            self.persist_state(&candidate)?;
+            self.persist_state(&lock, &candidate, false)?;
         }
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(receipt)
     }
 
     /// Apply the whole Journey + Run + continuation mutation to a clone and
-    /// publish it with one atomic replacement. Failure leaves memory and disk at
-    /// the previous complete state.
+    /// publish it with one atomic replacement. Before-publication failure keeps
+    /// the previous state; a failure after replacement is explicitly uncertain.
     pub fn admit_routine_continuation(
         &mut self,
         request: FactoryRoutineContinuationRequest,
     ) -> Result<FactoryRoutineContinuationAdmission, FactoryDevelopmentalProviderError> {
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let admission = candidate.admit_routine_continuation(request)?;
         candidate.validate()?;
         if admission.status != FactoryRoutineContinuationAdmissionStatus::AlreadyApplied {
-            self.persist_state(&candidate)?;
+            self.persist_state(&lock, &candidate, false)?;
         }
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(admission)
     }
 
@@ -1639,98 +1609,108 @@ impl FactoryDevelopmentalFileProvider {
         authority: &FactoryActionAuthority,
     ) -> Result<FactoryActionReceipt, FactoryDevelopmentalProviderError> {
         let lock = self.lock()?;
-        let mut candidate = Self::read_state(&self.path)?;
+        let mut candidate = Self::read_locked(&lock)?;
         let receipt = FactoryActionExecutor.execute(&mut candidate.build, invocation, authority)?;
         candidate.validate()?;
-        self.persist_state(&candidate)?;
+        self.persist_state(&lock, &candidate, false)?;
         self.state = candidate;
-        FileExt::unlock(&lock)?;
         Ok(receipt)
-    }
-
-    fn persist(&self) -> Result<(), FactoryDevelopmentalProviderError> {
-        self.persist_state(&self.state)
     }
 
     fn persist_state(
         &self,
+        transaction: &NativeFileTransaction,
         state: &FactoryDevelopmentalState,
+        create_new: bool,
     ) -> Result<(), FactoryDevelopmentalProviderError> {
-        if let Some(parent) = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            fs::create_dir_all(parent)?;
-        }
         let stored = StoredFactoryDevelopmentalState {
             schema: FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER.into(),
             state: state.clone(),
         };
-        let temporary = self.path.with_file_name(format!(
-            ".{}.tmp-{}-{}",
-            self.path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("factory-developmental-state.json"),
-            std::process::id(),
-            ulid::Ulid::new()
-        ));
-        let mut temporary_file = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&temporary)?;
-        use std::io::Write;
-        temporary_file.write_all(&serde_json::to_vec_pretty(&stored)?)?;
-        temporary_file.sync_all()?;
-        fs::rename(&temporary, &self.path).inspect_err(|_| {
-            let _ = fs::remove_file(&temporary);
-        })?;
-        if let Some(parent) = self
-            .path
-            .parent()
-            .filter(|path| !path.as_os_str().is_empty())
-        {
-            fs::File::open(parent)?.sync_all()?;
+        let mut encoded = serde_json::to_value(&stored)?;
+        if let Some(input) = transaction.current() {
+            let raw: serde_json::Value = serde_json::from_slice(input)?;
+            let previous: StoredFactoryDevelopmentalState = serde_json::from_slice(input)?;
+            if previous.schema != FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER {
+                return Err(
+                    FactoryDevelopmentalProviderError::UnsupportedProviderSchema(previous.schema),
+                );
+            }
+            previous.state.validate()?;
+            let known = serde_json::to_value(&previous)?;
+            if let Some(field) = unsupported_field(&raw, &known, "$") {
+                return Err(FactoryDevelopmentalProviderError::UnsupportedRetention(
+                    field,
+                ));
+            }
+            if crate::native_file_transaction::has_omitted(&raw, &known)
+                && previous.state.project_ref() != state.project_ref()
+            {
+                return Err(FactoryDevelopmentalProviderError::UnsupportedRetention(format!(
+                    "retained omitted fields belong to Project {}; replacement Project {} cannot inherit them",
+                    previous.state.project_ref(), state.project_ref()
+                )));
+            }
+            retain_empty_fields(&raw, &known, &mut encoded, "$", |_| None, |_| None)
+                .map_err(FactoryDevelopmentalProviderError::UnsupportedRetention)?;
         }
-        Ok(())
+        match transaction.publish(&serde_json::to_vec_pretty(&encoded)?, create_new) {
+            Ok(()) => Ok(()),
+            Err(PublicationError::Before(error)) => Err(error.into()),
+            Err(PublicationError::Uncertain(error)) => Err(
+                FactoryDevelopmentalProviderError::PublicationUncertain(error),
+            ),
+        }
     }
 
-    fn read_state(
-        path: &Path,
+    fn decode_state(
+        input: &[u8],
+        for_mutation: bool,
     ) -> Result<FactoryDevelopmentalState, FactoryDevelopmentalProviderError> {
-        let stored: StoredFactoryDevelopmentalState = serde_json::from_slice(&fs::read(path)?)?;
+        let stored: StoredFactoryDevelopmentalState = serde_json::from_slice(input)?;
         if stored.schema != FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER {
             return Err(
                 FactoryDevelopmentalProviderError::UnsupportedProviderSchema(stored.schema),
             );
         }
         stored.state.validate()?;
+        if for_mutation {
+            let raw: serde_json::Value = serde_json::from_slice(input)?;
+            if let Some(field) = unsupported_field(&raw, &serde_json::to_value(&stored)?, "$") {
+                return Err(FactoryDevelopmentalProviderError::UnsupportedRetention(
+                    field,
+                ));
+            }
+        }
         Ok(stored.state)
     }
-
-    fn lock(&self) -> Result<fs::File, FactoryDevelopmentalProviderError> {
+    fn read_state(
+        path: &Path,
+    ) -> Result<FactoryDevelopmentalState, FactoryDevelopmentalProviderError> {
+        Self::decode_state(&read_native(path)?, false)
+    }
+    fn read_locked(
+        transaction: &NativeFileTransaction,
+    ) -> Result<FactoryDevelopmentalState, FactoryDevelopmentalProviderError> {
+        Self::decode_state(
+            transaction.current().ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "native developmental state not found",
+                )
+            })?,
+            true,
+        )
+    }
+    fn lock(&self) -> Result<NativeFileTransaction, FactoryDevelopmentalProviderError> {
         Self::lock_path(&self.path)
     }
-
-    fn lock_path(path: &Path) -> Result<fs::File, FactoryDevelopmentalProviderError> {
-        if let Some(parent) = path.parent().filter(|path| !path.as_os_str().is_empty()) {
-            fs::create_dir_all(parent)?;
-        }
-        let lock_path = path.with_file_name(format!(
-            ".{}.lock",
-            path.file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("factory-developmental-state.json")
-        ));
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .open(lock_path)?;
-        lock.lock_exclusive()?;
-        Ok(lock)
+    fn lock_path(path: &Path) -> Result<NativeFileTransaction, FactoryDevelopmentalProviderError> {
+        Ok(NativeFileTransaction::acquire(
+            path,
+            &lock_name(path)?,
+            true,
+        )?)
     }
 }
 
@@ -3690,6 +3670,8 @@ pub enum FactoryDevelopmentalProviderError {
     Read(FactoryDevelopmentalReadError),
     Build(FactoryBuildError),
     UnsupportedProviderSchema(String),
+    UnsupportedRetention(String),
+    PublicationUncertain(crate::NativePublicationUncertainty),
     RoutineContinuation(RoutineContinuationError),
     Commission(CommissionError),
 }
@@ -3732,11 +3714,24 @@ impl From<CommissionError> for FactoryDevelopmentalProviderError {
 
 impl Display for FactoryDevelopmentalProviderError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Factory developmental provider error: {self:?}")
+        match self {
+            Self::PublicationUncertain(error) => write!(formatter,
+                "Factory developmental publication uncertain after replacement; read back owner state before retry: {error}"),
+            _ => write!(formatter, "Factory developmental provider error: {self:?}"),
+        }
     }
 }
 
-impl Error for FactoryDevelopmentalProviderError {}
+impl Error for FactoryDevelopmentalProviderError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::PublicationUncertain(error) => Some(error),
+            Self::Io(error) => Some(error),
+            Self::Json(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -3815,6 +3810,143 @@ mod tests {
             .correlate_material_context("workcell:local")
             .unwrap();
         FactoryDevelopmentalState::new(build, vec![journey]).unwrap()
+    }
+
+    fn other_project_state() -> FactoryDevelopmentalState {
+        let project: ProjectRef = "project:01ARZ3NDEKTSV4RRFFQ69G5FCA".parse().unwrap();
+        let run: RunRef = "run:01ARZ3NDEKTSV4RRFFQ69G5FCB".parse().unwrap();
+        FactoryDevelopmentalState::new(
+            FactoryBuildState::new(
+                Project::new(project.clone()),
+                Run::new(
+                    run,
+                    project,
+                    "Explicit native Project replacement",
+                    "factory-test",
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+            vec![],
+        )
+        .unwrap()
+    }
+    #[test]
+    fn actual_explicit_replacement_preserves_empty_fields_only_on_the_same_project() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("same-project.json");
+        FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+        let mut raw: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        raw["retainedEmptyField"] = serde_json::json!([]);
+        std::fs::write(&path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
+        let mut same = state();
+        same.build
+            .insert_candidate(CandidateRecord {
+                run_ref: RUN.parse().unwrap(),
+                candidate_ref: "candidate:same-project-replacement".into(),
+                revision: 1,
+                label: "Real native replacement".into(),
+                status: "ready".into(),
+                producing_execution_refs: vec![],
+                claim_refs: vec![],
+                evidence_refs: vec![],
+                artifact_refs: vec![],
+                preview_ref: None,
+                tradeoffs: vec![],
+            })
+            .unwrap();
+        FactoryDevelopmentalFileProvider::create(&path, same).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let retained: serde_json::Value = serde_json::from_slice(&before).unwrap();
+        assert_eq!(retained["retainedEmptyField"], serde_json::json!([]));
+        assert_eq!(
+            FactoryDevelopmentalFileProvider::open(&path)
+                .unwrap()
+                .project_ref(),
+            &PROJECT.parse::<ProjectRef>().unwrap()
+        );
+        let foreign = other_project_state();
+        let error = FactoryDevelopmentalFileProvider::create(&path, foreign).unwrap_err();
+        assert!(matches!(
+            error,
+            FactoryDevelopmentalProviderError::UnsupportedRetention(_)
+        ));
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "unknown source fields must not migrate to another native Project"
+        );
+    }
+    #[test]
+    fn actual_valid_explicit_replacement_without_omitted_fields_may_change_project() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("native-replacement.json");
+        FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+        let replacement = other_project_state();
+        let expected = replacement.project_ref().clone();
+        FactoryDevelopmentalFileProvider::create(&path, replacement).unwrap();
+        assert_eq!(
+            FactoryDevelopmentalFileProvider::open(&path)
+                .unwrap()
+                .project_ref(),
+            &expected
+        );
+    }
+    #[test]
+    fn actual_replacement_refuses_invalid_retained_schema_or_native_state_before_transfer() {
+        for invalid_basis in ["provider-schema", "state-schema", "native-project-relation"] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("invalid-basis.json");
+            FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+            let mut raw: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            raw["retainedEmptyField"] = serde_json::json!({});
+            match invalid_basis {
+                "provider-schema" => raw["schema"] = serde_json::json!("foreign-provider/v1"),
+                "state-schema" => raw["state"]["schema"] = serde_json::json!("foreign-state/v1"),
+                _ => {
+                    raw["state"]["journeys"][0]["projectRef"] =
+                        serde_json::json!("project:01ARZ3NDEKTSV4RRFFQ69G5FCA")
+                }
+            }
+            let before = serde_json::to_vec_pretty(&raw).unwrap();
+            std::fs::write(&path, &before).unwrap();
+            let error = FactoryDevelopmentalFileProvider::create(&path, state()).unwrap_err();
+            if invalid_basis == "provider-schema" {
+                assert!(matches!(
+                    error,
+                    FactoryDevelopmentalProviderError::UnsupportedProviderSchema(_)
+                ));
+            } else {
+                assert!(matches!(error, FactoryDevelopmentalProviderError::Read(_)));
+            }
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
+    }
+    #[test]
+    fn actual_replacement_refuses_nonempty_unknown_fields_without_erasure() {
+        for foreign_project in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("unsupported-extension.json");
+            FactoryDevelopmentalFileProvider::create_new(&path, state()).unwrap();
+            let mut raw: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            raw["futureSource"] = serde_json::json!({"nativeOwner":"future-project-contract","privateValue":"retained"});
+            let before = serde_json::to_vec_pretty(&raw).unwrap();
+            std::fs::write(&path, &before).unwrap();
+            let replacement = if foreign_project {
+                other_project_state()
+            } else {
+                state()
+            };
+            let error = FactoryDevelopmentalFileProvider::create(&path, replacement).unwrap_err();
+            assert!(matches!(
+                error,
+                FactoryDevelopmentalProviderError::UnsupportedRetention(_)
+            ));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+        }
     }
 
     fn workflow_source() -> WorkflowSource {

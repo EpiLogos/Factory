@@ -7,6 +7,7 @@ use crate::attempt_runtime::{
     OwnerOperationPhase, OwnerOperationReceipt, StoredAttemptState,
 };
 use crate::build::HumanRequestRecord;
+use crate::cli::CliError;
 use crate::core::run::{RunLifecycle, RunLifecycleOutcome, RunRef};
 use crate::developmental_read::FactoryDevelopmentalState;
 use crate::project_development_store::read_developmental_state;
@@ -505,11 +506,11 @@ fn retain_question_observation(
     request: &FactoryAttemptActionRequest,
     attempt_ref: &str,
     receipt: OwnerOperationReceipt,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     let mut store =
-        FileAttemptStore::open_run(path, request.run_ref.clone()).map_err(|e| e.to_string())?;
+        FileAttemptStore::open_run(path, request.run_ref.clone()).map_err(CliError::from_native)?;
     for _ in 0..8 {
-        let current = store.reading().map_err(|e| e.to_string())?;
+        let current = store.reading().map_err(CliError::from_native)?;
         let attempt = current
             .attempts
             .iter()
@@ -536,8 +537,11 @@ fn retain_question_observation(
         match store.apply(retention) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|e| e.to_string())?.revision == current.revision {
-                    return Err(error.to_string());
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(CliError::from_native(error));
+                }
+                if store.reading().map_err(CliError::from_native)?.revision == current.revision {
+                    return Err(CliError::from_native(error));
                 }
             }
         }
@@ -545,7 +549,7 @@ fn retain_question_observation(
     Err("question receipt retention remained contended; retry its same native producer key".into())
 }
 
-pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliError> {
     let args = args
         .iter()
         .filter(|arg| arg.as_str() != "--json")
@@ -557,7 +561,7 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
     let (path, run, request_ref, submission_request) = match args[0].as_str() {
         "read" if args.len() == 5 => (
             PathBuf::from(args[1]),
-            args[2].parse::<RunRef>().map_err(|e| e.to_string())?,
+            args[2].parse::<RunRef>().map_err(CliError::from_native)?,
             args[3].to_string(),
             None,
         ),
@@ -570,14 +574,14 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
                     let mut body = String::new();
                     std::io::stdin()
                         .read_to_string(&mut body)
-                        .map_err(|e| e.to_string())?;
+                        .map_err(CliError::from_native)?;
                     body
                 }
             } else {
-                std::fs::read_to_string(args[2]).map_err(|e| e.to_string())?
+                std::fs::read_to_string(args[2]).map_err(CliError::from_native)?
             };
             let request: FactoryAttemptActionRequest =
-                serde_json::from_str(&body).map_err(|e| e.to_string())?;
+                serde_json::from_str(&body).map_err(CliError::from_native)?;
             let FactoryAttemptOperation::RequestUnitDecision { request: decision } =
                 &request.operation
             else {
@@ -592,14 +596,14 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
         }
         _ => return Err("invalid native unit decision command".into()),
     };
-    let native = read_developmental_state(&path).map_err(|e| e.to_string())?;
-    let view = view_for(&native, &run).map_err(|e| e.to_string())?;
+    let native = read_developmental_state(&path).map_err(CliError::from_native)?;
+    let view = view_for(&native, &run).map_err(CliError::from_native)?;
     if !source_is_current(&native, &view) {
         return Err("unit decision source is historical".into());
     }
     let (input, attempt_ref) = question_input(&native, &view, &request_ref, &endpoint)?;
     let response = if let Some(request) = &submission_request {
-        crate::attempt_runtime::validate_action_request(request).map_err(|e| e.to_string())?;
+        crate::attempt_runtime::validate_action_request(request).map_err(CliError::from_native)?;
         let actual = pending(&native, &view, &request_ref)?;
         let FactoryAttemptOperation::RequestUnitDecision { request: decision } = &request.operation
         else {
@@ -622,11 +626,11 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
             return Err("stale Factory revision before native question submission".into());
         }
         crate::attempt_application::validate_native_action(
-            &crate::attempt_runtime::reading_for(&view).map_err(|e| e.to_string())?,
+            &crate::attempt_runtime::reading_for(&view).map_err(CliError::from_native)?,
             &view.run,
             request,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(CliError::from_native)?;
         let operation_ref = format!("factory-unit-decision:{request_ref}");
         let identity = digest(&(&input, &endpoint))?;
         let previous = view.attempts[&attempt_ref]
@@ -688,7 +692,11 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
                     uncertain.payload["failure"] = json!(failure);
                     let retained =
                         retain_question_observation(&path, request, &attempt_ref, uncertain).err();
-                    return Err(format!("native question outcome is unresolved; retry the same producer key: {failure}; retention: {retained:?}"));
+                    let message = format!("native question outcome is unresolved; retry the same producer key: {failure}; retention: {:?}", retained.as_ref().map(|error|error.to_string()));
+                    return Err(match retained {
+                        Some(error) => error.with_message(message),
+                        None => CliError::new(message),
+                    });
                 }
             }
         }
@@ -703,6 +711,8 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
         .as_ref()
         .expect("pending basis");
     let reviewed = reviewed_response(&response, &basis.resolver_ref, basis.controlled);
+    let native_result = json!({"contract":DECISION_READING,"runRef":run,"humanRequestRef":request_ref,
+        "nativeRequest":input,"centralResponse":response,"decisionResponse":reviewed.as_ref().ok(),"unresolved":reviewed.err()});
     if let Some(request) = submission_request {
         let identity = digest(&(&input, &endpoint))?;
         retain_question_observation(
@@ -720,8 +730,47 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
                 partial_effect_refs: BTreeSet::new(),
                 payload: json!({"requestDigest":identity,"nativeRequest":input,"centralResponse":response,"hostEndpoint":endpoint}),
             },
-        )?;
+        ).map_err(|error| error.with_native_result(native_result.clone()))?;
     }
-    serde_json::to_string_pretty(&json!({"contract":DECISION_READING,"runRef":run,"humanRequestRef":request_ref,
-        "nativeRequest":input,"centralResponse":response,"decisionResponse":reviewed.as_ref().ok(),"unresolved":reviewed.err()})).map_err(|e|e.to_string())
+    serde_json::to_string_pretty(&native_result).map_err(CliError::from_native)
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{
+        change_actual_published_privacy, native_observation, native_retention_source,
+    };
+    #[test]
+    fn actual_question_retention_preserves_native_uncertainty_without_changed_revision_retry() {
+        let (root, store, base) = native_retention_source();
+        let before = store.reading().unwrap().revision;
+        let observation = native_observation(&store);
+        let request = FactoryAttemptActionRequest {
+            contract: crate::attempt_runtime::FACTORY_ATTEMPT_ACTION.into(),
+            projection_ref: base.projection_ref,
+            caller: base.caller,
+            run_ref: base.run_ref,
+            expected_revision: before,
+            authority: base.authority,
+            operation: FactoryAttemptOperation::RecordObservation {
+                attempt_ref: base.attempt_ref.clone(),
+                receipt: observation.clone(),
+            },
+        };
+        change_actual_published_privacy();
+        let error = retain_question_observation(
+            &root.path().join("state.json"),
+            &request,
+            &base.attempt_ref,
+            observation,
+        )
+        .unwrap_err();
+        assert!(crate::native_publication_uncertainty(&error).is_some());
+        assert_eq!(store.reading().unwrap().revision, before + 1);
+        assert_eq!(
+            error.native_publication_failure().unwrap()["error"]["details"]["published"],
+            true
+        );
+    }
 }

@@ -12,7 +12,6 @@ use crate::attempt_runtime::{
 use crate::core::run::RunRef;
 use crate::project_development::{
     DevelopmentObservation, DevelopmentObservationKind, OwnerReturnProposal,
-    ProjectDevelopmentLedger,
 };
 use crate::project_development_store::{FileProjectDevelopmentStore, ProjectDevelopmentStore};
 use serde::{Deserialize, Serialize};
@@ -81,9 +80,9 @@ fn retain(
     request: &LearningRequest,
     suffix: &str,
     operation: FactoryAttemptOperation,
-) -> Result<(), String> {
+) -> Result<(), crate::cli::CliError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(|error| error.to_string())?;
+        let reading = store.reading().map_err(crate::cli::CliError::from_native)?;
         let record = attempt(&reading, &request.attempt_ref)?;
         match &operation {
             FactoryAttemptOperation::RecordObservation { receipt, .. } => {
@@ -117,9 +116,16 @@ fn retain(
         match store.apply(native(request, reading.revision, suffix, operation.clone())) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(crate::cli::CliError::from_native(error));
+                }
+                if store
+                    .reading()
+                    .map_err(crate::cli::CliError::from_native)?
+                    .revision
+                    == reading.revision
                 {
-                    return Err(error.to_string());
+                    return Err(crate::cli::CliError::from_native(error));
                 }
             }
         }
@@ -235,7 +241,7 @@ fn response(
         "reading":reading.ok(),"automaticPromotionPerformed":false,"humanRecognitionPerformed":false})
 }
 
-pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, String> {
+pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, crate::cli::CliError> {
     if request.contract != LEARNING_ACTION
         || request.request_ref.trim().is_empty()
         || request.projection_ref.trim().is_empty()
@@ -343,29 +349,44 @@ pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, String> {
                 receipt: intent.clone(),
             },
         ))
-        .map_err(|error| error.to_string())?;
+        .map_err(crate::cli::CliError::from_native)?;
     let mut recorded = false;
+    let mut publication_details = None;
+    let mut attempt_publication_uncertain = false;
+    let mut secondary_retention_failure = None;
+    let mut secondary_publication_details = None;
     let publication = (|| -> Result<(), String> {
-        let mut ledger = ledger_store
-            .load(&request.run_ref)
-            .map_err(|error| error.to_string())?
-            .unwrap_or_else(|| ProjectDevelopmentLedger::new(request.run_ref.clone()));
-        if let Some(previous) = ledger
-            .observations
-            .iter()
-            .find(|previous| previous.observation_ref == observation.observation_ref)
-        {
-            if previous != &observation {
-                return Err("native learning observation identity has conflicting content".into());
-            }
-        } else {
-            ledger
-                .add_observation(observation.clone())
-                .map_err(|error| error.to_string())?;
-        }
         ledger_store
-            .save(&ledger)
-            .map_err(|error| error.to_string())?;
+            .transact(&request.run_ref, true, |ledger| {
+                if let Some(previous) = ledger
+                    .observations
+                    .iter()
+                    .find(|previous| previous.observation_ref == observation.observation_ref)
+                {
+                    if previous != &observation {
+                        return Err(
+                            crate::project_development_store::ProjectDevelopmentStoreError::Native(
+                                "native learning observation identity has conflicting content"
+                                    .into(),
+                            ),
+                        );
+                    }
+                } else {
+                    ledger
+                        .add_observation(observation.clone())
+                        .map_err(|error| {
+                            crate::project_development_store::ProjectDevelopmentStoreError::Native(
+                                error.to_string(),
+                            )
+                        })?;
+                }
+                Ok(())
+            })
+            .map_err(|error| {
+                publication_details =
+                    crate::native_publication_uncertainty(&error).map(|failure| failure.details());
+                error.to_string()
+            })?;
         recorded = ledger_store
             .load(&request.run_ref)
             .map_err(|error| error.to_string())?
@@ -397,6 +418,14 @@ pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, String> {
                 },
             },
         )
+        .map_err(|error| {
+            attempt_publication_uncertain = crate::native_publication_uncertainty(&error).is_some();
+            if publication_details.is_none() {
+                publication_details = crate::native_publication_uncertainty(&error)
+                    .map(|publication| publication.details());
+            }
+            error.to_string()
+        })
     })();
     let mut failure = publication.err();
     let phase = if failure.is_none() {
@@ -404,23 +433,42 @@ pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, String> {
     } else {
         OwnerOperationPhase::Uncertain
     };
-    let settled = stamp(
-        intent,
-        phase,
-        json!({"recordedInExistingLedger":recorded,"failure":failure,"meaning":"observation/proposal intake only; no automatic promotion"}),
-    );
-    if let Err(error) = retain(
-        &mut store,
-        &request,
-        "settled",
-        FactoryAttemptOperation::RecordObservation {
-            attempt_ref: request.attempt_ref.clone(),
-            receipt: settled.clone(),
-        },
-    ) {
-        failure = Some(error);
+    let mut payload = json!({"recordedInExistingLedger":recorded,"failure":failure,"meaning":"observation/proposal intake only; no automatic promotion"});
+    if let Some(details) = &publication_details {
+        payload["publicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
     }
-    Ok(response(
+    let settled = stamp(intent, phase, payload);
+    // Ledger publication and attempt correlation have distinct native sources.
+    // Only uncertainty from this attempt's correlation forbids this later
+    // settlement write; it must not retry or overwrite unresolved continuity.
+    if !attempt_publication_uncertain {
+        if let Err(error) = retain(
+            &mut store,
+            &request,
+            "settled",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: settled.clone(),
+            },
+        ) {
+            let details = crate::native_publication_uncertainty(&error)
+                .map(|publication| publication.details());
+            if publication_details.is_none() {
+                publication_details = details;
+            } else {
+                secondary_publication_details = details;
+            }
+            if failure.is_none() {
+                failure = Some(error.to_string());
+            } else {
+                // Keep the original ledger failure primary and retain this actual
+                // later attempt-source cause separately. There is no third write.
+                secondary_retention_failure = Some(error);
+            }
+        }
+    }
+    let mut result = response(
         &store,
         &request,
         &observation,
@@ -428,10 +476,22 @@ pub fn execute(path: &Path, request: LearningRequest) -> Result<Value, String> {
         recorded,
         failure,
         false,
-    ))
+    );
+    if let Some(details) = publication_details {
+        result["publicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
+    }
+    if let Some(failure) = secondary_retention_failure {
+        result["secondaryRetentionError"] = json!(failure.to_string());
+    }
+    if let Some(details) = secondary_publication_details {
+        result["secondaryPublicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
+    }
+    Ok(result)
 }
 
-pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, crate::cli::CliError> {
     let args = args
         .iter()
         .filter(|argument| argument.as_str() != "--json")
@@ -444,19 +504,470 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
     }
     let input = args.get(1).map(|value| value.as_str()).unwrap_or("-");
     let body = if input != "-" {
-        std::fs::read_to_string(input).map_err(|error| error.to_string())?
+        std::fs::read_to_string(input).map_err(crate::cli::CliError::from_native)?
     } else if let Some(body) = stdin {
         body.into()
     } else {
         let mut body = String::new();
         std::io::stdin()
             .read_to_string(&mut body)
-            .map_err(|error| error.to_string())?;
+            .map_err(crate::cli::CliError::from_native)?;
         body
     };
     serde_json::to_string_pretty(&execute(
         Path::new(args[0]),
-        serde_json::from_str(&body).map_err(|error| error.to_string())?,
+        serde_json::from_str(&body).map_err(crate::cli::CliError::from_native)?,
     )?)
-    .map_err(|error| error.to_string())
+    .map_err(crate::cli::CliError::from_native)
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+pub(crate) mod publication_tests {
+    use super::*;
+    use crate::action_projection::FactoryActionProjectionKind;
+    use crate::attempt_runtime::*;
+    use crate::core::run::{Run, RunRef};
+    use crate::execution_intelligence::{
+        accept_aikit_selection, AikitModelRosterSelection, ExecutionDemand,
+        AIKIT_MODEL_ROSTER_VERSION,
+    };
+    use crate::project_development::ProjectDevelopmentLedger;
+    use crate::workflow::{compile_workflow, WorkflowSource};
+    use std::cell::Cell;
+    use std::os::unix::fs::PermissionsExt;
+    use std::rc::Rc;
+    const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
+    const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
+    // Controlled native store data admits no real worker/model. The exercised
+    // behavior is native transaction/retention, not participant execution.
+    struct World {
+        dir: tempfile::TempDir,
+    }
+    impl World {
+        fn state(&self) -> String {
+            self.dir.path().join("state.json").display().to_string()
+        }
+        fn ledger(&self) -> String {
+            self.dir.path().join("ledger").display().to_string()
+        }
+        fn call(&self, operation: &str, body: Option<Value>) -> Value {
+            let mut args = vec!["attempt".into(), operation.into(), self.state()];
+            if body.is_some() {
+                args.push("-".into());
+            }
+            args.push("--json".into());
+            let body = body.map(|value| value.to_string());
+            serde_json::from_str(&crate::attempt_cli::execute(&args, body.as_deref()).unwrap())
+                .unwrap()
+        }
+        fn reading(&self) -> FactoryAttemptReading {
+            serde_json::from_value(self.call("read", None)).unwrap()
+        }
+        fn action(&self, operation: FactoryAttemptOperation) {
+            let request = FactoryAttemptActionRequest {
+                contract: FACTORY_ATTEMPT_ACTION.into(),
+                projection_ref: format!("projection:{}", self.reading().revision),
+                caller: caller(),
+                run_ref: RUN.parse().unwrap(),
+                expected_revision: self.reading().revision,
+                authority: authority(),
+                operation,
+            };
+            self.call("action", Some(serde_json::to_value(request).unwrap()));
+        }
+        fn new() -> Self {
+            let world = Self {
+                dir: tempfile::tempdir().unwrap(),
+            };
+            let run = Run::new(
+                RUN.parse::<RunRef>().unwrap(),
+                PROJECT.parse().unwrap(),
+                "learning controlled world",
+                "factory-test",
+            )
+            .unwrap();
+            let source: WorkflowSource = serde_json::from_str(include_str!(
+                "../../contracts/factory/fixtures/agent-workflow-source.json"
+            ))
+            .unwrap();
+            let workflow = compile_workflow(source.clone()).unwrap();
+            let unit = workflow.unit("inspect-source").unwrap();
+            world.call(
+                "init",
+                Some(
+                    serde_json::to_value(FactoryAttemptSeed {
+                        run,
+                        workflow_source: source,
+                    })
+                    .unwrap(),
+                ),
+            );
+            let selection = accept_aikit_selection(
+                ExecutionDemand {
+                    project_ref: PROJECT.into(),
+                    run_ref: RUN.into(),
+                    workflow_unit_ref: Some(unit.reference.to_string()),
+                    agency_ref: Some("agency:test".into()),
+                    profile_ref: None,
+                    use_type: "test-only".into(),
+                    required_capabilities: unit.capability_refs.clone(),
+                    required_modalities: BTreeSet::from(["text".into()]),
+                    required_actions: BTreeSet::new(),
+                    required_tools: BTreeSet::new(),
+                    context_characteristics: BTreeSet::new(),
+                    independence_from: BTreeSet::new(),
+                    cost_ceiling_usd: None,
+                    latency_preference_ms: None,
+                    requires_local_materialisation: false,
+                },
+                AikitModelRosterSelection {
+                    roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
+                    model_ref: "model:test".into(),
+                    provider_ref: "provider:test".into(),
+                    ranking_policy: "test".into(),
+                    ranking_explanation: json!({"testOnly":true}),
+                    provenance: vec!["selection:test".into()],
+                },
+                "2026-09-10T20:00:00+01:00",
+            )
+            .unwrap();
+            let disposition = SituatedExecutionDisposition {
+                selected_inputs: Vec::new(),
+                selection,
+                participant: SituatedParticipant {
+                    agent_ref: unit
+                        .agent_requirements
+                        .agent_refs
+                        .iter()
+                        .next()
+                        .unwrap()
+                        .clone(),
+                    agency_ref: "agency:test".into(),
+                    world_binding_ref: "binding:test".into(),
+                    profile_ref: None,
+                    position_ref: None,
+                    source_ref: workflow.source.reference.to_string(),
+                    source_revision: workflow.source.revision.clone(),
+                    source_digest: format!("blake3:{}", workflow.source.digest),
+                },
+                context_refs: BTreeSet::from(["context:test".into()]),
+                praxis_refs: unit.praxis_refs.clone(),
+                capability_refs: unit.capability_refs.clone(),
+                body: ExecutionBody {
+                    model_ref: "model:test".into(),
+                    provider_ref: "provider:test".into(),
+                    route_ref: "route:test".into(),
+                    harness_ref: "harness:test".into(),
+                    harness_composition_ref: "composition:test".into(),
+                    agent_session_ref: "session:test".into(),
+                    session_space_ref: "space:test".into(),
+                    material_world_ref: None,
+                    workcell_ref: None,
+                },
+                placement: None,
+                permitted_effects: unit.permitted_effects.clone(),
+                verification_obligations: unit.verification_obligations.clone(),
+                return_address: unit.return_address.clone(),
+                stop_conditions: unit.stop_conditions.clone(),
+                escalation_conditions: unit.escalation_conditions.clone(),
+                budget: ExecutionBudget {
+                    cost_ceiling_usd: None,
+                    latency_preference_ms: None,
+                    wall_clock_timeout_ms: Some(10_000),
+                    retry_grant_ref: None,
+                    maximum_attempts: None,
+                },
+            };
+            world.action(FactoryAttemptOperation::StartSerial {
+                attempt_ref: "attempt:learning".into(),
+                task_ref: "task:learning".into(),
+                parent_journey_ref: "journey:test".into(),
+                workflow_unit_ref: unit.reference.clone(),
+                disposition,
+                retry_grant: None,
+                tracking: vec![],
+                place_grant: None,
+            });
+            world
+        }
+        fn request(&self) -> Value {
+            json!({"contract":"factory.attempt-learning-action/v1","requestRef":"learning-request:test","projectionRef":"projection:test","caller":caller(),"runRef":RUN,"expectedRevision":self.reading().revision,"authority":authority(),"attemptRef":"attempt:learning","ledgerRoot":self.ledger(),"observationRef":"observation:attempt-learning","kind":"insufficient-evidence","statement":"The controlled attempt did not produce enough evidence yet.","evidenceRefs":[],"ownerReturn":null,"recover":false})
+        }
+    }
+    fn caller() -> FactoryActionCaller {
+        FactoryActionCaller {
+            caller_ref: "agent:test".into(),
+            projection_kind: FactoryActionProjectionKind::Headless,
+            lineage: vec!["agent:test".into()],
+        }
+    }
+    fn authority() -> ProjectedFactoryActionAuthority {
+        ProjectedFactoryActionAuthority {
+            authority_ref: "authority:test".into(),
+            native_owner: "factory".into(),
+            capability_ref: Some(FACTORY_ATTEMPT_CAPABILITY_REF.into()),
+            capability_granted: true,
+            action_authorised: true,
+        }
+    }
+
+    pub(crate) fn native_retention_source() -> (tempfile::TempDir, FileAttemptStore, LearningRequest)
+    {
+        let world = World::new();
+        let request: LearningRequest = serde_json::from_value(world.request()).unwrap();
+        let store = FileAttemptStore::open_run(world.state(), request.run_ref.clone()).unwrap();
+        (world.dir, store, request)
+    }
+    pub(crate) fn native_observation(store: &FileAttemptStore) -> OwnerOperationReceipt {
+        let reading = store.reading().unwrap();
+        OwnerOperationReceipt {
+            owner_ref: "factory".into(),
+            contract: "factory.native-retention-observation/v1".into(),
+            operation_ref: "factory-retention:actual-source".into(),
+            receipt_ref: "factory-retention:actual-source-reading".into(),
+            source_revision: format!("factory-state:{}", reading.revision),
+            phase: OwnerOperationPhase::Observed,
+            evidence_refs: BTreeSet::new(),
+            partial_effect_refs: BTreeSet::new(),
+            payload: serde_json::to_value(reading).unwrap(),
+        }
+    }
+    pub(crate) fn change_actual_published_privacy() {
+        crate::native_file_transaction::observe_next_publication(|published| {
+            std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777)).unwrap();
+        });
+    }
+    fn change_after_source_publication(source: PathBuf, occurrence: usize, seen: Rc<Cell<usize>>) {
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            if published == source {
+                seen.set(seen.get() + 1);
+            }
+            if published == source && seen.get() == occurrence {
+                std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                    .unwrap();
+            } else {
+                change_after_source_publication(source, occurrence, seen);
+            }
+        });
+    }
+    #[test]
+    fn actual_attempt_correlation_uncertainty_stops_same_source_settlement() {
+        let world = World::new();
+        let request: LearningRequest = serde_json::from_value(world.request()).unwrap();
+        let ledger = FileProjectDevelopmentStore::new(&request.ledger_root);
+        ledger
+            .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
+            .unwrap();
+        let before = world.reading().revision;
+        let physical = std::fs::canonicalize(world.state()).unwrap();
+        let seen = Rc::new(Cell::new(0));
+        change_after_source_publication(physical.clone(), 2, seen.clone());
+        let args = vec![
+            "attempt".into(),
+            "learn".into(),
+            world.state(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let returned: Value = serde_json::from_str(
+            &crate::attempt_cli::execute(&args, Some(&serde_json::to_string(&request).unwrap()))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(seen.get(), 2);
+        assert_eq!(
+            returned["publicationUncertainty"]["source_path"],
+            physical.display().to_string()
+        );
+        assert_eq!(returned["publicationUncertainty"]["published"], true);
+        assert_eq!(returned["publicationUncertainty"]["automatic_retry"], false);
+        assert_eq!(returned["needsReconciliation"], true);
+        let current = world.reading();
+        assert_eq!(
+            current.revision,
+            before + 2,
+            "intent and committed correlation only; no automatic settlement write"
+        );
+        let attempt = current
+            .attempts
+            .iter()
+            .find(|a| a.attempt_ref == request.attempt_ref)
+            .unwrap();
+        assert_eq!(
+            attempt
+                .tracking
+                .iter()
+                .filter(|fact| fact.subject_ref == request.observation_ref)
+                .count(),
+            1
+        );
+        assert!(attempt
+            .observations
+            .iter()
+            .filter(|r| r.contract == CALL_CONTRACT)
+            .all(|r| r.phase == OwnerOperationPhase::Dispatching));
+        assert_eq!(
+            ledger
+                .load(&request.run_ref)
+                .unwrap()
+                .unwrap()
+                .observations
+                .len(),
+            1
+        );
+    }
+    #[test]
+    fn actual_separate_ledger_uncertainty_is_observed_without_retrying_ledger() {
+        let world = World::new();
+        let request: LearningRequest = serde_json::from_value(world.request()).unwrap();
+        let ledger = FileProjectDevelopmentStore::new(&request.ledger_root);
+        ledger
+            .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
+            .unwrap();
+        let before = world.reading().revision;
+        let source = std::fs::canonicalize(
+            request
+                .ledger_root
+                .join(format!("{}.json", request.run_ref.as_ref().id())),
+        )
+        .unwrap();
+        let seen = Rc::new(Cell::new(0));
+        change_after_source_publication(source.clone(), 1, seen.clone());
+        let returned = execute(Path::new(&world.state()), request.clone()).unwrap();
+        assert_eq!(seen.get(), 1);
+        assert_eq!(
+            returned["publicationUncertainty"]["source_path"],
+            source.display().to_string()
+        );
+        assert_eq!(returned["needsReconciliation"], true);
+        let current = world.reading();
+        assert_eq!(
+            current.revision,
+            before + 2,
+            "intent and separate-source uncertainty observation"
+        );
+        let attempt = current
+            .attempts
+            .iter()
+            .find(|a| a.attempt_ref == request.attempt_ref)
+            .unwrap();
+        assert!(attempt.tracking.is_empty());
+        assert!(attempt
+            .observations
+            .iter()
+            .any(|r| r.contract == CALL_CONTRACT && r.phase == OwnerOperationPhase::Uncertain));
+        assert_eq!(
+            ledger
+                .load(&request.run_ref)
+                .unwrap()
+                .unwrap()
+                .observations
+                .len(),
+            1
+        );
+    }
+    fn fault_two_native_sources(
+        attempt_source: PathBuf,
+        ledger_source: PathBuf,
+        seen: Rc<Cell<usize>>,
+    ) {
+        crate::native_file_transaction::observe_next_publication(move |published| {
+            let occurrence = seen.get() + 1;
+            seen.set(occurrence);
+            match occurrence {
+                1 => assert_eq!(published, attempt_source), // intent
+                2 => {
+                    assert_eq!(published, ledger_source);
+                    std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                        .unwrap();
+                }
+                3 => {
+                    assert_eq!(published, attempt_source); // permitted observation
+                    std::fs::set_permissions(published, std::fs::Permissions::from_mode(0o777))
+                        .unwrap();
+                }
+                _ => panic!("no later mutation is allowed after the attempt uncertainty"),
+            }
+            if occurrence < 3 {
+                fault_two_native_sources(attempt_source, ledger_source, seen);
+            }
+        });
+    }
+
+    #[test]
+    fn actual_dual_source_uncertainty_retains_both_native_causes_without_third_attempt_write() {
+        let world = World::new();
+        let request: LearningRequest = serde_json::from_value(world.request()).unwrap();
+        let ledger = FileProjectDevelopmentStore::new(&request.ledger_root);
+        ledger
+            .save(&ProjectDevelopmentLedger::new(request.run_ref.clone()))
+            .unwrap();
+        let before = world.reading().revision;
+        let attempt_source = std::fs::canonicalize(world.state()).unwrap();
+        let ledger_source = std::fs::canonicalize(
+            request
+                .ledger_root
+                .join(format!("{}.json", request.run_ref.as_ref().id())),
+        )
+        .unwrap();
+        let seen = Rc::new(Cell::new(0));
+        fault_two_native_sources(attempt_source.clone(), ledger_source.clone(), seen.clone());
+        let returned = execute(Path::new(&world.state()), request.clone()).unwrap();
+        assert_eq!(
+            seen.get(),
+            3,
+            "intent, ledger, one attempt observation only"
+        );
+        let first = &returned["publicationUncertainty"];
+        let second = &returned["secondaryPublicationUncertainty"];
+        assert_eq!(first["source_path"], ledger_source.display().to_string());
+        assert_eq!(second["source_path"], attempt_source.display().to_string());
+        for details in [first, second] {
+            assert_eq!(details["published"], true);
+            assert_eq!(details["outcome"], "unknown");
+            assert_eq!(details["automatic_retry"], false);
+            assert!(details["cause"]["kind"].is_string());
+            assert!(!details["cause"]["message"].as_str().unwrap().is_empty());
+        }
+        let primary = returned["retentionError"].as_str().unwrap();
+        let secondary = returned["secondaryRetentionError"].as_str().unwrap();
+        assert!(!primary.is_empty() && !secondary.is_empty());
+        assert_eq!(
+            returned["transportObservation"]["payload"]["detail"]["failure"], primary,
+            "original ledger failure stays primary in returned and retained facts"
+        );
+        assert_eq!(returned["needsReconciliation"], true);
+        let current = world.reading();
+        assert_eq!(
+            current.revision,
+            before + 2,
+            "no third attempt-source write"
+        );
+        let attempt = current
+            .attempts
+            .iter()
+            .find(|a| a.attempt_ref == request.attempt_ref)
+            .unwrap();
+        assert!(
+            attempt.tracking.is_empty(),
+            "unconfirmed ledger does not produce correlation"
+        );
+        assert!(attempt
+            .observations
+            .iter()
+            .any(|r| r.contract == CALL_CONTRACT && r.phase == OwnerOperationPhase::Uncertain));
+        assert!(
+            attempt.readable_return.is_none(),
+            "native persistence is not a worker Return"
+        );
+        assert_eq!(
+            ledger
+                .load(&request.run_ref)
+                .unwrap()
+                .unwrap()
+                .observations
+                .len(),
+            1
+        );
+    }
 }

@@ -8,6 +8,7 @@ use crate::attempt_runtime::{
     FactoryAttemptActionRequest, FactoryAttemptOperation, FactoryAttemptReading,
     FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt, FACTORY_ATTEMPT_ACTION,
 };
+use crate::cli::CliError;
 use crate::core::run::RunRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -91,9 +92,9 @@ fn retain(
     request: &ReceivingRequest,
     suffix: &str,
     operation: FactoryAttemptOperation,
-) -> Result<(), String> {
+) -> Result<(), CliError> {
     for _ in 0..8 {
-        let reading = store.reading().map_err(|error| error.to_string())?;
+        let reading = store.reading().map_err(CliError::from_native)?;
         let attempt = record(&reading, &request.attempt_ref)?;
         if let FactoryAttemptOperation::RecordObservation { receipt, .. } = &operation {
             if let Some(existing) = attempt
@@ -111,9 +112,11 @@ fn retain(
         match store.apply(action(request, reading.revision, suffix, operation.clone())) {
             Ok(_) => return Ok(()),
             Err(error) => {
-                if store.reading().map_err(|error| error.to_string())?.revision == reading.revision
-                {
-                    return Err(error.to_string());
+                if crate::native_publication_uncertainty(&error).is_some() {
+                    return Err(CliError::from_native(error));
+                }
+                if store.reading().map_err(CliError::from_native)?.revision == reading.revision {
+                    return Err(CliError::from_native(error));
                 }
             }
         }
@@ -332,17 +335,26 @@ fn result(
     request: &ReceivingRequest,
     observation: OwnerOperationReceipt,
     response: Option<Value>,
-    failure: Option<String>,
+    failure: Option<CliError>,
     replayed: bool,
 ) -> Value {
     let reading = store.reading();
-    json!({"contract":RECEIVING_RECEIPT,"requestRef":request.request_ref,"runRef":request.run_ref,"attemptRef":request.attempt_ref,
+    let publication_uncertainty = failure
+        .as_ref()
+        .and_then(|error| crate::native_publication_uncertainty(error))
+        .map(|publication| publication.details());
+    let mut result = json!({"contract":RECEIVING_RECEIPT,"requestRef":request.request_ref,"runRef":request.run_ref,"attemptRef":request.attempt_ref,
         "replayed":replayed,"needsReconciliation":failure.is_some()||reading.is_err()||matches!(observation.phase,OwnerOperationPhase::Dispatching|OwnerOperationPhase::Uncertain),
-        "transportObservation":observation,"centralResponse":response,"retentionError":failure.or_else(||reading.as_ref().err().map(|error|error.to_string())),
-        "reading":reading.ok(),"humanRecognitionPerformed":false,"documentInclusionPerformed":false})
+        "transportObservation":observation,"centralResponse":response,"retentionError":failure.as_ref().map(|error|error.to_string()).or_else(||reading.as_ref().err().map(|error|error.to_string())),
+        "reading":reading.ok(),"humanRecognitionPerformed":false,"documentInclusionPerformed":false});
+    if let Some(details) = publication_uncertainty {
+        result["publicationUncertainty"] =
+            serde_json::to_value(details).expect("native publication details serialize");
+    }
+    result
 }
 
-pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> {
+pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, CliError> {
     if request.contract != RECEIVING_ACTION
         || request.request_ref.trim().is_empty()
         || request.projection_ref.trim().is_empty()
@@ -359,18 +371,18 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
     {
         return Err("receiving requires exact Factory, Central PR #155 revision, absolute root and selected source identities".into());
     }
-    let mut store = FileAttemptStore::open_run(path, request.run_ref.clone())
-        .map_err(|error| error.to_string())?;
-    let reading = store.reading().map_err(|error| error.to_string())?;
+    let mut store =
+        FileAttemptStore::open_run(path, request.run_ref.clone()).map_err(CliError::from_native)?;
+    let reading = store.reading().map_err(CliError::from_native)?;
     let attempt = record(&reading, &request.attempt_ref)?;
-    let mut identity = serde_json::to_value(&request).map_err(|error| error.to_string())?;
+    let mut identity = serde_json::to_value(&request).map_err(CliError::from_native)?;
     for key in ["recover", "expectedRevision", "projectionRef"] {
         identity
             .as_object_mut()
             .expect("request object")
             .remove(key);
     }
-    let digest = blake3::hash(&serde_json::to_vec(&identity).map_err(|error| error.to_string())?)
+    let digest = blake3::hash(&serde_json::to_vec(&identity).map_err(CliError::from_native)?)
         .to_hex()
         .to_string();
     let operation_ref = format!("factory-attempt-receiving:{}", request.request_ref);
@@ -419,7 +431,7 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
             receipt: intent.clone(),
         },
     ))
-    .map_err(|error| error.to_string())?;
+    .map_err(CliError::from_native)?;
     if let Some(previous) = &previous {
         if !request.recover {
             let response = previous
@@ -481,7 +493,7 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
                 receipt: intent.clone(),
             },
         ))
-        .map_err(|error| error.to_string())?;
+        .map_err(CliError::from_native)?;
     let response = match call(&request.central, operation, &call_input) {
         Ok(response) => response,
         Err(failure) => {
@@ -503,8 +515,8 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
             return Ok(result(&store, &request, uncertain, None, retention, false));
         }
     };
-    let publication = (|| -> Result<(), String> {
-        let current = store.reading().map_err(|error| error.to_string())?;
+    let publication = (|| -> Result<(), CliError> {
+        let current = store.reading().map_err(CliError::from_native)?;
         let attempt = record(&current, &request.attempt_ref)?;
         check_response(&response, &input, &request, attempt)?;
         let data = &response["data"];
@@ -523,7 +535,7 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
             operation_ref: format!("central.receiving:{receipt_ref}"),
             receipt_ref: format!(
                 "central-receiving-observation:{}",
-                blake3::hash(&serde_json::to_vec(&response).map_err(|error| error.to_string())?)
+                blake3::hash(&serde_json::to_vec(&response).map_err(CliError::from_native)?)
                     .to_hex()
             ),
             source_revision: revision.clone(),
@@ -541,7 +553,7 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
                 receipt: owner,
             },
         )?;
-        let current = store.reading().map_err(|error| error.to_string())?;
+        let current = store.reading().map_err(CliError::from_native)?;
         let attached = record(&current, &request.attempt_ref)?
             .readable_return
             .as_ref()
@@ -573,18 +585,27 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
     let settled = stamp(
         intent,
         phase,
-        json!({"centralResponse":response,"failure":failure,"meaning":"owner receiving evidence; no document inclusion or human Recognition"}),
+        json!({"centralResponse":response,"failure":failure.as_ref().map(|error|error.to_string()),"meaning":"owner receiving evidence; no document inclusion or human Recognition"}),
     );
-    if let Err(error) = retain(
-        &mut store,
-        &request,
-        "settled",
-        FactoryAttemptOperation::RecordObservation {
-            attempt_ref: request.attempt_ref.clone(),
-            receipt: settled.clone(),
-        },
-    ) {
-        failure = Some(error);
+    // A different revision does not justify another write after unknown
+    // publication on this same attempt source.
+    let publication_uncertain = failure
+        .as_ref()
+        .is_some_and(|error| crate::native_publication_uncertainty(error).is_some());
+    if !publication_uncertain {
+        if let Err(error) = retain(
+            &mut store,
+            &request,
+            "settled",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: settled.clone(),
+            },
+        ) {
+            if failure.is_none() || crate::native_publication_uncertainty(&error).is_some() {
+                failure = Some(error);
+            }
+        }
     }
     Ok(result(
         &store,
@@ -596,7 +617,7 @@ pub fn execute(path: &Path, request: ReceivingRequest) -> Result<Value, String> 
     ))
 }
 
-pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliError> {
     let args = args
         .iter()
         .filter(|argument| argument.as_str() != "--json")
@@ -609,17 +630,75 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, Strin
     }
     let input = args.get(1).map(|value| value.as_str()).unwrap_or("-");
     let body = if input != "-" {
-        std::fs::read_to_string(input).map_err(|error| error.to_string())?
+        std::fs::read_to_string(input).map_err(CliError::from_native)?
     } else if let Some(body) = stdin {
         body.into()
     } else {
         let mut body = String::new();
         std::io::stdin()
             .read_to_string(&mut body)
-            .map_err(|error| error.to_string())?;
+            .map_err(CliError::from_native)?;
         body
     };
-    let request = serde_json::from_str(&body).map_err(|error| error.to_string())?;
+    let request = serde_json::from_str(&body).map_err(CliError::from_native)?;
     serde_json::to_string_pretty(&execute(Path::new(args[0]), request)?)
-        .map_err(|error| error.to_string())
+        .map_err(CliError::from_native)
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod publication_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{
+        change_actual_published_privacy, native_observation, native_retention_source,
+    };
+    #[test]
+    fn actual_receiving_retention_keeps_committed_uncertainty_without_revision_retry() {
+        let (root, mut store, base) = native_retention_source();
+        let before = store.reading().unwrap().revision;
+        let request = ReceivingRequest {
+            contract: RECEIVING_ACTION.into(),
+            request_ref: base.request_ref,
+            projection_ref: base.projection_ref,
+            caller: base.caller,
+            run_ref: base.run_ref,
+            expected_revision: before,
+            authority: base.authority,
+            attempt_ref: base.attempt_ref,
+            central: CentralReceivingEndpoint {
+                binary: std::env::current_exe().unwrap(),
+                root: root.path().to_path_buf(),
+                contract_revision: CENTRAL_CONTRACT_REVISION.into(),
+                project: None,
+            },
+            target: ReceivingTarget {
+                source_ref: "factory:native-source".into(),
+                document_id: "factory:native-source".into(),
+                source_revision: format!("factory-state:{before}"),
+                expected_authority_revision: None,
+            },
+            occurred_at_unix_seconds: None,
+            recover: false,
+        };
+        let observation = native_observation(&store);
+        change_actual_published_privacy();
+        let error = retain(
+            &mut store,
+            &request,
+            "actual-retention",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: observation.clone(),
+            },
+        )
+        .unwrap_err();
+        assert!(crate::native_publication_uncertainty(&error).is_some());
+        assert_eq!(store.reading().unwrap().revision, before + 1);
+        let returned = result(&store, &request, observation, None, Some(error), false);
+        assert_eq!(returned["publicationUncertainty"]["published"], true);
+        assert_eq!(returned["needsReconciliation"], true);
+        assert!(
+            returned["centralResponse"].is_null(),
+            "no Central call or fabricated owner result"
+        );
+    }
 }

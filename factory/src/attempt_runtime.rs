@@ -1899,6 +1899,10 @@ fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
 
 #[derive(Debug)]
 pub enum FactoryAttemptError {
+    PublicationUncertain {
+        cause: crate::NativePublicationUncertainty,
+        legacy_message: String,
+    },
     Io(io::Error),
     Json(serde_json::Error),
     Workflow(crate::workflow::WorkflowError),
@@ -1912,8 +1916,14 @@ pub enum FactoryAttemptError {
     UnknownAttempt(String),
     DuplicateReference(String),
     VerificationIncomplete(String),
-    RunMismatch { addressed: String, stored: String },
-    RevisionConflict { expected: u64, actual: u64 },
+    RunMismatch {
+        addressed: String,
+        stored: String,
+    },
+    RevisionConflict {
+        expected: u64,
+        actual: u64,
+    },
     RevisionOverflow,
     CorruptState(String),
     Cli(String),
@@ -1921,11 +1931,29 @@ pub enum FactoryAttemptError {
 
 impl Display for FactoryAttemptError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Factory attempt error: {self:?}")
+        if let Self::PublicationUncertain { legacy_message, .. } = self {
+            write!(
+                formatter,
+                "Factory attempt error: InvalidOperation({legacy_message:?})"
+            )
+        } else {
+            write!(formatter, "Factory attempt error: {self:?}")
+        }
     }
 }
 
-impl Error for FactoryAttemptError {}
+impl Error for FactoryAttemptError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::PublicationUncertain { cause, .. } => Some(cause),
+            Self::Io(cause) => Some(cause),
+            Self::Json(cause) => Some(cause),
+            Self::Workflow(cause) => Some(cause),
+            Self::Orchestration(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 
 impl From<io::Error> for FactoryAttemptError {
     fn from(error: io::Error) -> Self {
