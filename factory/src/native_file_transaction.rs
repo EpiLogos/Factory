@@ -152,7 +152,7 @@ pub(crate) fn has_omitted(raw: &serde_json::Value, known: &serde_json::Value) ->
             raw.iter().any(|(key, value)| {
                 known
                     .get(key)
-                    .map_or(true, |current| has_omitted(value, current))
+                    .is_none_or(|current| has_omitted(value, current))
             })
         }
         (serde_json::Value::Array(raw), serde_json::Value::Array(known)) => {
@@ -1003,15 +1003,17 @@ mod unix {
         use super::*;
         use std::os::unix::fs::{symlink, PermissionsExt};
 
+        type PublicationObserver = Box<dyn FnOnce(&Path)>;
+
         std::thread_local! {
-            static AFTER_PRIVACY_COPIED: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+            static AFTER_PRIVACY_COPIED: std::cell::RefCell<Option<PublicationObserver>> =
                 const { std::cell::RefCell::new(None) };
-            static AFTER_STAGE_PREPARED: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+            static AFTER_STAGE_PREPARED: std::cell::RefCell<Option<PublicationObserver>> =
                 const { std::cell::RefCell::new(None) };
-            static AFTER_PUBLICATION: std::cell::RefCell<Option<Box<dyn FnOnce(&Path)>>> =
+            static AFTER_PUBLICATION: std::cell::RefCell<Option<PublicationObserver>> =
                 const { std::cell::RefCell::new(None) };
         }
-        pub(super) fn set_publication_observer(observer: Box<dyn FnOnce(&Path)>) {
+        pub(super) fn set_publication_observer(observer: PublicationObserver) {
             AFTER_PUBLICATION.with(|slot| {
                 let mut slot = slot.borrow_mut();
                 assert!(

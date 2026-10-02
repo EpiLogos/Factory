@@ -182,7 +182,14 @@ impl FactoryWorkCustody {
 /// semantic refusal is raised before any write. Actual publication uncertainty
 /// is carried separately and must not claim the source stayed unchanged.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Refusal {
+#[serde(transparent)]
+pub struct Refusal(Box<RefusalData>);
+
+/// The owned refusal fields. Boxing this body keeps native cause provenance
+/// without enlarging every custody Result on the stack; serialization and
+/// ordinary field access remain the existing refusal contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RefusalData {
     pub schema: String,
     pub code: String,
     pub fact: String,
@@ -196,6 +203,20 @@ pub struct Refusal {
     pub publication_uncertainty: Option<crate::NativePublicationDetails>,
     #[serde(skip)]
     publication_cause: Option<std::sync::Arc<crate::NativePublicationUncertainty>>,
+}
+
+impl std::ops::Deref for Refusal {
+    type Target = RefusalData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Refusal {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 impl PartialEq for Refusal {
@@ -220,7 +241,7 @@ impl Refusal {
         consequence: impl Into<String>,
         action: impl Into<String>,
     ) -> Self {
-        Self {
+        Self(Box::new(RefusalData {
             schema: FACTORY_REFUSAL.into(),
             code: code.into(),
             fact: fact.into(),
@@ -228,7 +249,7 @@ impl Refusal {
             action: action.into(),
             publication_uncertainty: None,
             publication_cause: None,
-        }
+        }))
     }
 
     pub(crate) fn unchanged(
@@ -1065,7 +1086,7 @@ mod tests {
         let refusal = result.unwrap_err();
         assert_eq!(refusal.consequence, NOTHING_PERSISTED);
         assert!(!refusal.fact.is_empty() && !refusal.action.is_empty());
-        refusal.code
+        refusal.code.clone()
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
