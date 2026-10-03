@@ -1999,11 +1999,16 @@ fn native_receiving_abrupt_death_after_durable_intent_never_resubmits() {
     let (world, attempt) = final_native_world();
     let ledger = ledger_bytes(&world);
     let marker = world.root.join("held-pre-ctrl-exec.pid");
+    let pending_marker = world.root.join("held-pre-ctrl-exec.pid.pending");
     let calls = world.root.join("actual-native-submit.calls");
     let release = world.root.join("release-pre-ctrl-exec");
+    assert!(!marker.exists());
+    assert!(!pending_marker.exists());
     assert!(!release.exists());
-    let body=format!("if [ \"$6\" = 'central.receiving.submit' ]; then printf '%s\\n' \"$$\" > {}; remaining=1000; while [ ! -f {} ]; do if [ \"$remaining\" -le 0 ]; then exit 75; fi; remaining=$((remaining - 1)); /bin/sleep 0.01; done; printf '%s\\n' \"$6\" >> {}; fi\nexec {} \"$@\"\n",
-        native_shell_quote(&marker),native_shell_quote(&release),native_shell_quote(&calls),native_shell_quote(&world.ctrl));
+    // Publish readiness only after the actual PID bytes are complete. Preserve
+    // any real writer failure through the same owned coordinator capture.
+    let body=format!("if [ \"$6\" = 'central.receiving.submit' ]; then (set -C; printf '%s\\n' \"$$\" > {}) || exit $?; /bin/mv -n {} {} || exit $?; [ ! -e {} ] || exit 76; remaining=1000; while [ ! -f {} ]; do if [ \"$remaining\" -le 0 ]; then exit 75; fi; remaining=$((remaining - 1)); /bin/sleep 0.01; done; printf '%s\\n' \"$6\" >> {}; fi\nexec {} \"$@\"\n",
+        native_shell_quote(&pending_marker),native_shell_quote(&pending_marker),native_shell_quote(&marker),native_shell_quote(&pending_marker),native_shell_quote(&release),native_shell_quote(&calls),native_shell_quote(&world.ctrl));
     let boundary = native_script(&world, "native-pre-exec-barrier", &body);
     let mut request = world.receiving_request(&attempt);
     request["central"]["binary"] = json!(boundary);

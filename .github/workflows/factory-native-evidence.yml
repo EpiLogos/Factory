@@ -450,11 +450,54 @@ jobs:
         id: input_reobservation
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$(cat native-evidence/source-sha.txt)"
-          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat native-evidence/source-tree.txt)"
-          test -z "$(git status --porcelain --untracked-files=no)"
+          mkdir -p native-evidence/source-checkpoints
+          source_checkpoint() {
+            local label="$1" root="$2" predicate="$3" expected="$4"
+            shift 4
+            local stem="native-evidence/source-checkpoints/$label" native_status
+            test ! -e "$stem.stdout"
+            test ! -e "$stem.stderr"
+            test ! -e "$stem.json"
+            if (set -C; git -C "$root" "$@" > "$stem.stdout" 2> "$stem.stderr"); then
+              native_status=0
+            else
+              native_status=$?
+            fi
+            cat "$stem.stderr" >&2
+            python3 - "$label" "$root" "$predicate" "$expected" "$native_status" "$@" <<'PY'
+          import hashlib, sys
+          from pathlib import Path
+          from scripts.native_evidence_inputs import held_bytes, MAX_LOG, write_json
+          label, root, predicate, expected, status = sys.argv[1:6]
+          status = int(status)
+          stem = Path('native-evidence/source-checkpoints') / label
+          stdout, _ = held_bytes(stem.with_suffix('.stdout'), MAX_LOG)
+          stderr, _ = held_bytes(stem.with_suffix('.stderr'), MAX_LOG)
+          actual = stdout.rstrip(b'\n')
+          predicate_passed = actual == (expected.encode('utf-8') if predicate == 'exact' else b'')
+          observation = {
+              'schema': 'factory.native-source-checkpoint/v1', 'label': label,
+              'selected_checkout': root, 'command': ['git', '-C', root, *sys.argv[6:]],
+              'actual_command_status': status,
+              'status_scope': 'Actual shell command with capture redirects; no separate launch claim',
+              'expected_predicate': predicate, 'expected_value': expected,
+              'predicate_passed': predicate_passed, 'command_succeeded': status == 0,
+              'stdout': {'path': str(stem.with_suffix('.stdout')), 'bytes': len(stdout),
+                         'sha256': hashlib.sha256(stdout).hexdigest()},
+              'stderr': {'path': str(stem.with_suffix('.stderr')), 'bytes': len(stderr),
+                         'sha256': hashlib.sha256(stderr).hexdigest()},
+              'image_reobservation_started': False, 'Original_Run_credit': False,
+          }
+          write_json(stem.with_suffix('.json'), observation)
+          if status != 0 or not predicate_passed:
+              raise SystemExit(status if status != 0 else 1)
+          PY
+          }
+          source_checkpoint factory-head "$(pwd -P)" exact "$(cat native-evidence/source-sha.txt)" rev-parse HEAD
+          source_checkpoint factory-tree "$(pwd -P)" exact "$(cat native-evidence/source-tree.txt)" rev-parse 'HEAD^{tree}'
+          source_checkpoint factory-tracked "$(pwd -P)" empty '' status --porcelain --untracked-files=no
           for source_owner in factory-central-owner factory-central-previous factory-actuation-owner factory-central-paired; do
-            test -z "$(git -C "$RUNNER_TEMP/$source_owner" status --porcelain --untracked-files=no)"
+            source_checkpoint "$source_owner-tracked" "$RUNNER_TEMP/$source_owner" empty '' status --porcelain --untracked-files=no
           done
           python3 - <<'PY'
           import hashlib, json
