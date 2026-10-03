@@ -54,14 +54,25 @@ pub fn execute_attempt_owner_cli(
         Ok(receipt) => receipt,
         Err(failure) => {
             let text = failure.native_result().map(owner_text);
-            let native_result = match failure.native_result().map(serde_json::to_value).transpose() {
+            let native_result = match failure
+                .native_result()
+                .map(serde_json::to_value)
+                .transpose()
+            {
                 Ok(value) => value,
-                Err(secondary) => return Err(CliError::from_native(
-                    failure.with_secondary_native(secondary))),
+                Err(secondary) => {
+                    return Err(CliError::from_native(
+                        failure.with_secondary_native(secondary),
+                    ))
+                }
             };
             let mut error = CliError::from_native(failure);
-            if let Some(value) = native_result { error = error.with_native_result(value); }
-            if let Some(text) = text { error = error.with_message(text); }
+            if let Some(value) = native_result {
+                error = error.with_native_result(value);
+            }
+            if let Some(text) = text {
+                error = error.with_message(text);
+            }
             return Err(error);
         }
     };

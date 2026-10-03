@@ -12,8 +12,8 @@ use crate::attempt_runtime::{
 };
 use crate::core::run::RunRef;
 use crate::native_owner::{
-    invoke_native_owner_bounded, NativeOwnerError, NativeOwnerInvocation, AIKIT_CAW_CONTRACT_REVISION,
-    DEFAULT_OWNER_TIMEOUT_MS,
+    invoke_native_owner_bounded, NativeOwnerError, NativeOwnerInvocation,
+    AIKIT_CAW_CONTRACT_REVISION, DEFAULT_OWNER_TIMEOUT_MS,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -147,18 +147,24 @@ impl AttemptOwnerError {
     pub fn original_native_owner_error(&self) -> Option<&NativeOwnerError> {
         let cause = self.cause.as_deref()?;
         cause.downcast_ref::<NativeOwnerError>().or_else(|| {
-            cause.downcast_ref::<RetentionFailures>()?
-                .primary.original_native_owner_error()
+            cause
+                .downcast_ref::<RetentionFailures>()?
+                .primary
+                .original_native_owner_error()
         })
     }
     /// Original retained refusal when a distinct later failure was added.
     pub fn primary_retention_error(&self) -> Option<&AttemptOwnerError> {
-        self.cause.as_deref()?.downcast_ref::<RetentionFailures>()
+        self.cause
+            .as_deref()?
+            .downcast_ref::<RetentionFailures>()
             .map(|causes| &causes.primary)
     }
     /// Distinct actual post-invocation retention failure, when one occurred.
     pub fn secondary_retention_error(&self) -> Option<&AttemptOwnerError> {
-        self.cause.as_deref()?.downcast_ref::<RetentionFailures>()
+        self.cause
+            .as_deref()?
+            .downcast_ref::<RetentionFailures>()
             .map(|causes| &causes.secondary)
     }
     pub(crate) fn with_secondary_native(self, cause: impl Error + Send + Sync + 'static) -> Self {
@@ -211,7 +217,11 @@ fn invocation_error(failure: NativeOwnerError) -> AttemptOwnerError {
             "{owner} native owner contract mismatch; private cause retained; do not resend"),
         NativeOwnerError::ToolObservation(_) => "native owner tool observation failed; private cause retained; effects unknown; do not resend".into(),
     };
-    AttemptOwnerError { message, cause: Some(Arc::new(failure)), native_result: None }
+    AttemptOwnerError {
+        message,
+        cause: Some(Arc::new(failure)),
+        native_result: None,
+    }
 }
 
 fn record<'a>(
@@ -448,12 +458,21 @@ fn invocation_failure(
     failure: NativeOwnerError,
 ) -> AttemptOwnerError {
     let primary = invocation_error(failure);
-    let uncertain = stamp(intent, OwnerOperationPhase::Uncertain,
-        json!({"failure":primary.to_string(),"instruction":"inspect original delivery, do not resend"}));
-    let retention_failure = retain(store, request, "uncertain",
+    let uncertain = stamp(
+        intent,
+        OwnerOperationPhase::Uncertain,
+        json!({"failure":primary.to_string(),"instruction":"inspect original delivery, do not resend"}),
+    );
+    let retention_failure = retain(
+        store,
+        request,
+        "uncertain",
         FactoryAttemptOperation::RecordObservation {
-            attempt_ref: request.attempt_ref.clone(), receipt: uncertain.clone(),
-        }).err();
+            attempt_ref: request.attempt_ref.clone(),
+            receipt: uncertain.clone(),
+        },
+    )
+    .err();
     match result(store, request, false, uncertain, None, retention_failure) {
         Ok(receipt) => primary.with_receipt(receipt),
         Err(secondary) => {
@@ -562,14 +581,7 @@ pub fn execute_attempt_owner_action(
                 })
                 .cloned()
         };
-        return result(
-            &store,
-            &request,
-            true,
-            previous.clone(),
-            owner,
-            None,
-        );
+        return result(&store, &request, true, previous.clone(), owner, None);
     }
     if reading.revision != request.expected_revision {
         return Err(error("stale Factory state revision before owner dispatch"));
@@ -902,14 +914,7 @@ pub fn execute_attempt_owner_action(
         Ok(own)
     })();
     match completion {
-        Ok(transport) => result(
-            &store,
-            &request,
-            false,
-            transport,
-            Some(owner),
-            None,
-        ),
+        Ok(transport) => result(&store, &request, false, transport, Some(owner), None),
         Err(failure) => Err(completion_failure(
             &mut store, &request, intent, owner, failure,
         )),
@@ -1047,9 +1052,9 @@ mod publication_tests {
         let first_io = actual_store_io(primary);
         assert_eq!(first_io.kind(), io::ErrorKind::InvalidData);
         assert_eq!(first_io.raw_os_error(), None);
-        assert!(first_io.to_string().starts_with(
-            "native stage privacy changed before candidate bytes"
-        ));
+        assert!(first_io
+            .to_string()
+            .starts_with("native stage privacy changed before candidate bytes"));
         let later_io = actual_store_io(secondary);
         assert_eq!(later_io.raw_os_error(), Some(libc::ELOOP));
         assert_ne!(primary.to_string(), secondary.to_string());
@@ -1075,7 +1080,10 @@ mod publication_tests {
         held_original.read_to_end(&mut held_bytes).unwrap();
         assert_eq!(held_bytes, before_bytes);
         let retained_metadata = std::fs::symlink_metadata(&held_path).unwrap();
-        assert_eq!((retained_metadata.dev(), retained_metadata.ino()), original_identity);
+        assert_eq!(
+            (retained_metadata.dev(), retained_metadata.ino()),
+            original_identity
+        );
         assert_eq!(retained_metadata.mode() & 0o7777, 0o600);
         let substituted = std::fs::symlink_metadata(&path).unwrap();
         assert!(substituted.file_type().is_symlink());
@@ -1222,17 +1230,32 @@ mod publication_tests {
                         .unwrap();
                 }
             });
-            let returned_error = completion_failure(&mut store, &request, intent, owner.clone(), primary);
+            let returned_error =
+                completion_failure(&mut store, &request, intent, owner.clone(), primary);
             let returned = returned_error.native_result().unwrap();
             assert!(crate::native_publication_uncertainty(&returned_error).is_some(),
                 "generic caller must still find typed publication uncertainty after failed readback");
-            assert_eq!(returned_error.primary_retention_error().unwrap().to_string(), primary_message);
+            assert_eq!(
+                returned_error
+                    .primary_retention_error()
+                    .unwrap()
+                    .to_string(),
+                primary_message
+            );
             let secondary = returned_error.secondary_retention_error().unwrap();
-            assert!(secondary.source().is_some(), "actual distinct native cause remains retained");
+            assert!(
+                secondary.source().is_some(),
+                "actual distinct native cause remains retained"
+            );
             if move_after_publication {
-                assert!(crate::native_publication_uncertainty(secondary).is_none(),
-                    "later failed readback is not itself fabricated publication uncertainty");
-                assert!(crate::native_publication_uncertainty(returned_error.primary_retention_error().unwrap()).is_some());
+                assert!(
+                    crate::native_publication_uncertainty(secondary).is_none(),
+                    "later failed readback is not itself fabricated publication uncertainty"
+                );
+                assert!(crate::native_publication_uncertainty(
+                    returned_error.primary_retention_error().unwrap()
+                )
+                .is_some());
             } else {
                 assert!(crate::native_publication_uncertainty(secondary).is_some());
             }
@@ -1296,7 +1319,6 @@ mod publication_tests {
     }
 }
 
-
 // Opt-in qualification of real transport/held pipes and this persisted failure
 // consumer. Canonical fixture model labels are controlled Factory admission
 // metadata, never a realised provider, AIKit reply or worker completion.
@@ -1314,14 +1336,21 @@ mod native_failure_tests {
 
     const CANARY: &[u8] = b"PRIVATE-OWNER-PIPE-CANARY";
 
-    fn fixture() -> (tempfile::TempDir, FileAttemptStore, FactoryAttemptOwnerRequest) {
+    fn fixture() -> (
+        tempfile::TempDir,
+        FileAttemptStore,
+        FactoryAttemptOwnerRequest,
+    ) {
         let root = std::env::var_os("FACTORY_NATIVE_EVIDENCE_DIR")
             .expect("explicit admitted evidence root is required");
         let root = Path::new(&root);
         assert!(root.is_absolute() && root.is_dir());
         assert_eq!(root.canonicalize().unwrap(), root);
         let scratch = std::env::temp_dir().canonicalize().unwrap();
-        assert!(scratch.starts_with(root), "TMPDIR must be the admitted evidence root/subtree");
+        assert!(
+            scratch.starts_with(root),
+            "TMPDIR must be the admitted evidence root/subtree"
+        );
         let (directory, store, base) = native_retention_source();
         let reading = store.reading().unwrap();
         let attempt = record(&reading, &base.attempt_ref).unwrap();
@@ -1350,88 +1379,174 @@ mod native_failure_tests {
         (directory, store, request)
     }
 
-    fn retain_intent(store: &mut FileAttemptStore, request: &FactoryAttemptOwnerRequest) -> OwnerOperationReceipt {
-        let NativeOwnerInvocation::AikitEncounter { binary, cwd, contract_revision, request: packet, .. } = &request.invocation
-            else { unreachable!() };
-        let digest = blake3::hash(&serde_json::to_vec(request).unwrap()).to_hex().to_string();
-        let intent = stamp(OwnerOperationReceipt {
-            owner_ref: "factory".into(), contract: TRANSPORT_OBSERVATION.into(),
-            operation_ref: intent_ref(request), receipt_ref: String::new(),
-            source_revision: format!("factory-state:{}", request.expected_revision),
-            phase: OwnerOperationPhase::Dispatching, evidence_refs: BTreeSet::new(), partial_effect_refs: BTreeSet::new(),
-            payload: json!({"requestDigest":digest,"agentSession":packet["agent_session"],
+    fn retain_intent(
+        store: &mut FileAttemptStore,
+        request: &FactoryAttemptOwnerRequest,
+    ) -> OwnerOperationReceipt {
+        let NativeOwnerInvocation::AikitEncounter {
+            binary,
+            cwd,
+            contract_revision,
+            request: packet,
+            ..
+        } = &request.invocation
+        else {
+            unreachable!()
+        };
+        let digest = blake3::hash(&serde_json::to_vec(request).unwrap())
+            .to_hex()
+            .to_string();
+        let intent = stamp(
+            OwnerOperationReceipt {
+                owner_ref: "factory".into(),
+                contract: TRANSPORT_OBSERVATION.into(),
+                operation_ref: intent_ref(request),
+                receipt_ref: String::new(),
+                source_revision: format!("factory-state:{}", request.expected_revision),
+                phase: OwnerOperationPhase::Dispatching,
+                evidence_refs: BTreeSet::new(),
+                partial_effect_refs: BTreeSet::new(),
+                payload: json!({"requestDigest":digest,"agentSession":packet["agent_session"],
                 "deliveryRef":packet["turn"]["delivery_ref"],"action":"send","executionRef":request.execution_ref,
                 "transport":{"binary":binary,"cwd":cwd,"contractRevision":contract_revision},"taskAdmission":null}),
-        }, OwnerOperationPhase::Dispatching,
-            json!({"meaning":"actual controlled intent before real OS transport; no provider success"}));
-        store.apply(action_request(request, request.expected_revision, "intent",
-            FactoryAttemptOperation::RecordObservation { attempt_ref:request.attempt_ref.clone(), receipt:intent.clone() })).unwrap();
+            },
+            OwnerOperationPhase::Dispatching,
+            json!({"meaning":"actual controlled intent before real OS transport; no provider success"}),
+        );
+        store
+            .apply(action_request(
+                request,
+                request.expected_revision,
+                "intent",
+                FactoryAttemptOperation::RecordObservation {
+                    attempt_ref: request.attempt_ref.clone(),
+                    receipt: intent.clone(),
+                },
+            ))
+            .unwrap();
         intent
     }
 
     fn timed_out_real_pipe_owner(directory: &Path) -> NativeOwnerError {
         // Two actual SCM_RIGHTS pipe copies remain held by this test until the
         // owned native client has timed out/reaped. No escaped child is spawned.
-        let python = std::env::var_os("FACTORY_NATIVE_PYTHON_BIN").expect("qualified actual Python pin required");
+        let python = std::env::var_os("FACTORY_NATIVE_PYTHON_BIN")
+            .expect("qualified actual Python pin required");
         let python = Path::new(&python);
         assert!(python.is_absolute() && python.is_file());
-        let pin = std::env::var("FACTORY_NATIVE_PYTHON_SHA256").expect("qualified Python SHA required");
-        assert_eq!(format!("{:x}", Sha256::digest(fs::read(python).unwrap())), pin);
+        let pin =
+            std::env::var("FACTORY_NATIVE_PYTHON_SHA256").expect("qualified Python SHA required");
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(python).unwrap())),
+            pin
+        );
         // A native socket pair avoids the platform UDS path-length limit in
         // real allocated ProjectCentral scratch. Only this owned test socket
         // is deliberately inherited by the actual child; qualification is serial.
         let (socket, child_socket) = UnixDatagram::pair().unwrap();
-        socket.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
         let old_flags = unsafe { libc::fcntl(child_socket.as_raw_fd(), libc::F_GETFD) };
         assert!(old_flags >= 0);
-        assert_eq!(unsafe { libc::fcntl(child_socket.as_raw_fd(), libc::F_SETFD, old_flags & !libc::FD_CLOEXEC) }, 0);
+        assert_eq!(
+            unsafe {
+                libc::fcntl(
+                    child_socket.as_raw_fd(),
+                    libc::F_SETFD,
+                    old_flags & !libc::FD_CLOEXEC,
+                )
+            },
+            0
+        );
 
-        let receiver = std::thread::Builder::new().name("owned-native-pipe-transfer".into()).spawn(move || {
-            let mut marker = [0u8; 1];
-            let mut control = [0usize; 32]; // aligned, bounded ancillary buffer
-            let mut iov = libc::iovec { iov_base:marker.as_mut_ptr().cast(), iov_len:marker.len() };
-            let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
-            message.msg_iov = &mut iov; message.msg_iovlen = 1;
-            message.msg_control = control.as_mut_ptr().cast(); message.msg_controllen = std::mem::size_of_val(&control) as _;
-            assert_eq!(unsafe { libc::recvmsg(socket.as_raw_fd(), &mut message, 0) }, 1, "real pipe transfer failed: {}", io::Error::last_os_error());
-            assert_eq!(marker, [b'P']);
-            assert_eq!(message.msg_flags & libc::MSG_CTRUNC, 0);
-            let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
-            assert!(!header.is_null());
-            assert_eq!(unsafe { (*header).cmsg_level }, libc::SOL_SOCKET);
-            assert_eq!(unsafe { (*header).cmsg_type }, libc::SCM_RIGHTS);
-            assert_eq!(unsafe { (*header).cmsg_len } as usize, unsafe { libc::CMSG_LEN((2 * std::mem::size_of::<libc::c_int>()) as _) } as usize);
-            let fds = unsafe { std::slice::from_raw_parts(libc::CMSG_DATA(header).cast::<libc::c_int>(), 2) };
-            assert!(fds[0] >= 0 && fds[1] >= 0 && fds[0] != fds[1]);
-            // The returned native handles remain owned in the finished thread's
-            // result until join; this is a genuine incomplete-EOF condition.
-            unsafe { [OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])] }
-        }).unwrap();
+        let receiver = std::thread::Builder::new()
+            .name("owned-native-pipe-transfer".into())
+            .spawn(move || {
+                let mut marker = [0u8; 1];
+                let mut control = [0usize; 32]; // aligned, bounded ancillary buffer
+                let mut iov = libc::iovec {
+                    iov_base: marker.as_mut_ptr().cast(),
+                    iov_len: marker.len(),
+                };
+                let mut message: libc::msghdr = unsafe { std::mem::zeroed() };
+                message.msg_iov = &mut iov;
+                message.msg_iovlen = 1;
+                message.msg_control = control.as_mut_ptr().cast();
+                message.msg_controllen = std::mem::size_of_val(&control) as _;
+                assert_eq!(
+                    unsafe { libc::recvmsg(socket.as_raw_fd(), &mut message, 0) },
+                    1,
+                    "real pipe transfer failed: {}",
+                    io::Error::last_os_error()
+                );
+                assert_eq!(marker, [b'P']);
+                assert_eq!(message.msg_flags & libc::MSG_CTRUNC, 0);
+                let header = unsafe { libc::CMSG_FIRSTHDR(&message) };
+                assert!(!header.is_null());
+                assert_eq!(unsafe { (*header).cmsg_level }, libc::SOL_SOCKET);
+                assert_eq!(unsafe { (*header).cmsg_type }, libc::SCM_RIGHTS);
+                assert_eq!(unsafe { (*header).cmsg_len } as usize, unsafe {
+                    libc::CMSG_LEN((2 * std::mem::size_of::<libc::c_int>()) as _)
+                }
+                    as usize);
+                let fds = unsafe {
+                    std::slice::from_raw_parts(libc::CMSG_DATA(header).cast::<libc::c_int>(), 2)
+                };
+                assert!(fds[0] >= 0 && fds[1] >= 0 && fds[0] != fds[1]);
+                // The returned native handles remain owned in the finished thread's
+                // result until join; this is a genuine incomplete-EOF condition.
+                unsafe { [OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])] }
+            })
+            .unwrap();
         let script = directory.join("actual-pipe-owner.py");
-        assert!(!python.to_string_lossy().chars().any(char::is_whitespace), "actual shebang interpreter path must be unambiguous");
+        assert!(
+            !python.to_string_lossy().chars().any(char::is_whitespace),
+            "actual shebang interpreter path must be unambiguous"
+        );
         let source = format!("#!{}\nimport array,os,signal,socket\nos.write(1,{:?}.encode())\nos.write(2,{:?}.encode())\ns=socket.socket(fileno={})\ns.sendmsg([b'P'],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[1,2]))])\ns.close()\nwhile True: signal.pause()\n",
             python.display(), std::str::from_utf8(CANARY).unwrap(), std::str::from_utf8(CANARY).unwrap(), child_socket.as_raw_fd());
-        fs::write(&script, source).unwrap(); fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(&script, source).unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
         let invocation = NativeOwnerInvocation::AikitEncounter {
-            binary:script, cwd:directory.to_path_buf(), transport:None,
-            contract_revision:AIKIT_CAW_CONTRACT_REVISION.into(),
-            request:json!({"action":"delivery","agent_session":"session:test","delivery_ref":"delivery:actual-native-failure"}),
+            binary: script,
+            cwd: directory.to_path_buf(),
+            transport: None,
+            contract_revision: AIKIT_CAW_CONTRACT_REVISION.into(),
+            request: json!({"action":"delivery","agent_session":"session:test","delivery_ref":"delivery:actual-native-failure"}),
         };
         let native_result = invoke_native_owner_bounded(&invocation, 1_500);
         drop(child_socket); // close this owned inherited endpoint before any later child
         let deadline = Instant::now() + Duration::from_secs(4);
-        while !receiver.is_finished() && Instant::now() < deadline { std::thread::sleep(Duration::from_millis(5)); }
-        assert!(receiver.is_finished(), "owned finite FD receiver did not finish; cleanup uncertain");
+        while !receiver.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            receiver.is_finished(),
+            "owned finite FD receiver did not finish; cleanup uncertain"
+        );
         let held_pipes = receiver.join().expect("actual FD receiver failed");
         let failure = native_result.unwrap_err();
-        let NativeOwnerError::Spawn { error, .. } = &failure else { panic!("native capture cause missing"); };
-        let capture = crate::native_process::capture_failure(error).expect("actual same typed failure");
+        let NativeOwnerError::Spawn { error, .. } = &failure else {
+            panic!("native capture cause missing");
+        };
+        let capture =
+            crate::native_process::capture_failure(error).expect("actual same typed failure");
         assert!(capture.process_started() && capture.timed_out() && capture.client_reaped());
         assert!(!capture.stdout_eof() && !capture.stderr_eof());
-        assert!(capture.stdout().windows(CANARY.len()).any(|window| window == CANARY));
-        assert!(capture.stderr().windows(CANARY.len()).any(|window| window == CANARY));
+        assert!(capture
+            .stdout()
+            .windows(CANARY.len())
+            .any(|window| window == CANARY));
+        assert!(capture
+            .stderr()
+            .windows(CANARY.len())
+            .any(|window| window == CANARY));
         drop(held_pipes);
-        assert_eq!(format!("{:x}", Sha256::digest(fs::read(python).unwrap())), pin);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(fs::read(python).unwrap())),
+            pin
+        );
         failure
     }
 
@@ -1453,14 +1568,22 @@ mod native_failure_tests {
         let failure = timed_out_real_pipe_owner(directory.path());
         let error = invocation_failure(&mut store, &request, intent, failure);
         assert_private(&error);
-        let NativeOwnerError::Spawn { error: io, .. } = error.original_native_owner_error().unwrap() else { panic!("original cause erased"); };
+        let NativeOwnerError::Spawn { error: io, .. } =
+            error.original_native_owner_error().unwrap()
+        else {
+            panic!("original cause erased");
+        };
         let capture = crate::native_process::capture_failure(io).unwrap();
         assert!(capture.timed_out() && !capture.stdout_eof() && capture.client_reaped());
         let state = directory.path().join("state.json");
         let retained = fs::read(&state).unwrap();
         let historical = execute_attempt_owner_action(&state, request).unwrap();
         assert!(historical.replayed && historical.needs_reconciliation);
-        assert_eq!(fs::read(&state).unwrap(), retained, "history read must neither resend nor settle");
+        assert_eq!(
+            fs::read(&state).unwrap(),
+            retained,
+            "history read must neither resend nor settle"
+        );
     }
 
     #[test]
@@ -1471,14 +1594,26 @@ mod native_failure_tests {
         let before = store.reading().unwrap().revision;
         let error = execute_attempt_owner_action(&state, request.clone()).unwrap_err();
         assert_private(&error);
-        let NativeOwnerError::Spawn { error: io, .. } = error.original_native_owner_error().unwrap() else { panic!("original native Spawn cause lost"); };
+        let NativeOwnerError::Spawn { error: io, .. } =
+            error.original_native_owner_error().unwrap()
+        else {
+            panic!("original native Spawn cause lost");
+        };
         assert_eq!(io.kind(), io::ErrorKind::NotFound);
         let capture = crate::native_process::capture_failure(io).unwrap();
-        assert!(!capture.process_started()); assert!(capture.status().is_none());
+        assert!(!capture.process_started());
+        assert!(capture.status().is_none());
         assert_eq!(capture.cause().raw_os_error(), Some(libc::ENOENT));
         let reading = store.reading().unwrap();
-        assert_eq!(reading.revision, before + 2, "one intent and one actual uncertainty; no retry");
-        assert_eq!(latest_transports(record(&reading, &request.attempt_ref).unwrap()).len(), 1);
+        assert_eq!(
+            reading.revision,
+            before + 2,
+            "one intent and one actual uncertainty; no retry"
+        );
+        assert_eq!(
+            latest_transports(record(&reading, &request.attempt_ref).unwrap()).len(),
+            1
+        );
         let retained = fs::read(&state).unwrap();
         let historical = execute_attempt_owner_action(&state, request.clone()).unwrap();
         assert!(historical.replayed && historical.needs_reconciliation);
@@ -1487,14 +1622,31 @@ mod native_failure_tests {
         // consumer's first failed invocation, not a pre-dispatch refusal.
         let (cli_directory, cli_store, cli_request) = fixture();
         let cli_state = cli_directory.path().join("state.json");
-        let args = vec![cli_state.to_string_lossy().into_owned(), "-".into(), "--json".into()];
-        let failure = crate::attempt_owner_cli::execute_attempt_owner_cli(&args,
-            Some(&serde_json::to_string(&cli_request).unwrap())).unwrap_err();
-        let owner_error = failure.source().unwrap().downcast_ref::<AttemptOwnerError>().unwrap();
+        let args = vec![
+            cli_state.to_string_lossy().into_owned(),
+            "-".into(),
+            "--json".into(),
+        ];
+        let failure = crate::attempt_owner_cli::execute_attempt_owner_cli(
+            &args,
+            Some(&serde_json::to_string(&cli_request).unwrap()),
+        )
+        .unwrap_err();
+        let owner_error = failure
+            .source()
+            .unwrap()
+            .downcast_ref::<AttemptOwnerError>()
+            .unwrap();
         assert!(owner_error.original_native_owner_error().is_some());
-        assert_eq!(failure.native_owner_failure_result().unwrap(), &serde_json::to_value(owner_error.native_result().unwrap()).unwrap());
+        assert_eq!(
+            failure.native_owner_failure_result().unwrap(),
+            &serde_json::to_value(owner_error.native_result().unwrap()).unwrap()
+        );
         assert!(!format!("{failure:?}").contains(std::str::from_utf8(CANARY).unwrap()));
-        assert_eq!(cli_store.reading().unwrap().revision, cli_request.expected_revision + 2);
+        assert_eq!(
+            cli_store.reading().unwrap().revision,
+            cli_request.expected_revision + 2
+        );
         assert_eq!(fs::read(&state).unwrap(), retained);
     }
 
@@ -1505,22 +1657,47 @@ mod native_failure_tests {
         let intent = retain_intent(&mut store, &request);
         let before = store.reading().unwrap().revision;
         let native = timed_out_real_pipe_owner(directory.path());
-        let count = std::rc::Rc::new(std::cell::Cell::new(0)); let observed = count.clone();
+        let count = std::rc::Rc::new(std::cell::Cell::new(0));
+        let observed = count.clone();
         crate::native_file_transaction::observe_next_publication(move |path| {
             observed.set(observed.get() + 1);
             fs::set_permissions(path, fs::Permissions::from_mode(0o777)).unwrap();
         });
         let error = invocation_failure(&mut store, &request, intent, native);
         assert_private(&error);
-        assert_eq!(count.get(), 1, "already-published uncertainty forbids any compensation/retry");
-        let NativeOwnerError::Spawn { error: io, .. } = error.original_native_owner_error().unwrap() else { panic!("original capture lost"); };
-        assert!(crate::native_process::capture_failure(io).unwrap().timed_out());
-        assert!(crate::native_publication_uncertainty(error.secondary_retention_error().unwrap()).is_some());
+        assert_eq!(
+            count.get(),
+            1,
+            "already-published uncertainty forbids any compensation/retry"
+        );
+        let NativeOwnerError::Spawn { error: io, .. } =
+            error.original_native_owner_error().unwrap()
+        else {
+            panic!("original capture lost");
+        };
+        assert!(crate::native_process::capture_failure(io)
+            .unwrap()
+            .timed_out());
+        assert!(
+            crate::native_publication_uncertainty(error.secondary_retention_error().unwrap())
+                .is_some()
+        );
         assert!(crate::native_publication_uncertainty(&error).is_some());
-        assert!(error.native_result().unwrap().publication_uncertainty.is_some());
-        let current = FileAttemptStore::open_run(directory.path().join("state.json"), request.run_ref).unwrap().reading().unwrap();
+        assert!(error
+            .native_result()
+            .unwrap()
+            .publication_uncertainty
+            .is_some());
+        let current =
+            FileAttemptStore::open_run(directory.path().join("state.json"), request.run_ref)
+                .unwrap()
+                .reading()
+                .unwrap();
         assert_eq!(current.revision, before + 1);
-        assert!(record(&current, &request.attempt_ref).unwrap().readable_return.is_none());
+        assert!(record(&current, &request.attempt_ref)
+            .unwrap()
+            .readable_return
+            .is_none());
     }
 
     #[test]
@@ -1529,21 +1706,55 @@ mod native_failure_tests {
         let (directory, mut store, request) = fixture();
         let mut intent = retain_intent(&mut store, &request);
         let owner = crate::attempt_learning::publication_tests::native_observation(&store);
-        intent = stamp(intent, OwnerOperationPhase::Observed, json!({"ownerReceipt":owner}));
-        retain(&mut store, &request, "actual-source-observation", FactoryAttemptOperation::RecordObservation {
-            attempt_ref:request.attempt_ref.clone(), receipt:intent.clone(),
-        }).unwrap();
+        intent = stamp(
+            intent,
+            OwnerOperationPhase::Observed,
+            json!({"ownerReceipt":owner}),
+        );
+        retain(
+            &mut store,
+            &request,
+            "actual-source-observation",
+            FactoryAttemptOperation::RecordObservation {
+                attempt_ref: request.attempt_ref.clone(),
+                receipt: intent.clone(),
+            },
+        )
+        .unwrap();
         let receipt = result(&store, &request, false, intent, Some(owner), None).unwrap();
         let value = serde_json::to_value(&receipt).unwrap();
-        let keys = value.as_object().unwrap().keys().map(String::as_str).collect::<BTreeSet<_>>();
-        assert_eq!(keys, BTreeSet::from(["contract","requestRef","runRef","attemptRef","replayed","needsReconciliation",
-            "transportObservation","ownerReceipt","retentionError","reading"]));
+        let keys = value
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            keys,
+            BTreeSet::from([
+                "contract",
+                "requestRef",
+                "runRef",
+                "attemptRef",
+                "replayed",
+                "needsReconciliation",
+                "transportObservation",
+                "ownerReceipt",
+                "retentionError",
+                "reading"
+            ])
+        );
         assert!(!receipt.needs_reconciliation);
         let decoded: FactoryAttemptOwnerReceipt = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(serde_json::to_value(decoded).unwrap(), value);
-        let state = directory.path().join("state.json"); let bytes = fs::read(&state).unwrap();
+        let state = directory.path().join("state.json");
+        let bytes = fs::read(&state).unwrap();
         let args = vec![state.to_string_lossy().into_owned(), "-".into()];
-        let text = crate::attempt_owner_cli::execute_attempt_owner_cli(&args, Some(&serde_json::to_string(&request).unwrap())).unwrap();
+        let text = crate::attempt_owner_cli::execute_attempt_owner_cli(
+            &args,
+            Some(&serde_json::to_string(&request).unwrap()),
+        )
+        .unwrap();
         assert_eq!(text, format!("{}\nRun: {}\nAttempt: {}\nRequest: {}\nReplayed: true\nNeeds reconciliation: false\nOwner phase: Observed",
             FACTORY_ATTEMPT_OWNER_RECEIPT, request.run_ref, request.attempt_ref, request.request_ref));
         assert_eq!(fs::read(&state).unwrap(), bytes);

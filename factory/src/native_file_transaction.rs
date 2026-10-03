@@ -1038,7 +1038,10 @@ mod unix {
         pub(super) fn set_privacy_copy_observer(observer: PublicationObserver) {
             AFTER_PRIVACY_COPIED.with(|slot| {
                 let mut slot = slot.borrow_mut();
-                assert!(slot.is_none(), "an unconsumed native privacy observer exists");
+                assert!(
+                    slot.is_none(),
+                    "an unconsumed native privacy observer exists"
+                );
                 *slot = Some(observer);
             });
         }

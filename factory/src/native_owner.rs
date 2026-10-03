@@ -543,7 +543,8 @@ pub(crate) fn native_capture_prefix(bytes: &[u8]) -> Value {
 }
 pub(crate) fn native_capture_observation(error: &io::Error) -> Value {
     match crate::native_process::capture_failure(error) {
-        Some(failure) => serde_json::json!({"stage":"nativeTransport","processStarted":failure.process_started(),
+        Some(failure) => {
+            serde_json::json!({"stage":"nativeTransport","processStarted":failure.process_started(),
             "exitCode":failure.status().and_then(|status|status.code()),"exitStatus":failure.status().map(|status|status.to_string()),
             "stdout":native_capture_prefix(failure.stdout()),"stderr":native_capture_prefix(failure.stderr()),
             "stdoutEof":failure.stdout_eof(),"stderrEof":failure.stderr_eof(),
@@ -553,10 +554,13 @@ pub(crate) fn native_capture_observation(error: &io::Error) -> Value {
             "errorKind":format!("{:?}",failure.cause().kind()),"rawOsError":failure.cause().raw_os_error(),
             "failure":failure.cause().to_string(),"cleanupCauses":failure.cleanup_errors().iter().map(|cause|
                 serde_json::json!({"kind":format!("{:?}",cause.kind()),"rawOsError":cause.raw_os_error(),"failure":cause.to_string()})).collect::<Vec<_>>(),
-            "nativeTotalByteLength":null,"centralResponse":null,"effectsStanding":"unknown; transport lifetime is not remote effect quiescence"}),
-        None => serde_json::json!({"stage":"nativeTransport","errorKind":format!("{:?}",error.kind()),"rawOsError":error.raw_os_error(),
+            "nativeTotalByteLength":null,"centralResponse":null,"effectsStanding":"unknown; transport lifetime is not remote effect quiescence"})
+        }
+        None => {
+            serde_json::json!({"stage":"nativeTransport","errorKind":format!("{:?}",error.kind()),"rawOsError":error.raw_os_error(),
             "failure":error.to_string(),"processStarted":null,"exitStatus":null,"stdoutEof":null,"stderrEof":null,
-            "clientReaped":null,"centralResponse":null,"effectsStanding":"capture API did not disclose lifetime; effect outcome unknown"}),
+            "clientReaped":null,"centralResponse":null,"effectsStanding":"capture API did not disclose lifetime; effect outcome unknown"})
+        }
     }
 }
 /// An explicit evidence accessor for an invocation whose later Gateway write
@@ -569,16 +573,29 @@ pub struct NativeToolObservationFailure {
     acknowledged: Value,
 }
 impl NativeToolObservationFailure {
-    pub fn observation(&self) -> &Value { &self.observation }
-    pub fn acknowledged_receipts(&self) -> &Value { &self.acknowledged }
-    pub fn primary_capture_cause(&self) -> Option<&io::Error> { self.primary.as_ref() }
-    pub fn gateway_cause(&self) -> &crate::native_gateway::GatewayError { &self.secondary }
+    pub fn observation(&self) -> &Value {
+        &self.observation
+    }
+    pub fn acknowledged_receipts(&self) -> &Value {
+        &self.acknowledged
+    }
+    pub fn primary_capture_cause(&self) -> Option<&io::Error> {
+        self.primary.as_ref()
+    }
+    pub fn gateway_cause(&self) -> &crate::native_gateway::GatewayError {
+        &self.secondary
+    }
 }
 impl std::fmt::Debug for NativeToolObservationFailure {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("NativeToolObservationFailure").field("stage",&self.stage)
-            .field("has_primary_capture_cause",&self.primary.is_some())
-            .field("private_evidence",&"withheld; explicit evidence accessor only").finish()
+        f.debug_struct("NativeToolObservationFailure")
+            .field("stage", &self.stage)
+            .field("has_primary_capture_cause", &self.primary.is_some())
+            .field(
+                "private_evidence",
+                &"withheld; explicit evidence accessor only",
+            )
+            .finish()
     }
 }
 impl Display for NativeToolObservationFailure {
@@ -588,13 +605,25 @@ impl Display for NativeToolObservationFailure {
 }
 impl Error for NativeToolObservationFailure {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match &self.primary { Some(cause) => Some(cause), None => Some(&self.secondary) }
+        match &self.primary {
+            Some(cause) => Some(cause),
+            None => Some(&self.secondary),
+        }
     }
 }
-fn local_gateway_error(stage: &'static str, error: crate::native_gateway::GatewayError,
-    primary: &mut Option<io::Error>, observation: &Value, acknowledged: &Value) -> NativeOwnerError {
+fn local_gateway_error(
+    stage: &'static str,
+    error: crate::native_gateway::GatewayError,
+    primary: &mut Option<io::Error>,
+    observation: &Value,
+    acknowledged: &Value,
+) -> NativeOwnerError {
     NativeOwnerError::ToolObservation(Box::new(NativeToolObservationFailure {
-        primary:primary.take(),secondary:error,stage,observation:observation.clone(),acknowledged:acknowledged.clone(),
+        primary: primary.take(),
+        secondary: error,
+        stage,
+        observation: observation.clone(),
+        acknowledged: acknowledged.clone(),
     }))
 }
 
@@ -814,16 +843,25 @@ fn invoke_actuation_gateway(
         Some(Err(error)) => {
             local_capture_observation = native_capture_observation(&error);
             let uncertain = crate::native_process::capture_failure(&error)
-                .map(|failure| failure.process_started()).unwrap_or(true);
+                .map(|failure| failure.process_started())
+                .unwrap_or(true);
             // Capture prefixes are private metadata, never tool reply text.
-            let phase = if uncertain { OwnerOperationPhase::Uncertain } else { OwnerOperationPhase::Failed };
-            let message = if uncertain {"tool transport outcome uncertain; actual capture retained"}
-                else {"tool client did not start; actual capture retained"};
+            let phase = if uncertain {
+                OwnerOperationPhase::Uncertain
+            } else {
+                OwnerOperationPhase::Failed
+            };
+            let message = if uncertain {
+                "tool transport outcome uncertain; actual capture retained"
+            } else {
+                "tool client did not start; actual capture retained"
+            };
             local_capture_cause = Some(error);
-            (message.to_owned(),None,phase)
-        },
+            (message.to_owned(), None, phase)
+        }
     };
-    let mut acknowledged = serde_json::json!({"hello":hello,"attach":attach,"tool_request_receipt":tool_request});
+    let mut acknowledged =
+        serde_json::json!({"hello":hello,"attach":attach,"tool_request_receipt":tool_request});
     let tool_result = connection
         .call(
             &serde_json::json!({
@@ -841,9 +879,24 @@ fn invoke_actuation_gateway(
             }),
             deadline,
         )
-        .map_err(|error| local_gateway_error("post tool-result", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
-    demand_ok(&tool_result, "post tool-result")
-        .map_err(|error| local_gateway_error("post tool-result", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
+        .map_err(|error| {
+            local_gateway_error(
+                "post tool-result",
+                error,
+                &mut local_capture_cause,
+                &local_capture_observation,
+                &acknowledged,
+            )
+        })?;
+    demand_ok(&tool_result, "post tool-result").map_err(|error| {
+        local_gateway_error(
+            "post tool-result",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
     acknowledged["tool_result_receipt"] = tool_result.clone();
     if !self_executed {
         evidence_refs.extend(external_evidence.iter().cloned());
@@ -876,8 +929,24 @@ fn invoke_actuation_gateway(
             }),
             deadline,
         )
-        .map_err(|error| local_gateway_error("post evidence", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
-    demand_ok(&evidence, "post evidence").map_err(|error| local_gateway_error("post evidence", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
+        .map_err(|error| {
+            local_gateway_error(
+                "post evidence",
+                error,
+                &mut local_capture_cause,
+                &local_capture_observation,
+                &acknowledged,
+            )
+        })?;
+    demand_ok(&evidence, "post evidence").map_err(|error| {
+        local_gateway_error(
+            "post evidence",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
 
     acknowledged["evidence_receipt"] = evidence.clone();
     let return_reply = connection
@@ -907,12 +976,26 @@ fn invoke_actuation_gateway(
             deadline,
         )
         .map_err(|error| local_gateway_error("post return", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
-    demand_ok(&return_reply, "post return").map_err(|error| local_gateway_error("post return", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
+    demand_ok(&return_reply, "post return").map_err(|error| {
+        local_gateway_error(
+            "post return",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
     acknowledged["return_reply"] = return_reply.clone();
     if event_kind(receipt_event(&return_reply)) != Some("return") {
-        return Err(local_gateway_error("validate return receipt",crate::native_gateway::GatewayError::Frame(
-            "gateway receipt for the return did not retain a durable return event".into()),
-            &mut local_capture_cause,&local_capture_observation,&acknowledged));
+        return Err(local_gateway_error(
+            "validate return receipt",
+            crate::native_gateway::GatewayError::Frame(
+                "gateway receipt for the return did not retain a durable return event".into(),
+            ),
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        ));
     }
     for receipt in [&evidence, &return_reply] {
         if let Some(reference) = event_ref(receipt_event(receipt)) {
@@ -1188,8 +1271,13 @@ impl Display for NativeOwnerError {
 }
 impl Error for NativeOwnerError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self { Self::ToolObservation(cause) => Some(cause.as_ref()), Self::Io(cause) => Some(cause),
-            Self::Spawn { error, .. } => Some(error), Self::Json(cause) => Some(cause), _ => None }
+        match self {
+            Self::ToolObservation(cause) => Some(cause.as_ref()),
+            Self::Io(cause) => Some(cause),
+            Self::Spawn { error, .. } => Some(error),
+            Self::Json(cause) => Some(cause),
+            _ => None,
+        }
     }
 }
 impl From<io::Error> for NativeOwnerError {

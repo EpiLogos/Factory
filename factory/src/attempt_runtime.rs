@@ -186,11 +186,20 @@ pub struct OwnerOperationReceipt {
 
 impl std::fmt::Debug for OwnerOperationReceipt {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OwnerOperationReceipt").field("owner_ref",&self.owner_ref).field("contract",&self.contract)
-            .field("operation_ref",&self.operation_ref).field("receipt_ref",&self.receipt_ref)
-            .field("source_revision",&self.source_revision).field("phase",&self.phase)
-            .field("evidence_refs",&self.evidence_refs).field("partial_effect_refs",&self.partial_effect_refs)
-            .field("payload",&"private evidence withheld; explicit serde/read accessor only").finish()
+        f.debug_struct("OwnerOperationReceipt")
+            .field("owner_ref", &self.owner_ref)
+            .field("contract", &self.contract)
+            .field("operation_ref", &self.operation_ref)
+            .field("receipt_ref", &self.receipt_ref)
+            .field("source_revision", &self.source_revision)
+            .field("phase", &self.phase)
+            .field("evidence_refs", &self.evidence_refs)
+            .field("partial_effect_refs", &self.partial_effect_refs)
+            .field(
+                "payload",
+                &"private evidence withheld; explicit serde/read accessor only",
+            )
+            .finish()
     }
 }
 
@@ -1919,7 +1928,10 @@ impl NativeAttemptStoreFailure {
         cause: crate::project_development_store::ProjectDevelopmentStoreError,
         legacy_message: String,
     ) -> Self {
-        Self { cause, legacy_message }
+        Self {
+            cause,
+            legacy_message,
+        }
     }
     pub fn original_native_store_error(
         &self,

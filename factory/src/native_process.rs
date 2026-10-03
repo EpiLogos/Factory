@@ -4,7 +4,7 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{self, Read};
-use std::process::{Child, ExitStatus, Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -39,23 +39,57 @@ struct CaptureObservation {
 }
 
 impl NativeCaptureFailure {
-    pub fn process_started(&self) -> bool { self.observation.process_started }
-    pub fn status(&self) -> Option<ExitStatus> { self.observation.status }
-    pub fn stdout(&self) -> &[u8] { &self.observation.stdout }
-    pub fn stderr(&self) -> &[u8] { &self.observation.stderr }
-    pub fn stdout_eof(&self) -> bool { self.observation.stdout_eof }
-    pub fn stderr_eof(&self) -> bool { self.observation.stderr_eof }
-    pub fn stdout_truncated(&self) -> bool { self.observation.stdout_truncated }
-    pub fn stderr_truncated(&self) -> bool { self.observation.stderr_truncated }
-    pub fn timed_out(&self) -> bool { self.observation.timed_out }
-    pub fn ownership_lost(&self) -> bool { self.observation.ownership_lost }
-    pub fn client_reaped(&self) -> bool { self.observation.status.is_some() }
-    pub fn stop_attempted(&self) -> bool { self.observation.stop_attempted }
-    pub fn stop_requested(&self) -> bool { self.observation.stop_requested }
-    pub fn cause(&self) -> &io::Error { &self.cause }
-    pub fn cleanup_errors(&self) -> &[io::Error] { &self.cleanup_errors }
+    pub fn process_started(&self) -> bool {
+        self.observation.process_started
+    }
+    pub fn status(&self) -> Option<ExitStatus> {
+        self.observation.status
+    }
+    pub fn stdout(&self) -> &[u8] {
+        &self.observation.stdout
+    }
+    pub fn stderr(&self) -> &[u8] {
+        &self.observation.stderr
+    }
+    pub fn stdout_eof(&self) -> bool {
+        self.observation.stdout_eof
+    }
+    pub fn stderr_eof(&self) -> bool {
+        self.observation.stderr_eof
+    }
+    pub fn stdout_truncated(&self) -> bool {
+        self.observation.stdout_truncated
+    }
+    pub fn stderr_truncated(&self) -> bool {
+        self.observation.stderr_truncated
+    }
+    pub fn timed_out(&self) -> bool {
+        self.observation.timed_out
+    }
+    pub fn ownership_lost(&self) -> bool {
+        self.observation.ownership_lost
+    }
+    pub fn client_reaped(&self) -> bool {
+        self.observation.status.is_some()
+    }
+    pub fn stop_attempted(&self) -> bool {
+        self.observation.stop_attempted
+    }
+    pub fn stop_requested(&self) -> bool {
+        self.observation.stop_requested
+    }
+    pub fn cause(&self) -> &io::Error {
+        &self.cause
+    }
+    pub fn cleanup_errors(&self) -> &[io::Error] {
+        &self.cleanup_errors
+    }
     fn before_spawn(cause: io::Error) -> Self {
-        Self { cause, observation: CaptureObservation::default(), cleanup_errors: Vec::new() }
+        Self {
+            cause,
+            observation: CaptureObservation::default(),
+            cleanup_errors: Vec::new(),
+        }
     }
     fn into_io(self) -> io::Error {
         io::Error::new(self.cause.kind(), self)
@@ -92,7 +126,9 @@ impl Display for NativeCaptureFailure {
     }
 }
 impl Error for NativeCaptureFailure {
-    fn source(&self) -> Option<&(dyn Error + 'static)> { Some(&self.cause) }
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.cause)
+    }
 }
 
 /// Recover typed capture facts without replacing the original io::Error kind.
@@ -115,33 +151,65 @@ fn prepare_pipe<T: std::os::fd::AsRawFd>(pipe: &T) -> io::Result<()> {
 fn pipe_read<T: Read>(pipe: &mut T, buffer: &mut [u8]) -> io::Result<Option<usize>> {
     match pipe.read(buffer) {
         Ok(count) => Ok(Some(count)),
-        Err(error) if matches!(error.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted) => Ok(None),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(None)
+        }
         Err(error) => Err(error),
     }
 }
 
 #[cfg(windows)]
-fn prepare_pipe<T: std::os::windows::io::AsRawHandle>(_pipe: &T) -> io::Result<()> { Ok(()) }
+fn prepare_pipe<T: std::os::windows::io::AsRawHandle>(_pipe: &T) -> io::Result<()> {
+    Ok(())
+}
 #[cfg(windows)]
-fn pipe_read<T: Read + std::os::windows::io::AsRawHandle>(pipe: &mut T, buffer: &mut [u8]) -> io::Result<Option<usize>> {
+fn pipe_read<T: Read + std::os::windows::io::AsRawHandle>(
+    pipe: &mut T,
+    buffer: &mut [u8],
+) -> io::Result<Option<usize>> {
     use std::ffi::c_void;
     #[link(name = "kernel32")]
     extern "system" {
-        fn PeekNamedPipe(handle: *mut c_void, buffer: *mut c_void, bytes: u32,
-            read: *mut u32, available: *mut u32, remaining: *mut u32) -> i32;
+        fn PeekNamedPipe(
+            handle: *mut c_void,
+            buffer: *mut c_void,
+            bytes: u32,
+            read: *mut u32,
+            available: *mut u32,
+            remaining: *mut u32,
+        ) -> i32;
     }
     let mut available = 0u32;
     // One owner accesses this held pipe, without concurrent reads. Microsoft
     // documents a synchronous-handle blocking caveat for multithreaded apps;
     // Windows absolute syscall-deadline qualification remains separate. Never
     // call blocking read when the actual native observation reports no bytes.
-    let ok = unsafe { PeekNamedPipe(pipe.as_raw_handle(), std::ptr::null_mut(), 0,
-        std::ptr::null_mut(), &mut available, std::ptr::null_mut()) };
+    let ok = unsafe {
+        PeekNamedPipe(
+            pipe.as_raw_handle(),
+            std::ptr::null_mut(),
+            0,
+            std::ptr::null_mut(),
+            &mut available,
+            std::ptr::null_mut(),
+        )
+    };
     if ok == 0 {
         let error = io::Error::last_os_error();
-        return if error.raw_os_error() == Some(109) { Ok(Some(0)) } else { Err(error) };
+        return if error.raw_os_error() == Some(109) {
+            Ok(Some(0))
+        } else {
+            Err(error)
+        };
     }
-    if available == 0 { return Ok(None); }
+    if available == 0 {
+        return Ok(None);
+    }
     let count = buffer.len().min(available as usize);
     pipe.read(&mut buffer[..count]).map(Some)
 }
@@ -151,11 +219,17 @@ fn pipe_read<T: Read + std::os::windows::io::AsRawHandle>(pipe: &mut T, buffer: 
 // not a pre-spawn platform refusal and does not fabricate a stopped process.
 #[cfg(not(any(unix, windows)))]
 fn prepare_pipe<T>(_pipe: &T) -> io::Result<()> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "native bounded pipe readiness is unavailable on this target"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native bounded pipe readiness is unavailable on this target",
+    ))
 }
 #[cfg(not(any(unix, windows)))]
 fn pipe_read<T: Read>(_pipe: &mut T, _buffer: &mut [u8]) -> io::Result<Option<usize>> {
-    Err(io::Error::new(io::ErrorKind::Unsupported, "native bounded pipe readiness is unavailable on this target"))
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native bounded pipe readiness is unavailable on this target",
+    ))
 }
 
 fn append_capture(bytes: &mut Vec<u8>, truncated: &mut bool, read: &[u8]) -> io::Result<()> {
@@ -163,14 +237,20 @@ fn append_capture(bytes: &mut Vec<u8>, truncated: &mut bool, read: &[u8]) -> io:
     bytes.extend_from_slice(&read[..read.len().min(room)]);
     if read.len() > room {
         *truncated = true;
-        return Err(io::Error::new(io::ErrorKind::InvalidData,
-            "native owner output exceeded its byte bound; effects may be unknown"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "native owner output exceeded its byte bound; effects may be unknown",
+        ));
     }
     Ok(())
 }
 
-fn finish_failure(mut child: Child, cause: io::Error, mut observation: CaptureObservation,
-    deadline: Instant) -> NativeCaptureFailure {
+fn finish_failure(
+    mut child: Child,
+    cause: io::Error,
+    mut observation: CaptureObservation,
+    deadline: Instant,
+) -> NativeCaptureFailure {
     let mut cleanup_errors = Vec::new();
     // Any observed wait error forbids further signaling/reaping. The ordinary
     // Unix Child path assumes exclusive reaping; a hostile external waiter in
@@ -187,7 +267,10 @@ fn finish_failure(mut child: Child, cause: io::Error, mut observation: CaptureOb
                 }
                 loop {
                     match child.try_wait() {
-                        Ok(Some(status)) => { observation.status = Some(status); break; }
+                        Ok(Some(status)) => {
+                            observation.status = Some(status);
+                            break;
+                        }
                         Ok(None) => {}
                         Err(error) => {
                             observation.ownership_lost = true;
@@ -195,8 +278,12 @@ fn finish_failure(mut child: Child, cause: io::Error, mut observation: CaptureOb
                             break;
                         }
                     }
-                    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else { break; };
-                    if remaining.is_zero() { break; }
+                    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                        break;
+                    };
+                    if remaining.is_zero() {
+                        break;
+                    }
                     thread::sleep(remaining.min(POLL_INTERVAL));
                 }
             }
@@ -208,21 +295,42 @@ fn finish_failure(mut child: Child, cause: io::Error, mut observation: CaptureOb
     }
     // No detached wait/reader is created. Unobserved reap remains explicit;
     // neither a successful kill request nor dropping Child proves retirement.
-    NativeCaptureFailure { cause, observation, cleanup_errors }
+    NativeCaptureFailure {
+        cause,
+        observation,
+        cleanup_errors,
+    }
 }
 
-fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instant)
-    -> Result<Output, NativeCaptureFailure> {
-    let mut observation = CaptureObservation { process_started: true, ..CaptureObservation::default() };
+fn capture_spawned(
+    mut child: Child,
+    deadline: Instant,
+    capture_deadline: Instant,
+) -> Result<Output, NativeCaptureFailure> {
+    let mut observation = CaptureObservation {
+        process_started: true,
+        ..CaptureObservation::default()
+    };
     let Some(mut stdout) = child.stdout.take() else {
-        return Err(finish_failure(child, io::Error::other("native owner stdout pipe was absent"), observation, deadline));
+        return Err(finish_failure(
+            child,
+            io::Error::other("native owner stdout pipe was absent"),
+            observation,
+            deadline,
+        ));
     };
     let Some(mut stderr) = child.stderr.take() else {
         drop(stdout);
-        return Err(finish_failure(child, io::Error::other("native owner stderr pipe was absent"), observation, deadline));
+        return Err(finish_failure(
+            child,
+            io::Error::other("native owner stderr pipe was absent"),
+            observation,
+            deadline,
+        ));
     };
     if let Err(error) = prepare_pipe(&stdout).and_then(|()| prepare_pipe(&stderr)) {
-        drop(stdout); drop(stderr);
+        drop(stdout);
+        drop(stderr);
         return Err(finish_failure(child, error, observation, deadline));
     }
     let mut buffer = [0u8; READ_BYTES];
@@ -230,14 +338,24 @@ fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instan
         if observation.status.is_none() {
             match child.try_wait() {
                 Ok(status) => observation.status = status,
-                Err(error) => { observation.ownership_lost = true; break Err(error); }
+                Err(error) => {
+                    observation.ownership_lost = true;
+                    break Err(error);
+                }
             }
         }
         if !observation.stdout_eof {
             match pipe_read(&mut stdout, &mut buffer) {
                 Ok(Some(0)) => observation.stdout_eof = true,
-                Ok(Some(count)) => if let Err(error) = append_capture(&mut observation.stdout,
-                    &mut observation.stdout_truncated, &buffer[..count]) { break Err(error); },
+                Ok(Some(count)) => {
+                    if let Err(error) = append_capture(
+                        &mut observation.stdout,
+                        &mut observation.stdout_truncated,
+                        &buffer[..count],
+                    ) {
+                        break Err(error);
+                    }
+                }
                 Ok(None) => {}
                 Err(error) => break Err(error),
             }
@@ -245,8 +363,15 @@ fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instan
         if !observation.stderr_eof {
             match pipe_read(&mut stderr, &mut buffer) {
                 Ok(Some(0)) => observation.stderr_eof = true,
-                Ok(Some(count)) => if let Err(error) = append_capture(&mut observation.stderr,
-                    &mut observation.stderr_truncated, &buffer[..count]) { break Err(error); },
+                Ok(Some(count)) => {
+                    if let Err(error) = append_capture(
+                        &mut observation.stderr,
+                        &mut observation.stderr_truncated,
+                        &buffer[..count],
+                    ) {
+                        break Err(error);
+                    }
+                }
                 Ok(None) => {}
                 Err(error) => break Err(error),
             }
@@ -260,7 +385,10 @@ fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instan
         };
         if remaining.is_zero() {
             observation.timed_out = true;
-            break Err(io::Error::new(io::ErrorKind::TimedOut, "native owner transport deadline reached"));
+            break Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "native owner transport deadline reached",
+            ));
         }
         if observation.status.is_some() && observation.stdout_eof && observation.stderr_eof {
             break Ok(());
@@ -269,10 +397,14 @@ fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instan
         // starve a deadline or force an unbounded read_to_end allocation.
         thread::sleep(remaining.min(POLL_INTERVAL));
     };
-    drop(stdout); drop(stderr);
+    drop(stdout);
+    drop(stderr);
     match outcome {
-        Ok(()) => Ok(Output { status: observation.status.expect("actual status observed"),
-            stdout: observation.stdout, stderr: observation.stderr }),
+        Ok(()) => Ok(Output {
+            status: observation.status.expect("actual status observed"),
+            stdout: observation.stdout,
+            stderr: observation.stderr,
+        }),
         Err(cause) => Err(finish_failure(child, cause, observation, deadline)),
     }
 }
@@ -282,18 +414,31 @@ fn capture_spawned(mut child: Child, deadline: Instant, capture_deadline: Instan
 /// for owned-client cleanup. No process-group setting is added or overridden.
 /// A syscall that the platform cannot make finite remains an explicit native
 /// qualification limit; Windows syscall timing is not proved by this Source.
-pub fn capture_output(command: &mut Command, timeout: Duration) -> Result<Output, NativeCaptureFailure> {
+pub fn capture_output(
+    command: &mut Command,
+    timeout: Duration,
+) -> Result<Output, NativeCaptureFailure> {
     if timeout.is_zero() {
-        return Err(NativeCaptureFailure::before_spawn(io::Error::new(io::ErrorKind::InvalidInput,
-            "native owner transport timeout must be positive")));
+        return Err(NativeCaptureFailure::before_spawn(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "native owner transport timeout must be positive",
+        )));
     }
     let started = Instant::now();
-    let deadline = started.checked_add(timeout).ok_or_else(|| NativeCaptureFailure::before_spawn(
-        io::Error::new(io::ErrorKind::InvalidInput, "native owner transport deadline overflow")))?;
+    let deadline = started.checked_add(timeout).ok_or_else(|| {
+        NativeCaptureFailure::before_spawn(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "native owner transport deadline overflow",
+        ))
+    })?;
     let reserve = MAX_CLEANUP_RESERVE.min(timeout / 4);
     let capture_deadline = deadline.checked_sub(reserve).unwrap_or(deadline);
-    let child = command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-        .spawn().map_err(NativeCaptureFailure::before_spawn)?;
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(NativeCaptureFailure::before_spawn)?;
     capture_spawned(child, deadline, capture_deadline)
 }
 
@@ -353,13 +498,12 @@ mod tests {
     }
 }
 
-
 #[cfg(all(test, unix))]
 mod capture_adversity {
     use super::*;
     use std::fs::File;
     use std::io::Write;
-    use std::os::fd::{FromRawFd, OwnedFd, AsRawFd};
+    use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::process::CommandExt;
     use std::process::ChildStdout;
 
@@ -367,16 +511,24 @@ mod capture_adversity {
     // after a wait error, and a cleanup uncertainty cannot silently pass a test.
     struct OwnedTestChild(Option<Child>);
     impl OwnedTestChild {
-        fn take(&mut self) -> Child { self.0.take().expect("owned test child") }
+        fn take(&mut self) -> Child {
+            self.0.take().expect("owned test child")
+        }
     }
     impl Drop for OwnedTestChild {
         fn drop(&mut self) {
-            let Some(mut child) = self.0.take() else { return; };
+            let Some(mut child) = self.0.take() else {
+                return;
+            };
             let deadline = Instant::now() + Duration::from_secs(1);
             let mut error = None;
             match child.try_wait() {
                 Ok(Some(_)) => return,
-                Ok(None) => if let Err(cause) = child.kill() { error = Some(cause.to_string()); },
+                Ok(None) => {
+                    if let Err(cause) = child.kill() {
+                        error = Some(cause.to_string());
+                    }
+                }
                 Err(cause) => {
                     // Ownership uncertain; never signal a possibly reused PID.
                     error = Some(format!("test wait authority lost: {cause}"));
@@ -387,31 +539,53 @@ mod capture_adversity {
                     match child.try_wait() {
                         Ok(Some(_)) => return,
                         Ok(None) => {}
-                        Err(cause) => { error = Some(cause.to_string()); break; }
+                        Err(cause) => {
+                            error = Some(cause.to_string());
+                            break;
+                        }
                     }
-                    if Instant::now() >= deadline { error = Some("test child reap unconfirmed".into()); break; }
+                    if Instant::now() >= deadline {
+                        error = Some("test child reap unconfirmed".into());
+                        break;
+                    }
                     thread::sleep(POLL_INTERVAL);
                 }
             }
             let cause = error.expect("actual cleanup error");
-            if std::thread::panicking() { eprintln!("secondary native test cleanup: {cause}"); }
-            else { panic!("native test cleanup failed: {cause}"); }
+            if std::thread::panicking() {
+                eprintln!("secondary native test cleanup: {cause}");
+            } else {
+                panic!("native test cleanup failed: {cause}");
+            }
         }
     }
 
     fn spawned(script: &str) -> OwnedTestChild {
-        OwnedTestChild(Some(Command::new("/bin/sh").args(["-c", script])
-            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-            .spawn().unwrap()))
+        OwnedTestChild(Some(
+            Command::new("/bin/sh")
+                .args(["-c", script])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        ))
     }
     fn actual_capture(child: Child, timeout: Duration) -> Result<Output, NativeCaptureFailure> {
         let now = Instant::now();
-        capture_spawned(child, now + timeout, now + timeout - MAX_CLEANUP_RESERVE.min(timeout / 4))
+        capture_spawned(
+            child,
+            now + timeout,
+            now + timeout - MAX_CLEANUP_RESERVE.min(timeout / 4),
+        )
     }
     fn wait_ready(path: &std::path::Path) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while !path.is_file() {
-            assert!(Instant::now() < deadline, "actual OS helper readiness missing");
+            assert!(
+                Instant::now() < deadline,
+                "actual OS helper readiness missing"
+            );
             thread::sleep(POLL_INTERVAL);
         }
     }
@@ -419,9 +593,17 @@ mod capture_adversity {
         let directory = tempfile::tempdir().unwrap();
         let ready = directory.path().join("actual-ready");
         let child = Command::new("/bin/sh")
-            .args(["-c", "printf private-prefix; printf private-diagnostic >&2; : > \"$1\"; exec sleep 30", "native-process-test"])
-            .arg(&ready).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
-            .spawn().unwrap();
+            .args([
+                "-c",
+                "printf private-prefix; printf private-diagnostic >&2; : > \"$1\"; exec sleep 30",
+                "native-process-test",
+            ])
+            .arg(&ready)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
         let owned = OwnedTestChild(Some(child));
         // Synchronize on actual bytes written before testing the private owner
         // capture loop; no scheduling-based imaginary prefix is asserted.
@@ -434,14 +616,21 @@ mod capture_adversity {
         let read = unsafe { OwnedFd::from_raw_fd(fds[0]) };
         let write = unsafe { File::from_raw_fd(fds[1]) };
         for fd in [read.as_raw_fd(), write.as_raw_fd()] {
-            assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) }, 0);
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) },
+                0
+            );
         }
         (read, write)
     }
     fn child_with_actual_pipe(read: OwnedFd, write: &File) -> OwnedTestChild {
-        let mut child = Command::new("/bin/sh").args(["-c", "printf early; exit 0"])
-            .stdin(Stdio::null()).stdout(Stdio::from(write.try_clone().unwrap()))
-            .stderr(Stdio::piped()).spawn().unwrap();
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "printf early; exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(write.try_clone().unwrap()))
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
         // This held native reader is the same pipe supplied to actual stdout.
         // No invented ExitStatus, patched wait or fabricated owner JSON.
         child.stdout = Some(ChildStdout::from(read));
@@ -451,8 +640,11 @@ mod capture_adversity {
     #[test]
     fn missing_executable_retains_native_pre_spawn_kind_and_cause() {
         let directory = tempfile::tempdir().unwrap();
-        let error = output(&mut Command::new(directory.path().join("absent-native-program")),
-            Duration::from_secs(5)).unwrap_err();
+        let error = output(
+            &mut Command::new(directory.path().join("absent-native-program")),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
         let facts = capture_failure(&error).expect("same original typed IO source");
         assert!(!facts.process_started());
@@ -479,15 +671,28 @@ mod capture_adversity {
     fn actual_failure_debug_display_and_io_wrapper_do_not_export_prefixes() {
         let (_directory, mut child) = partial_child();
         let error = actual_capture(child.take(), Duration::from_millis(400))
-            .unwrap_err().into_io();
+            .unwrap_err()
+            .into_io();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         let facts = capture_failure(&error).unwrap();
         assert_eq!(facts.stdout(), b"private-prefix");
         assert_eq!(facts.stderr(), b"private-diagnostic");
-        for text in [format!("{error}"), format!("{error:?}"), format!("{facts:?}")] {
+        for text in [
+            format!("{error}"),
+            format!("{error:?}"),
+            format!("{facts:?}"),
+        ] {
             assert!(!text.contains("private-prefix") && !text.contains("private-diagnostic"));
         }
-        assert_eq!(facts.source().unwrap().downcast_ref::<io::Error>().unwrap().kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            facts
+                .source()
+                .unwrap()
+                .downcast_ref::<io::Error>()
+                .unwrap()
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
     }
 
     #[test]
@@ -502,7 +707,10 @@ mod capture_adversity {
         assert!(!facts.stdout_eof());
         assert_eq!(facts.stderr(), b"diagnostic");
         assert!(facts.process_started());
-        assert!(facts.client_reaped(), "actual overflow child reap missing: {facts:?}");
+        assert!(
+            facts.client_reaped(),
+            "actual overflow child reap missing: {facts:?}"
+        );
     }
 
     #[test]
@@ -514,7 +722,10 @@ mod capture_adversity {
         assert_eq!(failure.stdout(), b"early");
         assert!(!failure.stdout_eof());
         assert!(failure.stderr_eof() && failure.timed_out() && failure.client_reaped());
-        assert!(!failure.stop_attempted(), "already reaped client must not be signalled");
+        assert!(
+            !failure.stop_attempted(),
+            "already reaped client must not be signalled"
+        );
         drop(write);
     }
 
@@ -525,12 +736,27 @@ mod capture_adversity {
         let directory = tempfile::tempdir().unwrap();
         let ready = directory.path().join("writer-ready");
         let mut command = Command::new("/bin/sh");
-        command.args(["-c", ": > \"$1\"; read -r line; printf late-output; exit 0", "native-writer-test"])
-            .arg(&ready).stdin(Stdio::piped()).stdout(Stdio::from(write.try_clone().unwrap()))
+        command
+            .args([
+                "-c",
+                ": > \"$1\"; read -r line; printf late-output; exit 0",
+                "native-writer-test",
+            ])
+            .arg(&ready)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::from(write.try_clone().unwrap()))
             .stderr(Stdio::piped());
         // The test owns this actual Child; it creates a distinct native session
         // before exec and does not guess a PID of a foreign worker.
-        unsafe { command.pre_exec(|| if libc::setsid() == -1 { Err(io::Error::last_os_error()) } else { Ok(()) }); }
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
         let mut writer = OwnedTestChild(Some(command.spawn().unwrap()));
         wait_ready(&ready);
         drop(write);
@@ -538,19 +764,33 @@ mod capture_adversity {
         assert_eq!(failure.status().and_then(|status| status.code()), Some(0));
         assert_eq!(failure.stdout(), b"early");
         assert!(!failure.stdout_eof());
-        writer.0.as_mut().unwrap().stdin.as_mut().unwrap().write_all(b"release\n").unwrap();
+        writer
+            .0
+            .as_mut()
+            .unwrap()
+            .stdin
+            .as_mut()
+            .unwrap()
+            .write_all(b"release\n")
+            .unwrap();
         drop(writer.0.as_mut().unwrap().stdin.take());
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             match writer.0.as_mut().unwrap().try_wait() {
                 Ok(Some(status)) => {
-                    assert!(!status.success(), "late write unexpectedly reached a retained capture reader");
+                    assert!(
+                        !status.success(),
+                        "late write unexpectedly reached a retained capture reader"
+                    );
                     break;
                 }
                 Ok(None) => {}
                 Err(error) => panic!("actual escaped writer wait failed: {error}"),
             }
-            assert!(Instant::now() < deadline, "actual late writer retirement missing");
+            assert!(
+                Instant::now() < deadline,
+                "actual late writer retirement missing"
+            );
             thread::sleep(POLL_INTERVAL);
         }
         assert!(failure.cleanup_errors().is_empty());
@@ -564,7 +804,9 @@ mod capture_adversity {
         let mut native_status = 0;
         loop {
             let found = unsafe { libc::waitpid(pid, &mut native_status, libc::WNOHANG) };
-            if found == pid { break; }
+            if found == pid {
+                break;
+            }
             assert_eq!(found, 0, "real exclusive fixture waitpid failed");
             assert!(Instant::now() < deadline, "actual fixture exit missing");
             thread::sleep(POLL_INTERVAL);
@@ -573,7 +815,10 @@ mod capture_adversity {
         assert_eq!(failure.cause().raw_os_error(), Some(libc::ECHILD));
         assert!(failure.process_started() && failure.ownership_lost());
         assert!(!failure.stop_attempted() && !failure.stop_requested());
-        assert!(failure.status().is_none(), "external status cannot be forged into Child status");
+        assert!(
+            failure.status().is_none(),
+            "external status cannot be forged into Child status"
+        );
         assert!(failure.cleanup_errors().is_empty());
     }
 
@@ -582,14 +827,29 @@ mod capture_adversity {
         let own_group = unsafe { libc::getpgid(0) };
         assert!(own_group > 0);
         let script = "ps -o pgid= -p $$";
-        let normal = output(Command::new("/bin/sh").args(["-c", script]), Duration::from_secs(5)).unwrap();
+        let normal = output(
+            Command::new("/bin/sh").args(["-c", script]),
+            Duration::from_secs(5),
+        )
+        .unwrap();
         assert!(normal.status.success());
-        assert_eq!(String::from_utf8(normal.stdout).unwrap().trim().parse::<i32>().unwrap(), own_group);
+        assert_eq!(
+            String::from_utf8(normal.stdout)
+                .unwrap()
+                .trim()
+                .parse::<i32>()
+                .unwrap(),
+            own_group
+        );
         let mut grouped = Command::new("/bin/sh");
         grouped.args(["-c", script]).process_group(0);
         let explicit = output(&mut grouped, Duration::from_secs(5)).unwrap();
         assert!(explicit.status.success());
-        let actual_group = String::from_utf8(explicit.stdout).unwrap().trim().parse::<i32>().unwrap();
+        let actual_group = String::from_utf8(explicit.stdout)
+            .unwrap()
+            .trim()
+            .parse::<i32>()
+            .unwrap();
         assert!(actual_group > 0 && actual_group != own_group);
     }
 }
@@ -599,11 +859,20 @@ mod windows_capture_native {
     use super::*;
     #[test]
     fn actual_windows_cmd_dual_pipe_nonzero_output_is_preserved() {
-        let result = output(Command::new("cmd.exe")
-            .args(["/d", "/c", "echo output & echo diagnostic 1>&2 & exit /b 7"]),
-            Duration::from_secs(5)).unwrap();
+        let result = output(
+            Command::new("cmd.exe").args([
+                "/d",
+                "/c",
+                "echo output & echo diagnostic 1>&2 & exit /b 7",
+            ]),
+            Duration::from_secs(5),
+        )
+        .unwrap();
         assert_eq!(result.status.code(), Some(7));
         assert!(result.stdout.windows(6).any(|bytes| bytes == b"output"));
-        assert!(result.stderr.windows(10).any(|bytes| bytes == b"diagnostic"));
+        assert!(result
+            .stderr
+            .windows(10)
+            .any(|bytes| bytes == b"diagnostic"));
     }
 }

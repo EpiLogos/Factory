@@ -1149,9 +1149,11 @@ pub struct CliError {
 }
 impl std::fmt::Debug for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CliError").field("message",&self.to_string())
-            .field("has_native_result",&self.native_result.is_some())
-            .field("native_result",&"private evidence withheld").finish()
+        f.debug_struct("CliError")
+            .field("message", &self.to_string())
+            .field("has_native_result", &self.native_result.is_some())
+            .field("native_result", &"private evidence withheld")
+            .finish()
     }
 }
 #[derive(Debug)]
@@ -1187,7 +1189,10 @@ impl CliError {
     /// never grants authority.
     pub(crate) fn with_native_result(mut self, result: serde_json::Value) -> Self {
         if crate::native_publication_uncertainty(&self).is_some()
-            || self.cause.downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>().is_some()
+            || self
+                .cause
+                .downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>()
+                .is_some()
         {
             self.native_result = Some(result);
         }
@@ -1196,7 +1201,8 @@ impl CliError {
     /// Actual failed owner invocation result retained by the existing dispatcher.
     /// No result is reconstructed from private error bytes or historical prose.
     pub fn native_owner_failure_result(&self) -> Option<&serde_json::Value> {
-        self.cause.downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>()?;
+        self.cause
+            .downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>()?;
         self.native_result.as_ref()
     }
     pub fn native_publication_failure(&self) -> Option<serde_json::Value> {

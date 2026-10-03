@@ -3,12 +3,14 @@
 //! canonical Run. The authored source below is an explicitly historical basis;
 //! current source remains `FactoryDevelopmentalState.workflow_sources`.
 
+use crate::attempt_receiving::CentralReceivingEndpoint;
 use crate::attempt_runtime::{
     reading_for, validate_action_request, validate_state, FactoryAttemptActionReceipt,
     FactoryAttemptActionRequest, FactoryAttemptError, FactoryAttemptOperation,
     FactoryAttemptReading, FactoryAttemptRecord, FactoryAttemptSeed, PersistedAttemptAction,
     StoredAttemptState, FACTORY_ATTEMPT_ACTION, FACTORY_ATTEMPT_STATE,
 };
+use crate::attempt_runtime::{OwnerOperationPhase, OwnerOperationReceipt};
 use crate::build::FactoryBuildState;
 use crate::core::run::{Project, RunRef};
 use crate::developmental_read::{FactoryDevelopmentalFileProvider, FactoryDevelopmentalState};
@@ -18,10 +20,8 @@ use crate::project_development_store::{
 };
 use crate::workflow::{compile_workflow, WorkflowSource};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use serde_json::Value;
-use crate::attempt_runtime::{OwnerOperationReceipt, OwnerOperationPhase};
-use crate::attempt_receiving::CentralReceivingEndpoint;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const FACTORY_RUN_ATTEMPTS: &str = "factory.native-run-attempts/v1";
@@ -100,64 +100,107 @@ impl ReceivingIntentClaim {
         legacy: Option<(String, String)>,
     ) -> Result<Self, FactoryAttemptError> {
         if !input.is_object()
-            || input["producer_key"].as_str().is_none_or(|key| key.trim().is_empty() || key.len() > 4096)
+            || input["producer_key"]
+                .as_str()
+                .is_none_or(|key| key.trim().is_empty() || key.len() > 4096)
             || input["project"].as_str() != endpoint.project.as_deref()
             || !endpoint.root.is_absolute()
         {
-            return Err(invalid("receiving intent needs exact native input/key/owner scope"));
+            return Err(invalid(
+                "receiving intent needs exact native input/key/owner scope",
+            ));
         }
-        let held_root = crate::attempt_receiving::HeldReceivingRoot::open(&endpoint.root).map_err(|error| invalid(&error))?;
+        let held_root = crate::attempt_receiving::HeldReceivingRoot::open(&endpoint.root)
+            .map_err(|error| invalid(&error))?;
         let canonical_root = held_root.canonical().to_owned();
         let (legacy_operation_ref, legacy_request_digest) = match legacy {
             Some((reference, digest)) => (Some(reference), Some(digest)),
             None => (None, None),
         };
-        Ok(Self { endpoint: endpoint.clone(), canonical_root, held_root, input: input.clone(), legacy_operation_ref, legacy_request_digest, lookup_only: false })
+        Ok(Self {
+            endpoint: endpoint.clone(),
+            canonical_root,
+            held_root,
+            input: input.clone(),
+            legacy_operation_ref,
+            legacy_request_digest,
+            lookup_only: false,
+        })
     }
 
-    pub(crate) fn lookup_only(mut self) -> Self { self.lookup_only = true; self }
+    pub(crate) fn lookup_only(mut self) -> Self {
+        self.lookup_only = true;
+        self
+    }
 
-    fn existing(&self, native: &FactoryDevelopmentalState) -> Result<Option<OwnerOperationReceipt>, FactoryAttemptError> {
+    fn existing(
+        &self,
+        native: &FactoryDevelopmentalState,
+    ) -> Result<Option<OwnerOperationReceipt>, FactoryAttemptError> {
         self.held_root.recheck().map_err(|error| invalid(&error))?;
         let mut selected: Option<OwnerOperationReceipt> = None;
         for field in native.attempt_states.values() {
             for attempt in field.attempts.values() {
                 for observation in &attempt.observations {
                     if !reserved_receiving_contract(&observation.contract)
-                        || observation.payload["nativeRequest"]["producer_key"] != self.input["producer_key"]
+                        || observation.payload["nativeRequest"]["producer_key"]
+                            != self.input["producer_key"]
                     {
                         continue;
                     }
                     let original = &observation.payload["nativeRequest"];
                     let endpoint = match observation.payload.get("hostEndpoint") {
-                        Some(value) => serde_json::from_value::<CentralReceivingEndpoint>(value.clone())
-                            .map_err(|error| invalid(&format!("retained receiving endpoint malformed: {error}")))?,
+                        Some(value) => {
+                            serde_json::from_value::<CentralReceivingEndpoint>(value.clone())
+                                .map_err(|error| {
+                                    invalid(&format!(
+                                        "retained receiving endpoint malformed: {error}"
+                                    ))
+                                })?
+                        }
                         None => {
                             // Legacy CALL has no endpoint preimage. Only the exact
                             // original caller request digest may prove that basis.
-                            if self.legacy_operation_ref.as_deref() != Some(observation.operation_ref.as_str())
-                                || self.legacy_request_digest.as_deref() != observation.payload["requestDigest"].as_str()
+                            if self.legacy_operation_ref.as_deref()
+                                != Some(observation.operation_ref.as_str())
+                                || self.legacy_request_digest.as_deref()
+                                    != observation.payload["requestDigest"].as_str()
                             {
                                 return Err(invalid("legacy receiving endpoint is missing; supply its original request, never infer or backfill it"));
                             }
                             self.endpoint.clone()
                         }
                     };
-                    if endpoint.project != self.endpoint.project { continue; }
+                    if endpoint.project != self.endpoint.project {
+                        continue;
+                    }
                     let claim = &observation.payload["ownerClaim"];
                     let original_root = claim["canonicalRoot"].as_str().map(PathBuf::from);
                     // A separately declared root is a different owner. The SAME
                     // original locator may never become unclaimed on retarget.
-                    if endpoint.root != self.endpoint.root && original_root.as_ref() != Some(&self.canonical_root) { continue; }
-                    self.held_root.require_claim(claim).map_err(|error| invalid(&error))?;
-                    if claim["project"].as_str() != endpoint.project.as_deref() || claim["producerKey"] != original["producer_key"] {
-                        return Err(invalid("retained native receiving claim changed its original scope/key"));
+                    if endpoint.root != self.endpoint.root
+                        && original_root.as_ref() != Some(&self.canonical_root)
+                    {
+                        continue;
+                    }
+                    self.held_root
+                        .require_claim(claim)
+                        .map_err(|error| invalid(&error))?;
+                    if claim["project"].as_str() != endpoint.project.as_deref()
+                        || claim["producerKey"] != original["producer_key"]
+                    {
+                        return Err(invalid(
+                            "retained native receiving claim changed its original scope/key",
+                        ));
                     }
                     if original != &self.input || endpoint != self.endpoint {
                         return Err(invalid("native receiving producer intent already has another exact input or endpoint"));
                     }
-                    if selected.as_ref().is_none_or(|prior| prior.phase != OwnerOperationPhase::Dispatching)
-                        && (selected.is_none() || observation.phase == OwnerOperationPhase::Dispatching)
+                    if selected
+                        .as_ref()
+                        .is_none_or(|prior| prior.phase != OwnerOperationPhase::Dispatching)
+                        && (selected.is_none()
+                            || observation.phase == OwnerOperationPhase::Dispatching)
                     {
                         selected = Some(observation.clone());
                     }
@@ -169,7 +212,10 @@ impl ReceivingIntentClaim {
 }
 
 fn reserved_receiving_contract(contract: &str) -> bool {
-    matches!(contract, "factory.attempt-receiving-call/v1" | "factory.attempt-unit-decision-call/v1")
+    matches!(
+        contract,
+        "factory.attempt-receiving-call/v1" | "factory.attempt-unit-decision-call/v1"
+    )
 }
 fn reserved_receiving_operation(operation: &FactoryAttemptOperation) -> bool {
     matches!(operation, FactoryAttemptOperation::RecordObservation { receipt, .. }
@@ -188,15 +234,28 @@ impl NativeReceivingObservationAdmission {
         claim: Option<ReceivingIntentClaim>,
     ) -> Result<Self, FactoryAttemptError> {
         let FactoryAttemptOperation::RecordObservation { receipt, .. } = &request.operation else {
-            return Err(invalid("native receiving retention requires an observation"));
+            return Err(invalid(
+                "native receiving retention requires an observation",
+            ));
         };
-        if claim.is_some() && (!reserved_receiving_contract(&receipt.contract)
-            || receipt.owner_ref != "factory" || receipt.phase != OwnerOperationPhase::Dispatching
-            || claim.as_ref().is_some_and(|claim| receipt.payload["nativeRequest"] != claim.input))
+        if claim.is_some()
+            && (!reserved_receiving_contract(&receipt.contract)
+                || receipt.owner_ref != "factory"
+                || receipt.phase != OwnerOperationPhase::Dispatching
+                || claim
+                    .as_ref()
+                    .is_some_and(|claim| receipt.payload["nativeRequest"] != claim.input))
         {
-            return Err(invalid("first receiving claim requires its native immutable intent"));
+            return Err(invalid(
+                "first receiving claim requires its native immutable intent",
+            ));
         }
-        Ok(Self { action_digest: blake3::hash(&serde_json::to_vec(request)?).to_hex().to_string(), claim })
+        Ok(Self {
+            action_digest: blake3::hash(&serde_json::to_vec(request)?)
+                .to_hex()
+                .to_string(),
+            claim,
+        })
     }
 }
 
@@ -345,19 +404,47 @@ impl FileAttemptStore {
 
     /// Receiving uses the immutable original Return Action, before owner
     /// correlation extended its public evidence. No caller payload is a basis.
-    pub(crate) fn receiving_attempt_basis(&self, attempt_ref: &str) -> Result<FactoryAttemptRecord, FactoryAttemptError> {
-        let native=read_developmental_state(&self.path).map_err(native_error)?;
-        let view=view_for(&native,&self.run_ref)?;
-        let attempt=view.attempts.get(attempt_ref).ok_or_else(||invalid("receiving attempt unavailable"))?;
-        let current=attempt.readable_return.as_ref().ok_or_else(||invalid("receiving requires native Return"))?;
-        let original=view.action_receipts.values().find_map(|action| {
-            let FactoryAttemptOperation::ReturnArtifact {attempt_ref:owned,readable_return,..}=&action.request.operation else {return None;};
-            (owned==attempt_ref && readable_return.return_ref==current.return_ref).then(||readable_return.clone())
-        }).ok_or_else(||invalid("receiving requires immutable original native Return Action"))?;
-        if original.summary!=current.summary || original.artifact_refs!=current.artifact_refs || !original.evidence_refs.is_subset(&current.evidence_refs) {
-            return Err(invalid("native Return material changed after original admission"));
+    pub(crate) fn receiving_attempt_basis(
+        &self,
+        attempt_ref: &str,
+    ) -> Result<FactoryAttemptRecord, FactoryAttemptError> {
+        let native = read_developmental_state(&self.path).map_err(native_error)?;
+        let view = view_for(&native, &self.run_ref)?;
+        let attempt = view
+            .attempts
+            .get(attempt_ref)
+            .ok_or_else(|| invalid("receiving attempt unavailable"))?;
+        let current = attempt
+            .readable_return
+            .as_ref()
+            .ok_or_else(|| invalid("receiving requires native Return"))?;
+        let original = view
+            .action_receipts
+            .values()
+            .find_map(|action| {
+                let FactoryAttemptOperation::ReturnArtifact {
+                    attempt_ref: owned,
+                    readable_return,
+                    ..
+                } = &action.request.operation
+                else {
+                    return None;
+                };
+                (owned == attempt_ref && readable_return.return_ref == current.return_ref)
+                    .then(|| readable_return.clone())
+            })
+            .ok_or_else(|| invalid("receiving requires immutable original native Return Action"))?;
+        if original.summary != current.summary
+            || original.artifact_refs != current.artifact_refs
+            || !original.evidence_refs.is_subset(&current.evidence_refs)
+        {
+            return Err(invalid(
+                "native Return material changed after original admission",
+            ));
         }
-        let mut basis=attempt.clone();basis.readable_return=Some(original);Ok(basis)
+        let mut basis = attempt.clone();
+        basis.readable_return = Some(original);
+        Ok(basis)
     }
 
     pub fn workflow_inputs(
@@ -397,7 +484,8 @@ impl FileAttemptStore {
         &mut self,
         request: FactoryAttemptActionRequest,
     ) -> Result<FactoryAttemptActionReceipt, FactoryAttemptError> {
-        self.apply_with_disposition(request).map(|result| result.receipt.expect("ordinary Action has a receipt"))
+        self.apply_with_disposition(request)
+            .map(|result| result.receipt.expect("ordinary Action has a receipt"))
     }
 
     pub(crate) fn apply_with_disposition(
@@ -425,11 +513,21 @@ impl FileAttemptStore {
             return Err(invalid("native CALL/QUESTION receiving facts require internal owner admission; public JSON is retained evidence, not delivery proof"));
         }
         if let Some(admission) = &receiving_admission {
-            if admission.action_digest != blake3::hash(&serde_json::to_vec(&request)?).to_hex().to_string() {
-                return Err(invalid("native receiving retention belongs to another exact Action"));
+            if admission.action_digest
+                != blake3::hash(&serde_json::to_vec(&request)?)
+                    .to_hex()
+                    .to_string()
+            {
+                return Err(invalid(
+                    "native receiving retention belongs to another exact Action",
+                ));
             }
             if let Some(claim) = &admission.claim {
-                let FactoryAttemptOperation::RecordObservation { receipt, .. } = &mut request.operation else { unreachable!() };
+                let FactoryAttemptOperation::RecordObservation { receipt, .. } =
+                    &mut request.operation
+                else {
+                    unreachable!()
+                };
                 receipt.payload["hostEndpoint"] = serde_json::to_value(&claim.endpoint)?;
                 claim.held_root.recheck().map_err(|error| invalid(&error))?;
                 receipt.payload["ownerClaim"] = serde_json::json!({"canonicalRoot":claim.canonical_root,"rootIdentity":claim.held_root.identity(),"project":claim.endpoint.project,"producerKey":claim.input["producer_key"]});

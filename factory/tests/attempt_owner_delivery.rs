@@ -321,7 +321,10 @@ fn success(output: Output) -> Value {
 // Inherited protocol-double coverage only. A failed invocation must be a real
 // failed CLI status while its original uncertain public receipt remains depth.
 fn failed_receipt(output: Output) -> Value {
-    assert!(!output.status.success(), "failed transport was certified successful");
+    assert!(
+        !output.status.success(),
+        "failed transport was certified successful"
+    );
     serde_json::from_slice(&output.stdout).unwrap()
 }
 fn wait_for(path: &Path) {
@@ -396,7 +399,10 @@ fn lost_response_recovers_original_intent_without_replaying_task() {
     world.start(false);
     world.mode("lost");
     let request = world.request("send:lost", "send");
-    assert_eq!(failed_receipt(world.owner(&request))["needsReconciliation"], true);
+    assert_eq!(
+        failed_receipt(world.owner(&request))["needsReconciliation"],
+        true
+    );
     assert_eq!(success(world.owner(&request))["replayed"], true);
     assert_eq!(world.calls().len(), 1);
     assert!(!world

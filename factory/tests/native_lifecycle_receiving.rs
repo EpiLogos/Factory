@@ -32,7 +32,7 @@ trait FiniteNativeCommand {
 }
 impl FiniteNativeCommand for Command {
     fn output_finite(&mut self) -> std::io::Result<Output> {
-        epilogos_factory::native_process::output(self,std::time::Duration::from_secs(60))
+        epilogos_factory::native_process::output(self, std::time::Duration::from_secs(60))
     }
 }
 
@@ -73,7 +73,10 @@ fn native_ctrl() -> PathBuf {
     if let Ok(expected) = std::env::var("FACTORY_TEST_CTRL_SHA256") {
         assert_eq!(sha, expected, "pinned native Central bytes changed");
     }
-    let output = Command::new(&path).arg("--version").output_finite().unwrap();
+    let output = Command::new(&path)
+        .arg("--version")
+        .output_finite()
+        .unwrap();
     assert!(output.status.success());
     let version = String::from_utf8(output.stdout).unwrap();
     assert!(
@@ -94,9 +97,11 @@ fn factory_binary() -> PathBuf {
         assert!(path.is_absolute());
         let path = path.canonicalize().unwrap();
         let bytes = fs::read(&path).unwrap();
-        assert!(bytes.starts_with(b"\x7fELF")
-            || bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
-            || bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe]));
+        assert!(
+            bytes.starts_with(b"\x7fELF")
+                || bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+                || bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe])
+        );
         let expected = std::env::var("FACTORY_NATIVE_FACTORY_SHA256")
             .expect("an explicit actual Factory executable requires its exact SHA256");
         assert_eq!(format!("{:x}", Sha256::digest(&bytes)), expected);
@@ -127,14 +132,18 @@ impl World {
         let ctrl_pin = std::env::var("FACTORY_TEST_CTRL_SHA256")
             .expect("native cancellation requires the actual qualified Central binary SHA256");
         assert!(ctrl_pin.len() == 64 && ctrl_pin.bytes().all(|b| b.is_ascii_hexdigit()));
-        let base = PathBuf::from(std::env::var_os("FACTORY_NATIVE_EVIDENCE_DIR")
-            .expect("native cancellation regression requires an admitted absolute evidence root"));
+        let base =
+            PathBuf::from(std::env::var_os("FACTORY_NATIVE_EVIDENCE_DIR").expect(
+                "native cancellation regression requires an admitted absolute evidence root",
+            ));
         assert!(base.is_absolute());
         let metadata = fs::symlink_metadata(&base).unwrap();
         assert!(metadata.is_dir() && !metadata.file_type().is_symlink());
         assert_eq!(base.canonicalize().unwrap(), base);
-        let mut dir = tempfile::Builder::new().prefix("native-cancellation-")
-            .tempdir_in(&base).unwrap();
+        let mut dir = tempfile::Builder::new()
+            .prefix("native-cancellation-")
+            .tempdir_in(&base)
+            .unwrap();
         dir.disable_cleanup(true);
         fs::create_dir(dir.path().join("native-operations")).unwrap();
         Self::from_directory(closure, dir, true)
@@ -150,7 +159,8 @@ impl World {
             .arg("init")
             .env_remove("CENTRAL_NATIVE_TOKEN");
         let init = if retained {
-            epilogos_factory::native_process::output(&mut init_command, Duration::from_secs(10)).unwrap()
+            epilogos_factory::native_process::output(&mut init_command, Duration::from_secs(10))
+                .unwrap()
         } else {
             init_command.output_finite().unwrap()
         };
@@ -281,7 +291,14 @@ impl World {
         self.factory_at_owner(args, input, token, &self.ctrl, &self.root)
     }
 
-    fn factory_at_owner(&self, args: &[&str], input: Option<&Value>, token: Option<&str>, binary: &Path, root: &Path) -> Output {
+    fn factory_at_owner(
+        &self,
+        args: &[&str],
+        input: Option<&Value>,
+        token: Option<&str>,
+        binary: &Path,
+        root: &Path,
+    ) -> Output {
         let mut command = Command::new(factory_binary());
         if self.retained {
             return self.retained_factory(command, args, input, token);
@@ -302,19 +319,44 @@ impl World {
         }
         // File-input is the same public CLI contract, allowing shared native
         // capture to own lifetime/output rather than an unbounded wait.
-        static REQUEST_SEQUENCE: std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(0);
-        if let Some(input)=input {
-            let sequence=REQUEST_SEQUENCE.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
-            let path=self.root.join(format!("factory-native-request-{}-{sequence}.json",std::process::id()));
-            let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&path).unwrap();
-            file.write_all(input.to_string().as_bytes()).unwrap();file.sync_all().unwrap();
-            let rewritten=args.iter().map(|arg|if *arg=="-" {path.to_str().unwrap()} else {*arg}).collect::<Vec<_>>();
-            command=Command::new(factory_binary());
-            command.args(rewritten).env("FACTORY_NATIVE_CENTRAL_BINARY",binary).env("FACTORY_NATIVE_CENTRAL_ROOT",root)
-                .env_remove("FACTORY_NATIVE_CENTRAL_PROJECT").env_remove("CENTRAL_NATIVE_TOKEN");
-            if let Some(token)=token {command.env("CENTRAL_NATIVE_TOKEN",token);}
+        static REQUEST_SEQUENCE: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        if let Some(input) = input {
+            let sequence = REQUEST_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let path = self.root.join(format!(
+                "factory-native-request-{}-{sequence}.json",
+                std::process::id()
+            ));
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .unwrap();
+            file.write_all(input.to_string().as_bytes()).unwrap();
+            file.sync_all().unwrap();
+            let rewritten = args
+                .iter()
+                .map(|arg| {
+                    if *arg == "-" {
+                        path.to_str().unwrap()
+                    } else {
+                        *arg
+                    }
+                })
+                .collect::<Vec<_>>();
+            command = Command::new(factory_binary());
+            command
+                .args(rewritten)
+                .env("FACTORY_NATIVE_CENTRAL_BINARY", binary)
+                .env("FACTORY_NATIVE_CENTRAL_ROOT", root)
+                .env_remove("FACTORY_NATIVE_CENTRAL_PROJECT")
+                .env_remove("CENTRAL_NATIVE_TOKEN");
+            if let Some(token) = token {
+                command.env("CENTRAL_NATIVE_TOKEN", token);
+            }
         }
-        epilogos_factory::native_process::output(&mut command,std::time::Duration::from_secs(60)).unwrap()
+        epilogos_factory::native_process::output(&mut command, std::time::Duration::from_secs(60))
+            .unwrap()
     }
 
     fn retained_factory(
@@ -327,20 +369,26 @@ impl World {
         use std::sync::atomic::{AtomicU64, Ordering};
         static OPERATION: AtomicU64 = AtomicU64::new(0);
         let directory = self.root.join("native-operations").join(format!(
-            "factory-{}", OPERATION.fetch_add(1, Ordering::Relaxed)));
+            "factory-{}",
+            OPERATION.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir(&directory).unwrap();
         let input_path = directory.join("input.json");
         if let Some(input) = input {
             fs::write(&input_path, serde_json::to_vec_pretty(input).unwrap()).unwrap();
         }
-        let arguments = args.iter().map(|argument| {
-            if input.is_some() && *argument == "-" {
-                input_path.to_str().unwrap().to_owned()
-            } else {
-                (*argument).to_owned()
-            }
-        }).collect::<Vec<_>>();
-        command.args(&arguments)
+        let arguments = args
+            .iter()
+            .map(|argument| {
+                if input.is_some() && *argument == "-" {
+                    input_path.to_str().unwrap().to_owned()
+                } else {
+                    (*argument).to_owned()
+                }
+            })
+            .collect::<Vec<_>>();
+        command
+            .args(&arguments)
             .env("FACTORY_NATIVE_CENTRAL_BINARY", &self.ctrl)
             .env("FACTORY_NATIVE_CENTRAL_ROOT", &self.root)
             .env_remove("FACTORY_NATIVE_CENTRAL_PROJECT")
@@ -348,20 +396,30 @@ impl World {
         if let Some(token) = token {
             command.env("CENTRAL_NATIVE_TOKEN", token);
         }
-        fs::write(directory.join("invocation.json"), serde_json::to_vec_pretty(&json!({
-            "argv": std::iter::once(command.get_program().to_string_lossy().into_owned())
-                .chain(arguments).collect::<Vec<_>>(),
-            "timeoutMs":10000,"ownedFixture":self.root,"personalCredentialSupplied":false
-        })).unwrap()).unwrap();
+        fs::write(
+            directory.join("invocation.json"),
+            serde_json::to_vec_pretty(&json!({
+                "argv": std::iter::once(command.get_program().to_string_lossy().into_owned())
+                    .chain(arguments).collect::<Vec<_>>(),
+                "timeoutMs":10000,"ownedFixture":self.root,"personalCredentialSupplied":false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
         match epilogos_factory::native_process::output(&mut command, Duration::from_secs(10)) {
             Ok(output) => {
                 fs::write(directory.join("stdout"), &output.stdout).unwrap();
                 fs::write(directory.join("stderr"), &output.stderr).unwrap();
-                fs::write(directory.join("result.json"), serde_json::to_vec_pretty(&json!({
-                    "actualExitCode":output.status.code(),
-                    "stdoutSha256":format!("{:x}",Sha256::digest(&output.stdout)),
-                    "stderrSha256":format!("{:x}",Sha256::digest(&output.stderr))
-                })).unwrap()).unwrap();
+                fs::write(
+                    directory.join("result.json"),
+                    serde_json::to_vec_pretty(&json!({
+                        "actualExitCode":output.status.code(),
+                        "stdoutSha256":format!("{:x}",Sha256::digest(&output.stdout)),
+                        "stderrSha256":format!("{:x}",Sha256::digest(&output.stderr))
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
                 output
             }
             Err(error) => {
@@ -390,7 +448,10 @@ impl World {
                     "kind":format!("{:?}",error.kind()),"rawOsError":error.raw_os_error(),
                     "cause":error.to_string(),"actualObservation":observation,"nativeQualification":false
                 })).unwrap()).unwrap();
-                panic!("native Factory capture failed; retained {}: {error}", directory.display());
+                panic!(
+                    "native Factory capture failed; retained {}: {error}",
+                    directory.display()
+                );
             }
         }
     }
@@ -457,7 +518,10 @@ impl World {
             fs::create_dir_all(&destination).unwrap();
             let factory = factory_binary().canonicalize().unwrap();
             let measure = |binary: &Path| {
-                let version = Command::new(binary).arg("--version").output_finite().unwrap();
+                let version = Command::new(binary)
+                    .arg("--version")
+                    .output_finite()
+                    .unwrap();
                 assert!(version.status.success());
                 json!({"path":binary,
                     "sha256":format!("{:x}",Sha256::digest(fs::read(binary).unwrap())),
@@ -553,14 +617,22 @@ impl World {
         let before = fs::read(&self.state).unwrap();
         let output = self.raw_action(&self.request(operation));
         assert!(!output.status.success());
-        let diagnostic = format!("{}\n{}", String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr));
+        let diagnostic = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         for exact_cause in expected {
-            assert!(diagnostic.contains(exact_cause),
-                "wrong actual refusal; expected {exact_cause}: {diagnostic}");
+            assert!(
+                diagnostic.contains(exact_cause),
+                "wrong actual refusal; expected {exact_cause}: {diagnostic}"
+            );
         }
-        assert_eq!(fs::read(&self.state).unwrap(), before,
-            "a refused transition must preserve the actual owner state bytes");
+        assert_eq!(
+            fs::read(&self.state).unwrap(),
+            before,
+            "a refused transition must preserve the actual owner state bytes"
+        );
     }
 
     fn transition_operation(&self, lifecycle: &str, closure: Option<Value>) -> Value {
@@ -722,13 +794,20 @@ impl World {
         let (returned, operation) = self.prepare_native_contribution(key, attempt, effect);
         self.action(operation);
         if key == "review-adversarially" {
-            self.action(json!({"operation":"register-independent-review","attempt_ref":attempt,
-                "review_of":[self.workflow.unit("inspect-source").unwrap().reference]}));
+            self.action(
+                json!({"operation":"register-independent-review","attempt_ref":attempt,
+                "review_of":[self.workflow.unit("inspect-source").unwrap().reference]}),
+            );
         }
         returned
     }
 
-    fn prepare_native_contribution(&self, key: &str, attempt: &str, effect: &str) -> (Value, Value) {
+    fn prepare_native_contribution(
+        &self,
+        key: &str,
+        attempt: &str,
+        effect: &str,
+    ) -> (Value, Value) {
         let unit = self.workflow.unit(key).unwrap();
         let reading = self.reading();
         let current = reading
@@ -803,9 +882,19 @@ impl World {
         request.as_object_mut().unwrap().remove("operation");
         request
     }
-    fn return_to_central(&self,attempt:&str)->Value {
-        let request=self.receiving_request(attempt);
-        value(self.factory(&["attempt","receiving",self.state.to_str().unwrap(),"-","--json"],Some(&request),Some(REVIEWER)))
+    fn return_to_central(&self, attempt: &str) -> Value {
+        let request = self.receiving_request(attempt);
+        value(self.factory(
+            &[
+                "attempt",
+                "receiving",
+                self.state.to_str().unwrap(),
+                "-",
+                "--json",
+            ],
+            Some(&request),
+            Some(REVIEWER),
+        ))
     }
 }
 
@@ -829,18 +918,25 @@ fn ctrl_call(ctrl: &Path, root: &Path, action: &str, input: &Value, token: Optio
         use std::sync::atomic::{AtomicU64, Ordering};
         static OPERATION: AtomicU64 = AtomicU64::new(0);
         let directory = root.join("native-operations").join(format!(
-            "central-{}", OPERATION.fetch_add(1, Ordering::Relaxed)));
+            "central-{}",
+            OPERATION.fetch_add(1, Ordering::Relaxed)
+        ));
         fs::create_dir(&directory).unwrap();
         fs::write(directory.join("stdout"), &output.stdout).unwrap();
         fs::write(directory.join("stderr"), &output.stderr).unwrap();
-        fs::write(directory.join("invocation.json"), serde_json::to_vec_pretty(&json!({
-            "argv":[ctrl.to_str().unwrap(),"--json","--root",root.to_str().unwrap(),
-                "action","run",action,input.to_string()],
-            "actualExitCode":output.status.code(),"timeoutMs":10000,
-            "stdoutSha256":format!("{:x}",Sha256::digest(&output.stdout)),
-            "stderrSha256":format!("{:x}",Sha256::digest(&output.stderr)),
-            "personalCredentialSupplied":false
-        })).unwrap()).unwrap();
+        fs::write(
+            directory.join("invocation.json"),
+            serde_json::to_vec_pretty(&json!({
+                "argv":[ctrl.to_str().unwrap(),"--json","--root",root.to_str().unwrap(),
+                    "action","run",action,input.to_string()],
+                "actualExitCode":output.status.code(),"timeoutMs":10000,
+                "stdoutSha256":format!("{:x}",Sha256::digest(&output.stdout)),
+                "stderrSha256":format!("{:x}",Sha256::digest(&output.stderr)),
+                "personalCredentialSupplied":false
+            }))
+            .unwrap(),
+        )
+        .unwrap();
     }
     let response = value(output);
     assert_eq!(response["ok"], true);
@@ -990,10 +1086,23 @@ fn native_human_review_is_required_and_the_exact_reply_resumes_once() {
     let submitted = world.submit_decision();
     let bytes = fs::read(&world.state).unwrap();
     let replayed = world.submit_decision();
-    assert_eq!(replayed["centralResponse"]["data"]["record"],submitted["centralResponse"]["data"]["record"]);
-    assert_eq!(replayed["centralResponse"]["action"],"central.receiving.read");
-    assert_eq!(replayed["centralResponse"]["data"]["lookup"]["original_request_verified"],true);
-    assert_ne!(fs::read(&world.state).unwrap(),bytes,"new live lookup evidence is retained, not rewritten submit bytes");
+    assert_eq!(
+        replayed["centralResponse"]["data"]["record"],
+        submitted["centralResponse"]["data"]["record"]
+    );
+    assert_eq!(
+        replayed["centralResponse"]["action"],
+        "central.receiving.read"
+    );
+    assert_eq!(
+        replayed["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_ne!(
+        fs::read(&world.state).unwrap(),
+        bytes,
+        "new live lookup evidence is retained, not rewritten submit bytes"
+    );
     let pending = submitted["centralResponse"]["data"].clone();
     let agent_review = Command::new(&world.ctrl)
         .args(["--json", "--root"])
@@ -1355,216 +1464,454 @@ fn genuine_failed_return_retries_and_latest_current_assessment_preserves_its_bas
 }
 
 // Real native publication/reconciliation gates: no owner-response fixture.
-fn final_native_world() -> (World,String) {
-    let expected=std::env::var("FACTORY_TEST_CTRL_SHA256").expect("new recovery gates require exact qualified native Central pin");
-    let selected=native_ctrl();assert_eq!(format!("{:x}",Sha256::digest(fs::read(&selected).unwrap())),expected);
-    let world=World::new(true);
+fn final_native_world() -> (World, String) {
+    let expected = std::env::var("FACTORY_TEST_CTRL_SHA256")
+        .expect("new recovery gates require exact qualified native Central pin");
+    let selected = native_ctrl();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(&selected).unwrap())),
+        expected
+    );
+    let world = World::new(true);
     world.native_contribution("inspect-source");
-    let attempt=world.native_contribution("review-adversarially");
-    (world,attempt)
+    let attempt = world.native_contribution("review-adversarially");
+    (world, attempt)
 }
-fn receiving_output(world:&World,request:&Value)->Output {
-    world.factory(&["attempt","receiving",world.state.to_str().unwrap(),"-","--json"],Some(request),Some(REVIEWER))
+fn receiving_output(world: &World, request: &Value) -> Output {
+    world.factory(
+        &[
+            "attempt",
+            "receiving",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ],
+        Some(request),
+        Some(REVIEWER),
+    )
 }
-fn ledger_bytes(world:&World)->std::collections::BTreeMap<String,Vec<u8>> {
-    fs::read_dir(world.root.join(".central/source-returns/contributions")).unwrap()
-        .map(|entry|entry.unwrap().path()).filter(|path|path.extension().is_some_and(|extension|extension=="json"))
-        .map(|path|(path.file_name().unwrap().to_str().unwrap().to_owned(),fs::read(path).unwrap())).collect()
+fn ledger_bytes(world: &World) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fs::read_dir(world.root.join(".central/source-returns/contributions"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .map(|path| {
+            (
+                path.file_name().unwrap().to_str().unwrap().to_owned(),
+                fs::read(path).unwrap(),
+            )
+        })
+        .collect()
 }
 #[cfg(unix)]
-fn real_ctrl_fault(world:&World,name:&str,close_stdout:bool)->PathBuf {
+fn real_ctrl_fault(world: &World, name: &str, close_stdout: bool) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     // Source-retained transparent OS boundary, not a native provider double.
-    let quote=|path:&Path|format!("'{}'",path.to_str().unwrap().replace('\'',"'\\''"));
-    let script=world.root.join(name);
-    let calls=world.root.join(format!("{name}.calls"));
-    let body=format!("#!/bin/sh\nprintf '%s\\n' \"$6\" >> {}\n{}exec {} \"$@\"\n",quote(&calls),if close_stdout {"exec 1>&-\n"}else{""},quote(&world.ctrl));
-    fs::write(&script,body).unwrap();fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();script
+    let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+    let script = world.root.join(name);
+    let calls = world.root.join(format!("{name}.calls"));
+    let body = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$6\" >> {}\n{}exec {} \"$@\"\n",
+        quote(&calls),
+        if close_stdout { "exec 1>&-\n" } else { "" },
+        quote(&world.ctrl)
+    );
+    fs::write(&script, body).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    script
 }
 #[test]
-#[ignore="requires genuine current lookup Ctrl; no provider fallback"]
+#[ignore = "requires genuine current lookup Ctrl; no provider fallback"]
 fn native_receiving_guarded_recovery_preserves_actual_owner_bytes_and_rejects_changed_input() {
-    let (world,attempt)=final_native_world();
-    let mut request=world.receiving_request(&attempt);
-    let first=value(receiving_output(&world,&request));
-    let before=ledger_bytes(&world);
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    let recovered=value(receiving_output(&world,&request));
-    assert_eq!(recovered["centralResponse"]["action"],"central.receiving.read");
-    assert_eq!(recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],true);
-    assert_eq!(first["centralResponse"]["data"]["record"],recovered["centralResponse"]["data"]["record"]);
-    assert_eq!(before,ledger_bytes(&world),"lookup cannot publish a second record or cursor");
-    request["occurredAtUnixSeconds"]=json!(1);request["expectedRevision"]=json!(world.reading().revision);
-    let state=fs::read(&world.state).unwrap();let refused=receiving_output(&world,&request);
-    assert!(!refused.status.success());assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(before,ledger_bytes(&world));
-    assert_eq!(world.ctrl,native_ctrl(),"actual selected native binary pin rechecked");
+    let (world, attempt) = final_native_world();
+    let mut request = world.receiving_request(&attempt);
+    let first = value(receiving_output(&world, &request));
+    let before = ledger_bytes(&world);
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let recovered = value(receiving_output(&world, &request));
+    assert_eq!(
+        recovered["centralResponse"]["action"],
+        "central.receiving.read"
+    );
+    assert_eq!(
+        recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_eq!(
+        first["centralResponse"]["data"]["record"],
+        recovered["centralResponse"]["data"]["record"]
+    );
+    assert_eq!(
+        before,
+        ledger_bytes(&world),
+        "lookup cannot publish a second record or cursor"
+    );
+    request["occurredAtUnixSeconds"] = json!(1);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let state = fs::read(&world.state).unwrap();
+    let refused = receiving_output(&world, &request);
+    assert!(!refused.status.success());
+    assert_eq!(state, fs::read(&world.state).unwrap());
+    assert_eq!(before, ledger_bytes(&world));
+    assert_eq!(
+        world.ctrl,
+        native_ctrl(),
+        "actual selected native binary pin rechecked"
+    );
 }
 #[test]
-#[ignore="requires genuine current Ctrl plus explicit FACTORY_TEST_CTRL_PRE_LOOKUP and SHA256"]
+#[ignore = "requires genuine current Ctrl plus explicit FACTORY_TEST_CTRL_PRE_LOOKUP and SHA256"]
 fn native_receiving_owner_replacement_uses_new_binary_only_for_original_lookup() {
-    let (world,attempt)=final_native_world();
-    let old=PathBuf::from(std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP").expect("actual previous native Ctrl required")).canonicalize().unwrap();
-    let oldbytes=fs::read(&old).unwrap();
-    assert!(oldbytes.starts_with(b"\x7fELF")||oldbytes.starts_with(&[0xcf,0xfa,0xed,0xfe])||oldbytes.starts_with(&[0xca,0xfe,0xba,0xbe]));
-    assert_eq!(format!("{:x}",Sha256::digest(&oldbytes)),std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256").expect("actual old pin required"));
-    assert_ne!(old,world.ctrl);assert_ne!(oldbytes,fs::read(&world.ctrl).unwrap(),"distinct physical qualified native images required");
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(old);
-    let first=value(receiving_output(&world,&request));let before=ledger_bytes(&world);
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    let unavailable=value(receiving_output(&world,&request));assert_eq!(unavailable["needsReconciliation"],true);
-    assert!(unavailable["centralResponse"].is_null(),"old descriptor must actually refuse lookup capability");
-    assert_eq!(before,ledger_bytes(&world));
-    request["lookupEndpoint"]=request["central"].clone();request["lookupEndpoint"]["binary"]=json!(world.ctrl);
-    request["expectedRevision"]=json!(world.reading().revision);
-    let recovered=value(receiving_output(&world,&request));
-    assert_eq!(recovered["needsReconciliation"],false);
-    assert_eq!(recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],true);
-    assert_eq!(first["centralResponse"]["data"]["record"],recovered["centralResponse"]["data"]["record"]);
-    assert_eq!(before,ledger_bytes(&world));assert_eq!(oldbytes,fs::read(old).unwrap());assert_eq!(world.ctrl,native_ctrl());
+    let (world, attempt) = final_native_world();
+    let old = PathBuf::from(
+        std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP")
+            .expect("actual previous native Ctrl required"),
+    )
+    .canonicalize()
+    .unwrap();
+    let oldbytes = fs::read(&old).unwrap();
+    assert!(
+        oldbytes.starts_with(b"\x7fELF")
+            || oldbytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+            || oldbytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe])
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&oldbytes)),
+        std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256").expect("actual old pin required")
+    );
+    assert_ne!(old, world.ctrl);
+    assert_ne!(
+        oldbytes,
+        fs::read(&world.ctrl).unwrap(),
+        "distinct physical qualified native images required"
+    );
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(old);
+    let first = value(receiving_output(&world, &request));
+    let before = ledger_bytes(&world);
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let unavailable = value(receiving_output(&world, &request));
+    assert_eq!(unavailable["needsReconciliation"], true);
+    assert!(
+        unavailable["centralResponse"].is_null(),
+        "old descriptor must actually refuse lookup capability"
+    );
+    assert_eq!(before, ledger_bytes(&world));
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(world.ctrl);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let recovered = value(receiving_output(&world, &request));
+    assert_eq!(recovered["needsReconciliation"], false);
+    assert_eq!(
+        recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_eq!(
+        first["centralResponse"]["data"]["record"],
+        recovered["centralResponse"]["data"]["record"]
+    );
+    assert_eq!(before, ledger_bytes(&world));
+    assert_eq!(oldbytes, fs::read(old).unwrap());
+    assert_eq!(world.ctrl, native_ctrl());
 }
 #[cfg(unix)]
 #[test]
-#[ignore="requires actual Ctrl; transparent close-stdout boundary execs real pinned owner only"]
+#[ignore = "requires actual Ctrl; transparent close-stdout boundary execs real pinned owner only"]
 fn native_receiving_lost_ack_recovers_without_a_second_native_submit() {
-    let (world,attempt)=final_native_world();
-    let fault=real_ctrl_fault(&world,"real-ctrl-close-stdout",true);
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(fault);
-    let unresolved=value(receiving_output(&world,&request));assert_eq!(unresolved["needsReconciliation"],true);
-    let before=ledger_bytes(&world);
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    request["lookupEndpoint"]=request["central"].clone();request["lookupEndpoint"]["binary"]=json!(world.ctrl);
-    let recovered=value(receiving_output(&world,&request));
-    assert_eq!(recovered["needsReconciliation"],false);
-    assert_eq!(recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],true);
-    assert_eq!(before,ledger_bytes(&world));
-    assert_eq!(fs::read_to_string(world.root.join("real-ctrl-close-stdout.calls")).unwrap().lines().filter(|line|*line=="central.receiving.submit").count(),1);
-    assert_eq!(world.ctrl,native_ctrl());
+    let (world, attempt) = final_native_world();
+    let fault = real_ctrl_fault(&world, "real-ctrl-close-stdout", true);
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(fault);
+    let unresolved = value(receiving_output(&world, &request));
+    assert_eq!(unresolved["needsReconciliation"], true);
+    let before = ledger_bytes(&world);
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(world.ctrl);
+    let recovered = value(receiving_output(&world, &request));
+    assert_eq!(recovered["needsReconciliation"], false);
+    assert_eq!(
+        recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_eq!(before, ledger_bytes(&world));
+    assert_eq!(
+        fs::read_to_string(world.root.join("real-ctrl-close-stdout.calls"))
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "central.receiving.submit")
+            .count(),
+        1
+    );
+    assert_eq!(world.ctrl, native_ctrl());
 }
 #[cfg(unix)]
 #[test]
-#[ignore="requires actual Ctrl; real concurrent Factory clients and transparent native invocation count"]
+#[ignore = "requires actual Ctrl; real concurrent Factory clients and transparent native invocation count"]
 fn native_receiving_aliases_have_one_canonical_submit_winner_across_restart() {
-    let (world,attempt)=final_native_world();let fault=real_ctrl_fault(&world,"real-ctrl-count",false);
-    let mut one=world.receiving_request(&attempt);one["central"]["binary"]=json!(fault);
-    let mut two=one.clone();two["requestRef"]=json!("request:native-alias");two["projectionRef"]=json!("projection:native-alias");
-    let outputs=std::thread::scope(|scope| {let a=scope.spawn(||receiving_output(&world,&one));let b=scope.spawn(||receiving_output(&world,&two));(a.join().unwrap(),b.join().unwrap())});
-    assert!(outputs.0.status.success()||outputs.1.status.success());
-    assert_eq!(fs::read_to_string(world.root.join("real-ctrl-count.calls")).unwrap().lines().filter(|line|*line=="central.receiving.submit").count(),1,"same native key is fenced beyond Action digest");
-    let before=ledger_bytes(&world);two["recover"]=json!(true);two["expectedRevision"]=json!(world.reading().revision);
-    let resumed=value(receiving_output(&world,&two));assert_eq!(resumed["needsReconciliation"],false);assert_eq!(before,ledger_bytes(&world));
-    assert_eq!(world.ctrl,native_ctrl());
+    let (world, attempt) = final_native_world();
+    let fault = real_ctrl_fault(&world, "real-ctrl-count", false);
+    let mut one = world.receiving_request(&attempt);
+    one["central"]["binary"] = json!(fault);
+    let mut two = one.clone();
+    two["requestRef"] = json!("request:native-alias");
+    two["projectionRef"] = json!("projection:native-alias");
+    let outputs = std::thread::scope(|scope| {
+        let a = scope.spawn(|| receiving_output(&world, &one));
+        let b = scope.spawn(|| receiving_output(&world, &two));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert!(outputs.0.status.success() || outputs.1.status.success());
+    assert_eq!(
+        fs::read_to_string(world.root.join("real-ctrl-count.calls"))
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "central.receiving.submit")
+            .count(),
+        1,
+        "same native key is fenced beyond Action digest"
+    );
+    let before = ledger_bytes(&world);
+    two["recover"] = json!(true);
+    two["expectedRevision"] = json!(world.reading().revision);
+    let resumed = value(receiving_output(&world, &two));
+    assert_eq!(resumed["needsReconciliation"], false);
+    assert_eq!(before, ledger_bytes(&world));
+    assert_eq!(world.ctrl, native_ctrl());
 }
 #[test]
-#[ignore="requires actual Ctrl and Factory owner; public JSON cannot mint private delivery admission"]
+#[ignore = "requires actual Ctrl and Factory owner; public JSON cannot mint private delivery admission"]
 fn native_receiving_reserved_call_json_is_refused_without_owner_effects() {
-    let (world,attempt)=final_native_world();let state=fs::read(&world.state).unwrap();let ledger=ledger_bytes(&world);
-    for contract in ["factory.attempt-receiving-call/v1","factory.attempt-unit-decision-call/v1"] {
+    let (world, attempt) = final_native_world();
+    let state = fs::read(&world.state).unwrap();
+    let ledger = ledger_bytes(&world);
+    for contract in [
+        "factory.attempt-receiving-call/v1",
+        "factory.attempt-unit-decision-call/v1",
+    ] {
         let request=world.request(json!({"operation":"record-observation","attempt_ref":attempt,
             "receipt":{"ownerRef":"factory","contract":contract,"operationRef":"forged:delivery","receiptRef":"forged:receipt",
                 "sourceRevision":"forged:basis","phase":"observed","evidenceRefs":[],"partialEffectRefs":[],"payload":{}}}));
-        assert!(!world.raw_action(&request).status.success());assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(ledger,ledger_bytes(&world));
+        assert!(!world.raw_action(&request).status.success());
+        assert_eq!(state, fs::read(&world.state).unwrap());
+        assert_eq!(ledger, ledger_bytes(&world));
     }
 }
 
 #[test]
-#[ignore="requires actual Ctrl; real missing executable and actual guarded native absence"]
+#[ignore = "requires actual Ctrl; real missing executable and actual guarded native absence"]
 fn native_receiving_intent_before_failed_launch_never_submits_during_recovery() {
-    let (world,attempt)=final_native_world();let before=ledger_bytes(&world);
-    let mut request=world.receiving_request(&attempt);let missing=world.root.join("actual-missing-native-ctrl");
-    assert!(!missing.exists());request["central"]["binary"]=json!(missing);
-    let failed=value(receiving_output(&world,&request));assert_eq!(failed["needsReconciliation"],true);
-    assert_eq!(failed["transportObservation"]["payload"]["detail"]["nativeCapture"]["errorKind"],"NotFound");
-    assert_eq!(before,ledger_bytes(&world));
-    request["recover"]=json!(true);request["lookupEndpoint"]=request["central"].clone();request["lookupEndpoint"]["binary"]=json!(world.ctrl);
-    request["expectedRevision"]=json!(world.reading().revision);
-    let unresolved=value(receiving_output(&world,&request));assert_eq!(unresolved["needsReconciliation"],true);
-    let actual=unresolved["centralResponse"].as_object().expect("native owner absence response retained");
-    assert_eq!(actual["action"],"central.receiving.read");assert_eq!(actual["ok"],false);
-    assert_eq!(before,ledger_bytes(&world),"missing receipt never permits implicit submit");
+    let (world, attempt) = final_native_world();
+    let before = ledger_bytes(&world);
+    let mut request = world.receiving_request(&attempt);
+    let missing = world.root.join("actual-missing-native-ctrl");
+    assert!(!missing.exists());
+    request["central"]["binary"] = json!(missing);
+    let failed = value(receiving_output(&world, &request));
+    assert_eq!(failed["needsReconciliation"], true);
+    assert_eq!(
+        failed["transportObservation"]["payload"]["detail"]["nativeCapture"]["errorKind"],
+        "NotFound"
+    );
+    assert_eq!(before, ledger_bytes(&world));
+    request["recover"] = json!(true);
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(world.ctrl);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let unresolved = value(receiving_output(&world, &request));
+    assert_eq!(unresolved["needsReconciliation"], true);
+    let actual = unresolved["centralResponse"]
+        .as_object()
+        .expect("native owner absence response retained");
+    assert_eq!(actual["action"], "central.receiving.read");
+    assert_eq!(actual["ok"], false);
+    assert_eq!(
+        before,
+        ledger_bytes(&world),
+        "missing receipt never permits implicit submit"
+    );
     // A same-owner replacement cannot silently switch to another root.
-    request["lookupEndpoint"]["root"]=json!(world.root.join("Work/native-receiving"));request["expectedRevision"]=json!(world.reading().revision);
-    let wrong=value(receiving_output(&world,&request));assert_eq!(wrong["needsReconciliation"],true);assert_eq!(before,ledger_bytes(&world));
-    assert_eq!(world.ctrl,native_ctrl());
+    request["lookupEndpoint"]["root"] = json!(world.root.join("Work/native-receiving"));
+    request["expectedRevision"] = json!(world.reading().revision);
+    let wrong = value(receiving_output(&world, &request));
+    assert_eq!(wrong["needsReconciliation"], true);
+    assert_eq!(before, ledger_bytes(&world));
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
-fn optional_ledger_bytes(world:&World)->Option<std::collections::BTreeMap<String,Vec<u8>>> {
+fn optional_ledger_bytes(world: &World) -> Option<std::collections::BTreeMap<String, Vec<u8>>> {
     match fs::symlink_metadata(world.root.join(".central/source-returns/contributions")) {
-        Ok(metadata)=>{assert!(metadata.is_dir());Some(ledger_bytes(world))},
-        Err(error) if error.kind()==std::io::ErrorKind::NotFound=>None,
-        Err(error)=>panic!("actual native ledger observation failed: {error}"),
+        Ok(metadata) => {
+            assert!(metadata.is_dir());
+            Some(ledger_bytes(world))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("actual native ledger observation failed: {error}"),
     }
 }
 #[cfg(unix)]
-fn native_shell_quote(path:&Path)->String { format!("'{}'",path.to_str().unwrap().replace('\'',"'\\''")) }
+fn native_shell_quote(path: &Path) -> String {
+    format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"))
+}
 #[cfg(unix)]
-fn native_script(world:&World,name:&str,body:&str)->PathBuf {
+fn native_script(world: &World, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
-    let script=world.root.join(name);fs::write(&script,format!("#!/bin/sh\n{body}")).unwrap();
-    fs::set_permissions(&script,fs::Permissions::from_mode(0o700)).unwrap();script
+    let script = world.root.join(name);
+    fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    script
 }
 #[cfg(unix)]
 #[test]
-#[ignore="requires actual qualified current/previous native Ctrl; physical selector replacement"]
+#[ignore = "requires actual qualified current/previous native Ctrl; physical selector replacement"]
 fn native_receiving_client_replacement_after_actual_descriptor_refuses_before_read() {
-    let (world,attempt)=final_native_world();let mut request=world.receiving_request(&attempt);
-    let original=value(receiving_output(&world,&request));assert_eq!(original["needsReconciliation"],false);
-    let ledger=ledger_bytes(&world);
-    let old=PathBuf::from(std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP").expect("actual previous Ctrl required")).canonicalize().unwrap();
-    let old_bytes=fs::read(&old).unwrap();assert_eq!(format!("{:x}",Sha256::digest(&old_bytes)),std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256").expect("exact old binary pin required"));
-    assert!(old_bytes.starts_with(b"\x7fELF")||old_bytes.starts_with(&[0xcf,0xfa,0xed,0xfe])||old_bytes.starts_with(&[0xca,0xfe,0xba,0xbe]));
-    assert_ne!(old_bytes,fs::read(&world.ctrl).unwrap());
-    let selector=world.root.join("descriptor-then-real-client-replacement");
-    let calls=world.root.join("client-selector.calls");let replacement=world.root.join("real-native-client-replacement");
-    fs::copy(&old,&replacement).unwrap();
+    let (world, attempt) = final_native_world();
+    let mut request = world.receiving_request(&attempt);
+    let original = value(receiving_output(&world, &request));
+    assert_eq!(original["needsReconciliation"], false);
+    let ledger = ledger_bytes(&world);
+    let old = PathBuf::from(
+        std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP").expect("actual previous Ctrl required"),
+    )
+    .canonicalize()
+    .unwrap();
+    let old_bytes = fs::read(&old).unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&old_bytes)),
+        std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256")
+            .expect("exact old binary pin required")
+    );
+    assert!(
+        old_bytes.starts_with(b"\x7fELF")
+            || old_bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+            || old_bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe])
+    );
+    assert_ne!(old_bytes, fs::read(&world.ctrl).unwrap());
+    let selector = world.root.join("descriptor-then-real-client-replacement");
+    let calls = world.root.join("client-selector.calls");
+    let replacement = world.root.join("real-native-client-replacement");
+    fs::copy(&old, &replacement).unwrap();
     let body=format!("printf '%s\\n' \"$6\" >> {}\n{} \"$@\"\nstatus=$?\nif [ \"$6\" = 'action.describe' ]; then /bin/mv {} {}; fi\nexit \"$status\"\n",
         native_shell_quote(&calls),native_shell_quote(&world.ctrl),native_shell_quote(&replacement),native_shell_quote(&selector));
-    assert_eq!(native_script(&world,"descriptor-then-real-client-replacement",&body),selector);
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    request["lookupEndpoint"]=request["central"].clone();request["lookupEndpoint"]["binary"]=json!(selector);
-    let refused=value(receiving_output(&world,&request));assert_eq!(refused["needsReconciliation"],true);
-    let capture=&refused["transportObservation"]["payload"]["detail"]["nativeCapture"];
-    assert_eq!(capture["stage"],"afterNativeCall");assert_eq!(capture["centralResponse"]["action"],"action.describe");
-    assert_eq!(capture["centralResponse"]["ok"],true);assert!(capture["qualificationFailure"].as_str().unwrap().contains("client identity"));
-    assert_eq!(fs::read_to_string(calls).unwrap().lines().collect::<Vec<_>>(),vec!["action.describe"]);
-    assert_eq!(ledger,ledger_bytes(&world));assert_eq!(old_bytes,fs::read(selector).unwrap());assert_eq!(old_bytes,fs::read(old).unwrap());
-    assert_eq!(world.ctrl,native_ctrl());
+    assert_eq!(
+        native_script(&world, "descriptor-then-real-client-replacement", &body),
+        selector
+    );
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(selector);
+    let refused = value(receiving_output(&world, &request));
+    assert_eq!(refused["needsReconciliation"], true);
+    let capture = &refused["transportObservation"]["payload"]["detail"]["nativeCapture"];
+    assert_eq!(capture["stage"], "afterNativeCall");
+    assert_eq!(capture["centralResponse"]["action"], "action.describe");
+    assert_eq!(capture["centralResponse"]["ok"], true);
+    assert!(capture["qualificationFailure"]
+        .as_str()
+        .unwrap()
+        .contains("client identity"));
+    assert_eq!(
+        fs::read_to_string(calls)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        vec!["action.describe"]
+    );
+    assert_eq!(ledger, ledger_bytes(&world));
+    assert_eq!(old_bytes, fs::read(selector).unwrap());
+    assert_eq!(old_bytes, fs::read(old).unwrap());
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore="requires two genuine initialized native Roots and current Ctrl; original locator retarget"]
+#[ignore = "requires two genuine initialized native Roots and current Ctrl; original locator retarget"]
 fn native_receiving_same_original_root_locator_cannot_claim_a_replacement_owner() {
     use std::os::unix::fs::symlink;
-    let (world,attempt)=final_native_world();let other=World::new(true);
-    let locator=world.root.join("original-native-owner-locator");symlink(&world.root,&locator).unwrap();
-    let mut request=world.receiving_request(&attempt);request["central"]["root"]=json!(locator);
-    let first=value(receiving_output(&world,&request));assert_eq!(first["needsReconciliation"],false);
-    let before_a=ledger_bytes(&world);let before_b=optional_ledger_bytes(&other);let state=fs::read(&world.state).unwrap();
-    let retained=world.reading().attempts.into_iter().find(|record|record.attempt_ref==attempt).unwrap().observations;
-    let original=retained.iter().find(|receipt|receipt.contract=="factory.attempt-receiving-call/v1" && receipt.phase==epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching).unwrap();
-    assert_eq!(original.payload["hostEndpoint"]["root"],json!(locator));assert_eq!(original.payload["ownerClaim"]["canonicalRoot"],json!(world.root));
-    assert!(original.payload["ownerClaim"]["rootIdentity"]["inode"].as_u64().is_some());
-    fs::remove_file(&locator).unwrap();symlink(&other.root,&locator).unwrap();
+    let (world, attempt) = final_native_world();
+    let other = World::new(true);
+    let locator = world.root.join("original-native-owner-locator");
+    symlink(&world.root, &locator).unwrap();
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["root"] = json!(locator);
+    let first = value(receiving_output(&world, &request));
+    assert_eq!(first["needsReconciliation"], false);
+    let before_a = ledger_bytes(&world);
+    let before_b = optional_ledger_bytes(&other);
+    let state = fs::read(&world.state).unwrap();
+    let retained = world
+        .reading()
+        .attempts
+        .into_iter()
+        .find(|record| record.attempt_ref == attempt)
+        .unwrap()
+        .observations;
+    let original = retained
+        .iter()
+        .find(|receipt| {
+            receipt.contract == "factory.attempt-receiving-call/v1"
+                && receipt.phase
+                    == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching
+        })
+        .unwrap();
+    assert_eq!(original.payload["hostEndpoint"]["root"], json!(locator));
+    assert_eq!(
+        original.payload["ownerClaim"]["canonicalRoot"],
+        json!(world.root)
+    );
+    assert!(original.payload["ownerClaim"]["rootIdentity"]["inode"]
+        .as_u64()
+        .is_some());
+    fs::remove_file(&locator).unwrap();
+    symlink(&other.root, &locator).unwrap();
     // Fresh alias and current CAS must not fall through as a new first sender.
-    request["requestRef"]=json!("request:native-root-retarget");request["projectionRef"]=json!("projection:native-root-retarget");
-    request["expectedRevision"]=json!(world.reading().revision);
-    let refused=receiving_output(&world,&request);assert!(!refused.status.success());
+    request["requestRef"] = json!("request:native-root-retarget");
+    request["projectionRef"] = json!("projection:native-root-retarget");
+    request["expectedRevision"] = json!(world.reading().revision);
+    let refused = receiving_output(&world, &request);
+    assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("root physical identity changed"));
-    assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(before_a,ledger_bytes(&world));assert_eq!(before_b,optional_ledger_bytes(&other));
-    fs::remove_file(&locator).unwrap();symlink(&world.root,&locator).unwrap();
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    let recovered=value(receiving_output(&world,&request));assert_eq!(recovered["needsReconciliation"],false);
-    assert_eq!(first["centralResponse"]["data"]["record"],recovered["centralResponse"]["data"]["record"]);
-    assert_eq!(before_a,ledger_bytes(&world));assert_eq!(before_b,optional_ledger_bytes(&other));assert_eq!(world.ctrl,native_ctrl());
+    assert_eq!(state, fs::read(&world.state).unwrap());
+    assert_eq!(before_a, ledger_bytes(&world));
+    assert_eq!(before_b, optional_ledger_bytes(&other));
+    fs::remove_file(&locator).unwrap();
+    symlink(&world.root, &locator).unwrap();
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let recovered = value(receiving_output(&world, &request));
+    assert_eq!(recovered["needsReconciliation"], false);
+    assert_eq!(
+        first["centralResponse"]["data"]["record"],
+        recovered["centralResponse"]["data"]["record"]
+    );
+    assert_eq!(before_a, ledger_bytes(&world));
+    assert_eq!(before_b, optional_ledger_bytes(&other));
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
 #[cfg(unix)]
-struct OwnedReceivingProcess { child:std::process::Child, group:i32, retired:bool, signal_forbidden:Option<String> }
+struct OwnedReceivingProcess {
+    child: std::process::Child,
+    group: i32,
+    retired: bool,
+    signal_forbidden: Option<String>,
+}
 #[cfg(unix)]
 impl OwnedReceivingProcess {
-    fn observe_running(&mut self) -> Result<(),String> {
-        if let Some(cause) = &self.signal_forbidden { return Err(cause.clone()); }
-        if self.retired { return Err("owned coordinator already retired; no running authority remains".into()); }
+    fn observe_running(&mut self) -> Result<(), String> {
+        if let Some(cause) = &self.signal_forbidden {
+            return Err(cause.clone());
+        }
+        if self.retired {
+            return Err("owned coordinator already retired; no running authority remains".into());
+        }
         // Record the first exit/reap or wait error before a caller can unwind.
         // Readiness and cleanup share this permanent numeric signal fence.
         let refusal = match self.child.try_wait() {
@@ -1578,8 +1925,10 @@ impl OwnedReceivingProcess {
         }
         Ok(())
     }
-    fn retire(&mut self) -> Result<(),String> {
-        if self.retired { return Ok(()); }
+    fn retire(&mut self) -> Result<(), String> {
+        if self.retired {
+            return Ok(());
+        }
         self.observe_running()?;
         let actual_group = unsafe { libc::getpgid(self.child.id() as libc::pid_t) };
         if actual_group != self.group {
@@ -1592,13 +1941,16 @@ impl OwnedReceivingProcess {
         // racing after this finite check is not an atomically fenced faculty.
         // This exact process group was created for this isolated Factory call.
         // No ambient native service or provider is a member or targeted.
-        let delivered=unsafe {libc::kill(-self.group,libc::SIGKILL)};
-        if delivered != 0 && std::io::Error::last_os_error().raw_os_error()!=Some(libc::ESRCH) {
-            return Err(format!("owned receiving group termination: {}",std::io::Error::last_os_error()));
+        let delivered = unsafe { libc::kill(-self.group, libc::SIGKILL) };
+        if delivered != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) {
+            return Err(format!(
+                "owned receiving group termination: {}",
+                std::io::Error::last_os_error()
+            ));
         }
-        let until=std::time::Instant::now()+std::time::Duration::from_secs(3);
-        let mut status=None;
-        while std::time::Instant::now()<until {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut status = None;
+        while std::time::Instant::now() < until {
             if status.is_none() {
                 status = match self.child.try_wait() {
                     Ok(status) => status,
@@ -1609,12 +1961,15 @@ impl OwnedReceivingProcess {
                     }
                 };
             }
-            let absent=unsafe {libc::kill(-self.group,0)}!=0 && std::io::Error::last_os_error().raw_os_error()==Some(libc::ESRCH);
-            if let Some(status)=status {
+            let absent = unsafe { libc::kill(-self.group, 0) } != 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+            if let Some(status) = status {
                 if absent {
                     use std::os::unix::process::ExitStatusExt;
-                    self.retired=true;
-                    if status.signal()!=Some(libc::SIGKILL) {return Err(format!("owned coordinator did not retain actual abrupt SIGKILL status: {status}"));}
+                    self.retired = true;
+                    if status.signal() != Some(libc::SIGKILL) {
+                        return Err(format!("owned coordinator did not retain actual abrupt SIGKILL status: {status}"));
+                    }
                     return Ok(());
                 }
             }
@@ -1627,101 +1982,264 @@ impl OwnedReceivingProcess {
 impl Drop for OwnedReceivingProcess {
     fn drop(&mut self) {
         if !self.retired {
-            if let Err(secondary)=self.retire() {
+            if let Err(secondary) = self.retire() {
                 eprintln!("owned receiving cleanup uncertainty: {secondary}");
-                if !std::thread::panicking() {panic!("owned receiving cleanup uncertainty: {secondary}");}
+                if !std::thread::panicking() {
+                    panic!("owned receiving cleanup uncertainty: {secondary}");
+                }
             }
         }
     }
 }
 #[cfg(unix)]
 #[test]
-#[ignore="requires actual Ctrl; real durable-intent/pre-native-Ctrl-exec coordinator death"]
+#[ignore = "requires actual Ctrl; real durable-intent/pre-native-Ctrl-exec coordinator death"]
 fn native_receiving_abrupt_death_after_durable_intent_never_resubmits() {
     use std::os::unix::process::CommandExt;
-    let (world,attempt)=final_native_world();let ledger=ledger_bytes(&world);
-    let marker=world.root.join("held-pre-ctrl-exec.pid");let calls=world.root.join("actual-native-submit.calls");
-    let release=world.root.join("release-pre-ctrl-exec");assert!(!release.exists());
+    let (world, attempt) = final_native_world();
+    let ledger = ledger_bytes(&world);
+    let marker = world.root.join("held-pre-ctrl-exec.pid");
+    let calls = world.root.join("actual-native-submit.calls");
+    let release = world.root.join("release-pre-ctrl-exec");
+    assert!(!release.exists());
     let body=format!("if [ \"$6\" = 'central.receiving.submit' ]; then printf '%s\\n' \"$$\" > {}; remaining=1000; while [ ! -f {} ]; do if [ \"$remaining\" -le 0 ]; then exit 75; fi; remaining=$((remaining - 1)); /bin/sleep 0.01; done; printf '%s\\n' \"$6\" >> {}; fi\nexec {} \"$@\"\n",
         native_shell_quote(&marker),native_shell_quote(&release),native_shell_quote(&calls),native_shell_quote(&world.ctrl));
-    let boundary=native_script(&world,"native-pre-exec-barrier",&body);
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(boundary);
-    let mut command=Command::new(env!("CARGO_BIN_EXE_factory"));
-    command.args(["attempt","receiving",world.state.to_str().unwrap(),"-","--json"])
-        .env("FACTORY_NATIVE_CENTRAL_BINARY",&world.ctrl).env("FACTORY_NATIVE_CENTRAL_ROOT",&world.root)
-        .env_remove("FACTORY_NATIVE_CENTRAL_PROJECT").env("CENTRAL_NATIVE_TOKEN",REVIEWER)
-        .stdin(Stdio::piped()).stdout(Stdio::from(fs::File::create(world.root.join("abrupt-coordinator.stdout")).unwrap()))
-        .stderr(Stdio::from(fs::File::create(world.root.join("abrupt-coordinator.stderr")).unwrap())).process_group(0);
-    let child=command.spawn().unwrap();let group=i32::try_from(child.id()).unwrap();
-    let mut owned=OwnedReceivingProcess {child,group,retired:false,signal_forbidden:None};
-    owned.child.stdin.take().unwrap().write_all(request.to_string().as_bytes()).unwrap();
-    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(5);
-    while !marker.exists() && std::time::Instant::now()<deadline { owned.observe_running().unwrap();std::thread::sleep(std::time::Duration::from_millis(5)); }
-    assert!(marker.is_file(),"actual transparent boundary reached before native Ctrl exec");
-    let barrier_pid=fs::read_to_string(&marker).unwrap().trim().parse::<i32>().unwrap();
-    assert_eq!(unsafe {libc::getpgid(barrier_pid)},group);assert_ne!(barrier_pid,group);
-    let reading=world.reading();let record=reading.attempts.iter().find(|record|record.attempt_ref==attempt).unwrap();
-    let intent=record.observations.iter().find(|receipt|receipt.contract=="factory.attempt-receiving-call/v1" && receipt.phase==epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching).unwrap().clone();
-    assert!(intent.payload["nativeRequest"].is_object());assert!(intent.payload["ownerClaim"]["rootIdentity"].is_object());
-    assert!(!calls.exists());assert_eq!(ledger,ledger_bytes(&world));owned.retire().unwrap();assert!(!release.exists());
-    request["recover"]=json!(true);request["expectedRevision"]=json!(world.reading().revision);
-    request["lookupEndpoint"]=request["central"].clone();request["lookupEndpoint"]["binary"]=json!(world.ctrl);
-    let recovered=value(receiving_output(&world,&request));assert_eq!(recovered["needsReconciliation"],true);
-    assert_eq!(recovered["centralResponse"]["action"],"central.receiving.read");assert_eq!(recovered["centralResponse"]["ok"],false);
-    assert_eq!(ledger,ledger_bytes(&world));assert!(!calls.exists(),"no actual native submit ever crossed the held boundary");
-    let resumed=world.reading();let record=resumed.attempts.iter().find(|record|record.attempt_ref==attempt).unwrap();
-    assert!(record.observations.iter().any(|retained|retained==&intent),"original durable intent survives exact restart");
-    assert_eq!(world.ctrl,native_ctrl());
+    let boundary = native_script(&world, "native-pre-exec-barrier", &body);
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(boundary);
+    let mut command = Command::new(env!("CARGO_BIN_EXE_factory"));
+    command
+        .args([
+            "attempt",
+            "receiving",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ])
+        .env("FACTORY_NATIVE_CENTRAL_BINARY", &world.ctrl)
+        .env("FACTORY_NATIVE_CENTRAL_ROOT", &world.root)
+        .env_remove("FACTORY_NATIVE_CENTRAL_PROJECT")
+        .env("CENTRAL_NATIVE_TOKEN", REVIEWER)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(
+            fs::File::create(world.root.join("abrupt-coordinator.stdout")).unwrap(),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(world.root.join("abrupt-coordinator.stderr")).unwrap(),
+        ))
+        .process_group(0);
+    let child = command.spawn().unwrap();
+    let group = i32::try_from(child.id()).unwrap();
+    let mut owned = OwnedReceivingProcess {
+        child,
+        group,
+        retired: false,
+        signal_forbidden: None,
+    };
+    owned
+        .child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(request.to_string().as_bytes())
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() && std::time::Instant::now() < deadline {
+        owned.observe_running().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        marker.is_file(),
+        "actual transparent boundary reached before native Ctrl exec"
+    );
+    let barrier_pid = fs::read_to_string(&marker)
+        .unwrap()
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    assert_eq!(unsafe { libc::getpgid(barrier_pid) }, group);
+    assert_ne!(barrier_pid, group);
+    let reading = world.reading();
+    let record = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt)
+        .unwrap();
+    let intent = record
+        .observations
+        .iter()
+        .find(|receipt| {
+            receipt.contract == "factory.attempt-receiving-call/v1"
+                && receipt.phase
+                    == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching
+        })
+        .unwrap()
+        .clone();
+    assert!(intent.payload["nativeRequest"].is_object());
+    assert!(intent.payload["ownerClaim"]["rootIdentity"].is_object());
+    assert!(!calls.exists());
+    assert_eq!(ledger, ledger_bytes(&world));
+    owned.retire().unwrap();
+    assert!(!release.exists());
+    request["recover"] = json!(true);
+    request["expectedRevision"] = json!(world.reading().revision);
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(world.ctrl);
+    let recovered = value(receiving_output(&world, &request));
+    assert_eq!(recovered["needsReconciliation"], true);
+    assert_eq!(
+        recovered["centralResponse"]["action"],
+        "central.receiving.read"
+    );
+    assert_eq!(recovered["centralResponse"]["ok"], false);
+    assert_eq!(ledger, ledger_bytes(&world));
+    assert!(
+        !calls.exists(),
+        "no actual native submit ever crossed the held boundary"
+    );
+    let resumed = world.reading();
+    let record = resumed
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt)
+        .unwrap();
+    assert!(
+        record
+            .observations
+            .iter()
+            .any(|retained| retained == &intent),
+        "original durable intent survives exact restart"
+    );
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
 #[test]
-#[ignore="requires genuine Ctrl submit/read; same visible receipt cannot certify a different full request digest"]
+#[ignore = "requires genuine Ctrl submit/read; same visible receipt cannot certify a different full request digest"]
 fn native_receiving_byref_same_visible_result_refuses_changed_original_digest() {
-    let (world,attempt)=final_native_world();
-    let reading=world.reading();let record=reading.attempts.iter().find(|record|record.attempt_ref==attempt).unwrap();
-    let native_ref=&record.dispatch.first().unwrap().receipt_ref;
-    let native=ctrl_call(&world.ctrl,&world.root,"central.receiving.read",&json!({"return_ref":native_ref}),None);
-    let authority=native["record"]["authority_revision"].as_str().expect("actual authenticated current authority basis");
-    let mut request=world.receiving_request(&attempt);request["target"]["expectedAuthorityRevision"]=json!(authority);
-    request["central"]["binary"]=json!(world.root.join("actual-missing-client-before-submit"));
-    let pending=value(receiving_output(&world,&request));assert_eq!(pending["needsReconciliation"],true);
-    let input_b=pending["transportObservation"]["payload"]["nativeRequest"].clone();assert_eq!(input_b["expected_authority_revision"],authority);
-    let mut input_a=input_b.clone();input_a.as_object_mut().unwrap().remove("expected_authority_revision");
+    let (world, attempt) = final_native_world();
+    let reading = world.reading();
+    let record = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt)
+        .unwrap();
+    let native_ref = &record.dispatch.first().unwrap().receipt_ref;
+    let native = ctrl_call(
+        &world.ctrl,
+        &world.root,
+        "central.receiving.read",
+        &json!({"return_ref":native_ref}),
+        None,
+    );
+    let authority = native["record"]["authority_revision"]
+        .as_str()
+        .expect("actual authenticated current authority basis");
+    let mut request = world.receiving_request(&attempt);
+    request["target"]["expectedAuthorityRevision"] = json!(authority);
+    request["central"]["binary"] = json!(world.root.join("actual-missing-client-before-submit"));
+    let pending = value(receiving_output(&world, &request));
+    assert_eq!(pending["needsReconciliation"], true);
+    let input_b = pending["transportObservation"]["payload"]["nativeRequest"].clone();
+    assert_eq!(input_b["expected_authority_revision"], authority);
+    let mut input_a = input_b.clone();
+    input_a
+        .as_object_mut()
+        .unwrap()
+        .remove("expected_authority_revision");
     // Both native authentication forms are genuinely admitted. The control has
     // a distinct native key; the actual A publication uses B's exact target/key.
-    let mut control=input_b.clone();control["producer_key"]=json!("native-auth-revision-positive-control");
-    let authorized=ctrl_call(&world.ctrl,&world.root,"central.receiving.submit",&control,Some(REVIEWER));
-    assert_eq!(authorized["record"]["authority_revision"],authority);
-    let actual=ctrl_call(&world.ctrl,&world.root,"central.receiving.submit",&input_a,Some(REVIEWER));
-    let fresh=ctrl_call(&world.ctrl,&world.root,"central.receiving.read",&json!({"return_ref":actual["return_ref"]}),None);assert_eq!(actual,fresh);
-    for (field,original) in [("source_ref","source_ref"),("document_id","document_id"),("proposed_source_revision","expected_source_revision"),("proposal","proposal"),("run_ref","run_ref"),("task_ref","task_ref"),("session_ref","session_ref")] {
-        assert_eq!(actual["record"][field],input_b[original]);
+    let mut control = input_b.clone();
+    control["producer_key"] = json!("native-auth-revision-positive-control");
+    let authorized = ctrl_call(
+        &world.ctrl,
+        &world.root,
+        "central.receiving.submit",
+        &control,
+        Some(REVIEWER),
+    );
+    assert_eq!(authorized["record"]["authority_revision"], authority);
+    let actual = ctrl_call(
+        &world.ctrl,
+        &world.root,
+        "central.receiving.submit",
+        &input_a,
+        Some(REVIEWER),
+    );
+    let fresh = ctrl_call(
+        &world.ctrl,
+        &world.root,
+        "central.receiving.read",
+        &json!({"return_ref":actual["return_ref"]}),
+        None,
+    );
+    assert_eq!(actual, fresh);
+    for (field, original) in [
+        ("source_ref", "source_ref"),
+        ("document_id", "document_id"),
+        ("proposed_source_revision", "expected_source_revision"),
+        ("proposal", "proposal"),
+        ("run_ref", "run_ref"),
+        ("task_ref", "task_ref"),
+        ("session_ref", "session_ref"),
+    ] {
+        assert_eq!(actual["record"][field], input_b[original]);
     }
-    assert_eq!(actual["record"]["request_digest"],format!("{:x}",Sha256::digest(serde_json::to_string(&input_a).unwrap().as_bytes())));
-    assert_ne!(actual["record"]["request_digest"],format!("{:x}",Sha256::digest(serde_json::to_string(&input_b).unwrap().as_bytes())));
+    assert_eq!(
+        actual["record"]["request_digest"],
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_string(&input_a).unwrap().as_bytes())
+        )
+    );
+    assert_ne!(
+        actual["record"]["request_digest"],
+        format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_string(&input_b).unwrap().as_bytes())
+        )
+    );
     world.action(json!({"operation":"attach-receiving","attempt_ref":attempt,"receiving_ref":actual["return_ref"],"source_revision":actual["revision"],"evidence_refs":[actual["return_ref"]]}));
-    world.transition("finishing",None);let ledger=ledger_bytes(&world);let state=fs::read(&world.state).unwrap();
-    let closure=json!({"finalAttemptRef":attempt,"reviewerAttemptRefs":[attempt],"receivingRef":actual["return_ref"]});
-    let refused=world.raw_action(&world.request(world.transition_operation("finished",Some(closure))));
-    assert!(!refused.status.success());assert!(String::from_utf8_lossy(&refused.stderr).contains("exact original request digest"),"must reach exact digest admission, not another unrelated refusal");
-    assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(ledger,ledger_bytes(&world));assert_eq!(world.ctrl,native_ctrl());
+    world.transition("finishing", None);
+    let ledger = ledger_bytes(&world);
+    let state = fs::read(&world.state).unwrap();
+    let closure = json!({"finalAttemptRef":attempt,"reviewerAttemptRefs":[attempt],"receivingRef":actual["return_ref"]});
+    let refused =
+        world.raw_action(&world.request(world.transition_operation("finished", Some(closure))));
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("exact original request digest"),
+        "must reach exact digest admission, not another unrelated refusal"
+    );
+    assert_eq!(state, fs::read(&world.state).unwrap());
+    assert_eq!(ledger, ledger_bytes(&world));
+    assert_eq!(world.ctrl, native_ctrl());
 }
-
 
 #[cfg(unix)]
 fn actual_previous_ctrl() -> (PathBuf, Vec<u8>) {
-    let path = PathBuf::from(std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP")
-        .expect("actual previous native Ctrl required")).canonicalize().unwrap();
+    let path = PathBuf::from(
+        std::env::var_os("FACTORY_TEST_CTRL_PRE_LOOKUP")
+            .expect("actual previous native Ctrl required"),
+    )
+    .canonicalize()
+    .unwrap();
     let bytes = fs::read(&path).unwrap();
-    assert!(bytes.starts_with(b"\x7fELF") || bytes.starts_with(&[0xcf,0xfa,0xed,0xfe]) || bytes.starts_with(&[0xca,0xfe,0xba,0xbe]));
-    assert_eq!(format!("{:x}", Sha256::digest(&bytes)),
-        std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256").expect("exact previous native Ctrl pin required"));
+    assert!(
+        bytes.starts_with(b"\x7fELF")
+            || bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+            || bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe])
+    );
+    assert_eq!(
+        format!("{:x}", Sha256::digest(&bytes)),
+        std::env::var("FACTORY_TEST_CTRL_PRE_LOOKUP_SHA256")
+            .expect("exact previous native Ctrl pin required")
+    );
     (path, bytes)
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore="requires genuine old/current Ctrl; original alias, current physical owner and actual final receiving"]
+#[ignore = "requires genuine old/current Ctrl; original alias, current physical owner and actual final receiving"]
 fn native_receiving_original_alias_can_finish_through_same_physical_host_and_new_client() {
     use std::os::unix::fs::symlink;
     let (previous, previous_bytes) = actual_previous_ctrl();
@@ -1735,12 +2253,25 @@ fn native_receiving_original_alias_can_finish_through_same_physical_host_and_new
     let received = value(receiving_output(&world, &request));
     assert_eq!(received["needsReconciliation"], false);
     let reading = world.reading();
-    let intent = reading.attempts.iter().find(|record| record.attempt_ref == attempt).unwrap()
-        .observations.iter().find(|record| record.contract == "factory.attempt-receiving-call/v1"
-            && record.phase == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching).unwrap();
+    let intent = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt)
+        .unwrap()
+        .observations
+        .iter()
+        .find(|record| {
+            record.contract == "factory.attempt-receiving-call/v1"
+                && record.phase
+                    == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching
+        })
+        .unwrap();
     assert_eq!(intent.payload["hostEndpoint"]["root"], json!(alias));
     assert_eq!(intent.payload["hostEndpoint"]["binary"], json!(previous));
-    assert_eq!(intent.payload["ownerClaim"]["canonicalRoot"], json!(world.root));
+    assert_eq!(
+        intent.payload["ownerClaim"]["canonicalRoot"],
+        json!(world.root)
+    );
     world.transition("finishing", None);
     let closure = json!({"finalAttemptRef":attempt,"reviewerAttemptRefs":[attempt],
         "receivingRef":received["centralResponse"]["data"]["return_ref"]});
@@ -1748,14 +2279,17 @@ fn native_receiving_original_alias_can_finish_through_same_physical_host_and_new
     let state = fs::read(&world.state).unwrap();
     let ledger_a = ledger_bytes(&world);
     let ledger_b = optional_ledger_bytes(&other);
-    fs::remove_file(&alias).unwrap(); symlink(&other.root, &alias).unwrap();
-    let refused = world.raw_action(&world.request(world.transition_operation("finished", Some(closure.clone()))));
+    fs::remove_file(&alias).unwrap();
+    symlink(&other.root, &alias).unwrap();
+    let refused = world
+        .raw_action(&world.request(world.transition_operation("finished", Some(closure.clone()))));
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("root physical identity changed"));
     assert_eq!(state, fs::read(&world.state).unwrap());
     assert_eq!(ledger_a, ledger_bytes(&world));
     assert_eq!(ledger_b, optional_ledger_bytes(&other));
-    fs::remove_file(&alias).unwrap(); symlink(&world.root, &alias).unwrap();
+    fs::remove_file(&alias).unwrap();
+    symlink(&world.root, &alias).unwrap();
     // Actual host uses canonical R and genuine CURRENT binary. Original Alias
     // and OLD client remain retained; no explicit lookupEndpoint is supplied.
     world.transition("finished", Some(closure));
@@ -1770,74 +2304,136 @@ fn native_receiving_original_alias_can_finish_through_same_physical_host_and_new
 
 #[cfg(unix)]
 #[test]
-#[ignore="requires genuine old/current Ctrl and controlled authenticated human review; original alias host bridge"]
+#[ignore = "requires genuine old/current Ctrl and controlled authenticated human review; original alias host bridge"]
 fn native_question_original_alias_replays_reads_and_resolves_through_same_physical_host() {
     use std::os::unix::fs::symlink;
     // Require the exact current qualified client even though this case uses an
     // actual previous client for the first native question submission.
     let current = native_ctrl();
-    assert_eq!(format!("{:x}", Sha256::digest(fs::read(&current).unwrap())),
-        std::env::var("FACTORY_TEST_CTRL_SHA256").expect("exact current native Ctrl pin required"));
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(&current).unwrap())),
+        std::env::var("FACTORY_TEST_CTRL_SHA256").expect("exact current native Ctrl pin required")
+    );
     let (previous, previous_bytes) = actual_previous_ctrl();
     assert_ne!(previous_bytes, fs::read(&current).unwrap());
     let world = World::new(false);
-    world.start("inspect-source"); world.request_decision();
+    world.start("inspect-source");
+    world.request_decision();
     let alias = world.root.join("original-question-root-alias");
     symlink(&world.root, &alias).unwrap();
     let saved: Value = serde_json::from_slice(&fs::read(&world.state).unwrap()).unwrap();
-    let mut request = saved["state"]["attemptStates"][RUN]["actionReceipts"].as_object().unwrap()
-        .values().find(|saved| saved["request"]["operation"]["operation"] == "request-unit-decision")
-        .unwrap()["request"].clone();
+    let mut request = saved["state"]["attemptStates"][RUN]["actionReceipts"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|saved| saved["request"]["operation"]["operation"] == "request-unit-decision")
+        .unwrap()["request"]
+        .clone();
     request["expectedRevision"] = json!(world.reading().revision);
-    let submit_args = ["attempt", "decision", "submit", world.state.to_str().unwrap(), "-", "--json"];
-    let submitted = value(world.factory_at_owner(&submit_args, Some(&request), Some(AGENT), &previous, &alias));
+    let submit_args = [
+        "attempt",
+        "decision",
+        "submit",
+        world.state.to_str().unwrap(),
+        "-",
+        "--json",
+    ];
+    let submitted =
+        value(world.factory_at_owner(&submit_args, Some(&request), Some(AGENT), &previous, &alias));
     let pending = submitted["centralResponse"]["data"].clone();
     assert!(pending["return_ref"].as_str().is_some());
     let reading = world.reading();
-    let intent = reading.attempts.iter().find(|record| record.attempt_ref == "attempt:native-inspect-source").unwrap()
-        .observations.iter().find(|record| record.contract == "factory.attempt-unit-decision-call/v1"
-            && record.phase == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching).unwrap();
+    let intent = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == "attempt:native-inspect-source")
+        .unwrap()
+        .observations
+        .iter()
+        .find(|record| {
+            record.contract == "factory.attempt-unit-decision-call/v1"
+                && record.phase
+                    == epilogos_factory::attempt_runtime::OwnerOperationPhase::Dispatching
+        })
+        .unwrap();
     assert_eq!(intent.payload["hostEndpoint"]["root"], json!(alias));
     assert_eq!(intent.payload["hostEndpoint"]["binary"], json!(previous));
-    assert_eq!(intent.payload["ownerClaim"]["canonicalRoot"], json!(world.root));
+    assert_eq!(
+        intent.payload["ownerClaim"]["canonicalRoot"],
+        json!(world.root)
+    );
     let before_replay = ledger_bytes(&world);
     request["expectedRevision"] = json!(world.reading().revision);
     let replay = value(world.factory(&submit_args, Some(&request), Some(AGENT)));
-    assert_eq!(replay["centralResponse"]["action"], "central.receiving.read");
-    assert_eq!(replay["centralResponse"]["data"]["lookup"]["original_request_verified"], true);
-    assert_eq!(replay["centralResponse"]["data"]["record"], pending["record"]);
+    assert_eq!(
+        replay["centralResponse"]["action"],
+        "central.receiving.read"
+    );
+    assert_eq!(
+        replay["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_eq!(
+        replay["centralResponse"]["data"]["record"],
+        pending["record"]
+    );
     assert_eq!(before_replay, ledger_bytes(&world));
     // Genuine native review uses the bounded controlled HUMAN grant; no public
     // label or fabricated response supplies the decision authority.
     let reviewed = world.review(&pending, "answered", Some("Resume bounded work"), HUMAN);
-    let read_args = ["attempt", "decision", "read", world.state.to_str().unwrap(), RUN, DECISION,
-        reviewed["return_ref"].as_str().unwrap(), "--json"];
+    let read_args = [
+        "attempt",
+        "decision",
+        "read",
+        world.state.to_str().unwrap(),
+        RUN,
+        DECISION,
+        reviewed["return_ref"].as_str().unwrap(),
+        "--json",
+    ];
     let other = World::new(true);
     let state = fs::read(&world.state).unwrap();
-    let ledger_a = ledger_bytes(&world); let ledger_b = optional_ledger_bytes(&other);
-    fs::remove_file(&alias).unwrap(); symlink(&other.root, &alias).unwrap();
+    let ledger_a = ledger_bytes(&world);
+    let ledger_b = optional_ledger_bytes(&other);
+    fs::remove_file(&alias).unwrap();
+    symlink(&other.root, &alias).unwrap();
     let refused = world.factory(&read_args, None, None);
     assert!(!refused.status.success());
     assert!(String::from_utf8_lossy(&refused.stderr).contains("root physical identity changed"));
     assert_eq!(state, fs::read(&world.state).unwrap());
-    assert_eq!(ledger_a, ledger_bytes(&world)); assert_eq!(ledger_b, optional_ledger_bytes(&other));
-    fs::remove_file(&alias).unwrap(); symlink(&world.root, &alias).unwrap();
+    assert_eq!(ledger_a, ledger_bytes(&world));
+    assert_eq!(ledger_b, optional_ledger_bytes(&other));
+    fs::remove_file(&alias).unwrap();
+    symlink(&world.root, &alias).unwrap();
     let actual = value(world.factory(&read_args, None, None));
     assert_eq!(actual["centralResponse"]["data"], reviewed);
     let response = actual["decisionResponse"].clone();
-    assert!(response.is_object(), "actual native reviewed response required; no fallback");
+    assert!(
+        response.is_object(),
+        "actual native reviewed response required; no fallback"
+    );
     assert_eq!(response["outcome"], "resume");
     let mut resolution = world.request(json!({"operation":"resolve-unit-decision",
         "human_request_ref":DECISION,"response":response}));
-    resolution["caller"] = json!({"callerRef":HUMAN_REF,"projectionKind":"desktop-human","lineage":[HUMAN_REF]});
+    resolution["caller"] =
+        json!({"callerRef":HUMAN_REF,"projectionKind":"desktop-human","lineage":[HUMAN_REF]});
     value(world.raw_action(&resolution));
-    assert_eq!(world.reading().lifecycle, epilogos_factory::core::run::RunLifecycle::Active);
-    let resumed = fs::read(&world.state).unwrap(); value(world.raw_action(&resolution));
-    assert_eq!(resumed, fs::read(&world.state).unwrap(), "exact reply cannot resume twice");
-    assert_eq!(ledger_a, ledger_bytes(&world)); assert_eq!(ledger_b, optional_ledger_bytes(&other));
-    assert_eq!(previous_bytes, fs::read(previous).unwrap()); assert_eq!(world.ctrl, native_ctrl());
+    assert_eq!(
+        world.reading().lifecycle,
+        epilogos_factory::core::run::RunLifecycle::Active
+    );
+    let resumed = fs::read(&world.state).unwrap();
+    value(world.raw_action(&resolution));
+    assert_eq!(
+        resumed,
+        fs::read(&world.state).unwrap(),
+        "exact reply cannot resume twice"
+    );
+    assert_eq!(ledger_a, ledger_bytes(&world));
+    assert_eq!(ledger_b, optional_ledger_bytes(&other));
+    assert_eq!(previous_bytes, fs::read(previous).unwrap());
+    assert_eq!(world.ctrl, native_ctrl());
 }
-
 
 // Capture-consumer definitions. All scripts below execute the actual pinned
 // Ctrl first. They add OS stream/lifetime adversity, never owner reply JSON.
@@ -1851,342 +2447,737 @@ fn capture_ctrl_fault(world: &World, name: &str, tail: &str) -> PathBuf {
 }
 #[cfg(unix)]
 fn recover_capture_without_submit(world: &World, request: &mut Value, name: &str) {
-    let before=ledger_bytes(world);
-    request["recover"]=json!(true);request["lookupEndpoint"]=request["central"].clone();
-    request["lookupEndpoint"]["binary"]=json!(world.ctrl);request["expectedRevision"]=json!(world.reading().revision);
-    let recovered=value(receiving_output(world,request));
-    assert_eq!(recovered["needsReconciliation"],false);
-    assert_eq!(recovered["centralResponse"]["action"],"central.receiving.read");
-    assert_eq!(recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],true);
-    assert_eq!(before,ledger_bytes(world),"actual guarded lookup cannot add a native record/cursor");
-    assert_eq!(fs::read_to_string(world.root.join(format!("{name}.calls"))).unwrap().lines()
-        .filter(|line|*line=="central.receiving.submit").count(),1,"exactly one actual producer submission");
-    assert_eq!(world.ctrl,native_ctrl());
+    let before = ledger_bytes(world);
+    request["recover"] = json!(true);
+    request["lookupEndpoint"] = request["central"].clone();
+    request["lookupEndpoint"]["binary"] = json!(world.ctrl);
+    request["expectedRevision"] = json!(world.reading().revision);
+    let recovered = value(receiving_output(world, request));
+    assert_eq!(recovered["needsReconciliation"], false);
+    assert_eq!(
+        recovered["centralResponse"]["action"],
+        "central.receiving.read"
+    );
+    assert_eq!(
+        recovered["centralResponse"]["data"]["lookup"]["original_request_verified"],
+        true
+    );
+    assert_eq!(
+        before,
+        ledger_bytes(world),
+        "actual guarded lookup cannot add a native record/cursor"
+    );
+    assert_eq!(
+        fs::read_to_string(world.root.join(format!("{name}.calls")))
+            .unwrap()
+            .lines()
+            .filter(|line| *line == "central.receiving.submit")
+            .count(),
+        1,
+        "exactly one actual producer submission"
+    );
+    assert_eq!(world.ctrl, native_ctrl());
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual pinned Ctrl; real submit then owned exec sleep/pipe timeout, no response double"]
+#[ignore = "actual pinned Ctrl; real submit then owned exec sleep/pipe timeout, no response double"]
 fn native_receiving_capture_deadline_never_admits_a_json_shaped_prefix_and_restart_only_looks_up() {
-    let (world,attempt)=final_native_world();let baseline=ledger_bytes(&world);
-    let name="capture-native-ack-deadline";
-    let fault=capture_ctrl_fault(&world,name,"exec /bin/sleep 35");
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(fault);
-    let unresolved=value(receiving_output(&world,&request));
-    let actual:Value=serde_json::from_slice(&fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap()).unwrap();
-    assert_eq!(actual["ok"],true);assert_eq!(actual["action"],"central.receiving.submit");
-    assert_eq!(ledger_bytes(&world).len(),baseline.len()+1,"real native producer committed before transport loss");
-    assert_eq!(unresolved["needsReconciliation"],true);assert!(unresolved["centralResponse"].is_null());
-    let captured=&unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
-    assert_eq!(captured["processStarted"],true);assert_eq!(captured["timedOut"],true);
-    assert_eq!(captured["centralResponse"],Value::Null);
-    assert_eq!(captured["stdout"]["byteStanding"],"captured bytes only");
-    assert!(captured["stdout"]["byteLength"].as_u64().unwrap()>0);
-    assert_eq!(unresolved["transportObservation"]["phase"],"uncertain");
+    let (world, attempt) = final_native_world();
+    let baseline = ledger_bytes(&world);
+    let name = "capture-native-ack-deadline";
+    let fault = capture_ctrl_fault(&world, name, "exec /bin/sleep 35");
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(fault);
+    let unresolved = value(receiving_output(&world, &request));
+    let actual: Value =
+        serde_json::from_slice(&fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap())
+            .unwrap();
+    assert_eq!(actual["ok"], true);
+    assert_eq!(actual["action"], "central.receiving.submit");
+    assert_eq!(
+        ledger_bytes(&world).len(),
+        baseline.len() + 1,
+        "real native producer committed before transport loss"
+    );
+    assert_eq!(unresolved["needsReconciliation"], true);
+    assert!(unresolved["centralResponse"].is_null());
+    let captured = &unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
+    assert_eq!(captured["processStarted"], true);
+    assert_eq!(captured["timedOut"], true);
+    assert_eq!(captured["centralResponse"], Value::Null);
+    assert_eq!(captured["stdout"]["byteStanding"], "captured bytes only");
+    assert!(captured["stdout"]["byteLength"].as_u64().unwrap() > 0);
+    assert_eq!(unresolved["transportObservation"]["phase"], "uncertain");
     // New CLI process opens the retained canonical state; no cached public JSON
     // can attach receiving or claim a completed Run.
     assert!(!world.reading().completion_verified);
-    recover_capture_without_submit(&world,&mut request,name);
+    recover_capture_without_submit(&world, &mut request, name);
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual Ctrl plus real invalid UTF8 marker; exact private bytes and safe public diagnostic"]
+#[ignore = "actual Ctrl plus real invalid UTF8 marker; exact private bytes and safe public diagnostic"]
 fn native_receiving_capture_keeps_invalid_bytes_and_complete_status_without_debug_disclosure() {
-    let (world,attempt)=final_native_world();let name="capture-native-invalid-utf8";
+    let (world, attempt) = final_native_world();
+    let name = "capture-native-invalid-utf8";
     let fault=capture_ctrl_fault(&world,name,"printf '\\377capture-private-nonsecret-marker'\nprintf '\\376capture-private-stderr-marker' >&2");
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(fault);
-    let output=receiving_output(&world,&request);
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(fault);
+    let output = receiving_output(&world, &request);
     assert!(!String::from_utf8_lossy(&output.stderr).contains("capture-private"));
-    let unresolved=value(output);assert!(unresolved["centralResponse"].is_null());
-    let captured=&unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
-    assert_eq!(captured["stage"],"nativeReply");assert_eq!(captured["exitCode"],0);
-    assert_eq!(captured["stdoutEof"],true);assert_eq!(captured["stderrEof"],true);
-    let stdout=captured["stdout"]["retainedPrefix"].as_array().unwrap().iter().map(|n|n.as_u64().unwrap() as u8).collect::<Vec<_>>();
-    let stderr=captured["stderr"]["retainedPrefix"].as_array().unwrap().iter().map(|n|n.as_u64().unwrap() as u8).collect::<Vec<_>>();
-    let mut actual=fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap();
+    let unresolved = value(output);
+    assert!(unresolved["centralResponse"].is_null());
+    let captured = &unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
+    assert_eq!(captured["stage"], "nativeReply");
+    assert_eq!(captured["exitCode"], 0);
+    assert_eq!(captured["stdoutEof"], true);
+    assert_eq!(captured["stderrEof"], true);
+    let stdout = captured["stdout"]["retainedPrefix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_u64().unwrap() as u8)
+        .collect::<Vec<_>>();
+    let stderr = captured["stderr"]["retainedPrefix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n.as_u64().unwrap() as u8)
+        .collect::<Vec<_>>();
+    let mut actual = fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap();
     actual.extend_from_slice(b"\xffcapture-private-nonsecret-marker");
-    assert_eq!(stdout,&actual[..actual.len().min(16*1024)]);
-    assert_eq!(stderr,b"\xfecapture-private-stderr-marker");
-    assert_eq!(captured["stdout"]["sha256"],format!("{:x}",Sha256::digest(&actual)));
-    let retained=world.reading().attempts.into_iter().find(|r|r.attempt_ref==attempt).unwrap();
+    assert_eq!(stdout, &actual[..actual.len().min(16 * 1024)]);
+    assert_eq!(stderr, b"\xfecapture-private-stderr-marker");
+    assert_eq!(
+        captured["stdout"]["sha256"],
+        format!("{:x}", Sha256::digest(&actual))
+    );
+    let retained = world
+        .reading()
+        .attempts
+        .into_iter()
+        .find(|r| r.attempt_ref == attempt)
+        .unwrap();
     assert!(!format!("{retained:?}").contains("capture-private"));
     assert!(!format!("{retained:?}").contains("retainedPrefix"));
-    recover_capture_without_submit(&world,&mut request,name);
+    recover_capture_without_submit(&world, &mut request, name);
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual Ctrl then real OS output beyond capture profile; bounded evidence and no retry"]
+#[ignore = "actual Ctrl then real OS output beyond capture profile; bounded evidence and no retry"]
 fn native_receiving_capture_overflow_retains_bounded_actual_prefix_and_guarded_original() {
-    let (world,attempt)=final_native_world();let name="capture-native-output-overflow";
-    let fault=capture_ctrl_fault(&world,name,"while :; do printf '%8192s' capture-private-overflow; done");
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(fault);
-    let unresolved=value(receiving_output(&world,&request));assert!(unresolved["centralResponse"].is_null());
-    let captured=&unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
-    assert_eq!(captured["processStarted"],true);assert_eq!(captured["stdoutTruncated"],true);
-    assert!(captured["stdout"]["byteLength"].as_u64().unwrap()<=4*1024*1024);
-    assert!(captured["stdout"]["retainedPrefix"].as_array().unwrap().len()<=16*1024);
+    let (world, attempt) = final_native_world();
+    let name = "capture-native-output-overflow";
+    let fault = capture_ctrl_fault(
+        &world,
+        name,
+        "while :; do printf '%8192s' capture-private-overflow; done",
+    );
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(fault);
+    let unresolved = value(receiving_output(&world, &request));
+    assert!(unresolved["centralResponse"].is_null());
+    let captured = &unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
+    assert_eq!(captured["processStarted"], true);
+    assert_eq!(captured["stdoutTruncated"], true);
+    assert!(captured["stdout"]["byteLength"].as_u64().unwrap() <= 4 * 1024 * 1024);
+    assert!(
+        captured["stdout"]["retainedPrefix"]
+            .as_array()
+            .unwrap()
+            .len()
+            <= 16 * 1024
+    );
     assert!(captured["nativeTotalByteLength"].is_null());
     assert!(!world.reading().completion_verified);
-    recover_capture_without_submit(&world,&mut request,name);
+    recover_capture_without_submit(&world, &mut request, name);
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual Central authentication refusal and complete nonzero native ActionResult, no fabricated IO"]
+#[ignore = "actual Central authentication refusal and complete nonzero native ActionResult, no fabricated IO"]
 fn native_receiving_complete_nonok_retains_exact_original_code_details_and_status() {
-    let (world,attempt)=final_native_world();let baseline=ledger_bytes(&world);let name="capture-native-nonok";
-    let fault=capture_ctrl_fault(&world,name,"");
-    let mut request=world.receiving_request(&attempt);request["central"]["binary"]=json!(fault);
-    let output=world.factory(&["attempt","receiving",world.state.to_str().unwrap(),"-","--json"],Some(&request),Some("controlled-not-an-authorized-principal"));
-    let unresolved=value(output);
-    let actual:Value=serde_json::from_slice(&fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap()).unwrap();
-    assert_eq!(actual["ok"],false);assert_eq!(actual["action"],"central.receiving.submit");
+    let (world, attempt) = final_native_world();
+    let baseline = ledger_bytes(&world);
+    let name = "capture-native-nonok";
+    let fault = capture_ctrl_fault(&world, name, "");
+    let mut request = world.receiving_request(&attempt);
+    request["central"]["binary"] = json!(fault);
+    let output = world.factory(
+        &[
+            "attempt",
+            "receiving",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ],
+        Some(&request),
+        Some("controlled-not-an-authorized-principal"),
+    );
+    let unresolved = value(output);
+    let actual: Value =
+        serde_json::from_slice(&fs::read(world.root.join(format!("{name}.actual-reply"))).unwrap())
+            .unwrap();
+    assert_eq!(actual["ok"], false);
+    assert_eq!(actual["action"], "central.receiving.submit");
     assert!(actual["error"]["code"].as_str().is_some());
-    assert_eq!(unresolved["centralResponse"],actual,"actual structured cause/detail preserved verbatim");
-    let captured=&unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
-    assert_ne!(captured["exitCode"],0);assert_eq!(captured["stdoutEof"],true);assert_eq!(captured["clientReaped"],true);
-    assert_eq!(baseline,ledger_bytes(&world));assert_eq!(unresolved["needsReconciliation"],true);
-    assert_eq!(world.ctrl,native_ctrl());
+    assert_eq!(
+        unresolved["centralResponse"], actual,
+        "actual structured cause/detail preserved verbatim"
+    );
+    let captured = &unresolved["transportObservation"]["payload"]["detail"]["nativeCapture"];
+    assert_ne!(captured["exitCode"], 0);
+    assert_eq!(captured["stdoutEof"], true);
+    assert_eq!(captured["clientReaped"], true);
+    assert_eq!(baseline, ledger_bytes(&world));
+    assert_eq!(unresolved["needsReconciliation"], true);
+    assert_eq!(world.ctrl, native_ctrl());
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual native receiving/closure and real host byref read failure; provider bytes unchanged"]
+#[ignore = "actual native receiving/closure and real host byref read failure; provider bytes unchanged"]
 fn native_finished_prefetch_capture_failure_preserves_state_and_never_admits_partial_reply() {
-    let (world,attempt)=final_native_world();let received=world.return_to_central(&attempt);
-    world.transition("finishing",None);
-    let closure=json!({"finalAttemptRef":attempt,"reviewerAttemptRefs":[attempt],"receivingRef":received["centralResponse"]["data"]["return_ref"]});
-    let request=world.request(world.transition_operation("finished",Some(closure)));
-    let state=fs::read(&world.state).unwrap();let ledger=ledger_bytes(&world);
-    let fault=capture_ctrl_fault(&world,"capture-native-finished-read","exec /bin/sleep 35");
-    let output=world.factory_at_owner(&["attempt","action",world.state.to_str().unwrap(),"-","--json"],Some(&request),None,&fault,&world.root);
-    assert!(!output.status.success());assert!(!String::from_utf8_lossy(&output.stderr).contains("retainedPrefix"));
+    let (world, attempt) = final_native_world();
+    let received = world.return_to_central(&attempt);
+    world.transition("finishing", None);
+    let closure = json!({"finalAttemptRef":attempt,"reviewerAttemptRefs":[attempt],"receivingRef":received["centralResponse"]["data"]["return_ref"]});
+    let request = world.request(world.transition_operation("finished", Some(closure)));
+    let state = fs::read(&world.state).unwrap();
+    let ledger = ledger_bytes(&world);
+    let fault = capture_ctrl_fault(&world, "capture-native-finished-read", "exec /bin/sleep 35");
+    let output = world.factory_at_owner(
+        &[
+            "attempt",
+            "action",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ],
+        Some(&request),
+        None,
+        &fault,
+        &world.root,
+    );
+    assert!(!output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("retainedPrefix"));
     assert!(String::from_utf8_lossy(&output.stderr).contains("original capture cause retained"));
-    assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(ledger,ledger_bytes(&world));
-    assert!(!world.reading().completion_verified);assert_eq!(world.ctrl,native_ctrl());
+    assert_eq!(state, fs::read(&world.state).unwrap());
+    assert_eq!(ledger, ledger_bytes(&world));
+    assert!(!world.reading().completion_verified);
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
 #[cfg(unix)]
 #[test]
-#[ignore="actual native controlled question/review and real Resolve byref capture failure"]
+#[ignore = "actual native controlled question/review and real Resolve byref capture failure"]
 fn native_resolve_prefetch_capture_failure_preserves_original_question_and_provider() {
-    let current=native_ctrl();
-    assert_eq!(format!("{:x}",Sha256::digest(fs::read(&current).unwrap())),std::env::var("FACTORY_TEST_CTRL_SHA256").unwrap());
-    let world=World::new(false);world.start("inspect-source");world.request_decision();
-    let submitted=world.submit_decision();let pending=&submitted["centralResponse"]["data"];
-    let reviewed=world.review(pending,"answered",Some("Resume bounded work"),HUMAN);
-    let operation=world.resolve(&reviewed);let request=world.request(operation);
-    let state=fs::read(&world.state).unwrap();let ledger=ledger_bytes(&world);
-    let fault=capture_ctrl_fault(&world,"capture-native-resolve-read","exec /bin/sleep 35");
-    let output=world.factory_at_owner(&["attempt","action",world.state.to_str().unwrap(),"-","--json"],Some(&request),None,&fault,&world.root);
-    assert!(!output.status.success());assert!(String::from_utf8_lossy(&output.stderr).contains("original capture cause retained"));
+    let current = native_ctrl();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(&current).unwrap())),
+        std::env::var("FACTORY_TEST_CTRL_SHA256").unwrap()
+    );
+    let world = World::new(false);
+    world.start("inspect-source");
+    world.request_decision();
+    let submitted = world.submit_decision();
+    let pending = &submitted["centralResponse"]["data"];
+    let reviewed = world.review(pending, "answered", Some("Resume bounded work"), HUMAN);
+    let operation = world.resolve(&reviewed);
+    let request = world.request(operation);
+    let state = fs::read(&world.state).unwrap();
+    let ledger = ledger_bytes(&world);
+    let fault = capture_ctrl_fault(&world, "capture-native-resolve-read", "exec /bin/sleep 35");
+    let output = world.factory_at_owner(
+        &[
+            "attempt",
+            "action",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ],
+        Some(&request),
+        None,
+        &fault,
+        &world.root,
+    );
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("original capture cause retained"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("retainedPrefix"));
-    assert_eq!(state,fs::read(&world.state).unwrap());assert_eq!(ledger,ledger_bytes(&world));
-    assert_eq!(world.ctrl,native_ctrl());
+    assert_eq!(state, fs::read(&world.state).unwrap());
+    assert_eq!(ledger, ledger_bytes(&world));
+    assert_eq!(world.ctrl, native_ctrl());
 }
 
 // Real Actuation process fixtures have no ambient socket, credential or store.
 // The isolated server has no public shutdown verb; its exact owned Child/group
 // is terminated and reaped explicitly, never reported as a graceful ACK.
 #[cfg(unix)]
-fn native_gateway_binary() -> (PathBuf,String) {
-    let path=PathBuf::from(std::env::var_os("FACTORY_TEST_ACTUATION_GATEWAY").expect("genuine native Actuation binary required")).canonicalize().unwrap();
-    let bytes=fs::read(&path).unwrap();assert!(bytes.starts_with(b"\x7fELF")||bytes.starts_with(&[0xcf,0xfa,0xed,0xfe])||bytes.starts_with(&[0xca,0xfe,0xba,0xbe]));
-    let sha=format!("{:x}",Sha256::digest(&bytes));assert_eq!(sha,std::env::var("FACTORY_TEST_ACTUATION_GATEWAY_SHA256").expect("exact real Actuation pin required"));
-    let version=Command::new(&path).arg("--version").output_finite().unwrap();assert!(version.status.success());
-    (path,sha)
+fn native_gateway_binary() -> (PathBuf, String) {
+    let path = PathBuf::from(
+        std::env::var_os("FACTORY_TEST_ACTUATION_GATEWAY")
+            .expect("genuine native Actuation binary required"),
+    )
+    .canonicalize()
+    .unwrap();
+    let bytes = fs::read(&path).unwrap();
+    assert!(
+        bytes.starts_with(b"\x7fELF")
+            || bytes.starts_with(&[0xcf, 0xfa, 0xed, 0xfe])
+            || bytes.starts_with(&[0xca, 0xfe, 0xba, 0xbe])
+    );
+    let sha = format!("{:x}", Sha256::digest(&bytes));
+    assert_eq!(
+        sha,
+        std::env::var("FACTORY_TEST_ACTUATION_GATEWAY_SHA256")
+            .expect("exact real Actuation pin required")
+    );
+    let version = Command::new(&path)
+        .arg("--version")
+        .output_finite()
+        .unwrap();
+    assert!(version.status.success());
+    (path, sha)
 }
 #[cfg(unix)]
-fn start_capture_gateway(root:&Path,binary:&Path,socket:&Path,store:&Path,policy:&Path) -> (OwnedReceivingProcess, Value) {
+fn start_capture_gateway(
+    root: &Path,
+    binary: &Path,
+    socket: &Path,
+    store: &Path,
+    policy: &Path,
+) -> (OwnedReceivingProcess, Value) {
+    use epilogos_factory::native_gateway::{
+        demand_ok, GatewayConnection, GatewayError, GATEWAY_CONTRACT,
+    };
     use std::os::unix::process::CommandExt;
-    use epilogos_factory::native_gateway::{GatewayConnection,GatewayError,demand_ok,GATEWAY_CONTRACT};
-    let mut command=Command::new(binary);
-    command.args(["serve","--socket"]).arg(socket).arg("--store").arg(store).arg("--policy").arg(policy)
-        .args(["--token-env","FACTORY_CAPTURE_GATEWAY_TOKEN","--max-wait-ms","1000"])
-        .env("FACTORY_CAPTURE_GATEWAY_TOKEN","controlled-isolated-capture-gateway-credential")
-        .stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+    let mut command = Command::new(binary);
+    command
+        .args(["serve", "--socket"])
+        .arg(socket)
+        .arg("--store")
+        .arg(store)
+        .arg("--policy")
+        .arg(policy)
+        .args([
+            "--token-env",
+            "FACTORY_CAPTURE_GATEWAY_TOKEN",
+            "--max-wait-ms",
+            "1000",
+        ])
+        .env(
+            "FACTORY_CAPTURE_GATEWAY_TOKEN",
+            "controlled-isolated-capture-gateway-credential",
+        )
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0);
     // This helper imposes RLIMIT_FSIZE only. Whole-test memory/task/CPU/output
     // caps and the external native deadline belong to the qualification caller.
-    unsafe {command.pre_exec(|| {
-        let files=libc::rlimit {rlim_cur:16*1024*1024,rlim_max:16*1024*1024};
-        if libc::setrlimit(libc::RLIMIT_FSIZE,&files)!=0 {return Err(std::io::Error::last_os_error());} Ok(())
-    });}
-    let child=command.spawn().unwrap();let group=i32::try_from(child.id()).unwrap();
-    let mut owned=OwnedReceivingProcess {child,group,retired:false,signal_forbidden:None};
-    let until=std::time::Instant::now()+std::time::Duration::from_secs(5);
-    let mut last_connection_refusal=None;
+    unsafe {
+        command.pre_exec(|| {
+            let files = libc::rlimit {
+                rlim_cur: 16 * 1024 * 1024,
+                rlim_max: 16 * 1024 * 1024,
+            };
+            if libc::setrlimit(libc::RLIMIT_FSIZE, &files) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = command.spawn().unwrap();
+    let group = i32::try_from(child.id()).unwrap();
+    let mut owned = OwnedReceivingProcess {
+        child,
+        group,
+        retired: false,
+        signal_forbidden: None,
+    };
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut last_connection_refusal = None;
     // Native startup must confirm a listener every time, including a restart
     // whose dead predecessor left its UDS name. Path existence is no readiness.
     // Existing connect_addr does not give a hostile-backlog absolute timeout;
     // this fixture has one exclusively owned endpoint and an outer native cap.
     loop {
-        owned.observe_running().expect("native Gateway startup ownership; first wait-loss is permanent");
+        owned
+            .observe_running()
+            .expect("native Gateway startup ownership; first wait-loss is permanent");
         assert!(std::time::Instant::now()<until,"native Gateway startup deadline; last actual connection refusal: {last_connection_refusal:?}");
-        let attempt_deadline=until.min(std::time::Instant::now()+std::time::Duration::from_millis(250));
-        let mut connection=match GatewayConnection::connect(socket,attempt_deadline) {
-            Ok(connection)=>connection,
-            Err(GatewayError::Io(error)) if matches!(error.kind(),std::io::ErrorKind::NotFound|std::io::ErrorKind::ConnectionRefused)=>{
-                last_connection_refusal=Some(error);
-                owned.observe_running().expect("native Gateway bind pending must retain child custody");
-                std::thread::sleep(std::time::Duration::from_millis(5));continue;
-            },
-            Err(error)=>panic!("native Gateway startup connection refused: {error}"),
+        let attempt_deadline =
+            until.min(std::time::Instant::now() + std::time::Duration::from_millis(250));
+        let mut connection = match GatewayConnection::connect(socket, attempt_deadline) {
+            Ok(connection) => connection,
+            Err(GatewayError::Io(error))
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+                ) =>
+            {
+                last_connection_refusal = Some(error);
+                owned
+                    .observe_running()
+                    .expect("native Gateway bind pending must retain child custody");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                continue;
+            }
+            Err(error) => panic!("native Gateway startup connection refused: {error}"),
         };
         let hello=connection.call(&json!({"op":"hello","protocol":GATEWAY_CONTRACT,
             "token":"controlled-isolated-capture-gateway-credential","subject":"agent:factory-capture-native"}),attempt_deadline)
             .expect("actual native Gateway hello under the startup deadline");
-        demand_ok(&hello,"capture Gateway startup hello").expect("actual native authenticated hello required");
-        assert_eq!(hello["gateway"],"actuation-gateway");assert_eq!(hello["contract"],GATEWAY_CONTRACT);
-        assert_eq!(hello["subject"],"agent:factory-capture-native");assert_eq!(hello["store"],json!(store));
+        demand_ok(&hello, "capture Gateway startup hello")
+            .expect("actual native authenticated hello required");
+        assert_eq!(hello["gateway"], "actuation-gateway");
+        assert_eq!(hello["contract"], GATEWAY_CONTRACT);
+        assert_eq!(hello["subject"], "agent:factory-capture-native");
+        assert_eq!(hello["store"], json!(store));
         drop(connection);
-        owned.observe_running().expect("native Gateway must remain owned/running after its actual hello");
+        owned
+            .observe_running()
+            .expect("native Gateway must remain owned/running after its actual hello");
         assert!(root.is_dir());
         // The hello proves actual protocol/subject/store, not server PID/birth
         // or atomic attribution across an external hostile namespace writer.
-        return (owned,hello);
+        return (owned, hello);
     }
 }
 #[cfg(unix)]
-fn capture_gateway_stale_listener_is_closed(socket:&Path) {
+fn capture_gateway_stale_listener_is_closed(socket: &Path) {
+    use epilogos_factory::native_gateway::{GatewayConnection, GatewayError};
     use std::os::unix::fs::FileTypeExt;
-    use epilogos_factory::native_gateway::{GatewayConnection,GatewayError};
-    assert!(fs::symlink_metadata(socket).unwrap().file_type().is_socket(),"actual abrupt predecessor leaves its UDS pathname");
+    assert!(
+        fs::symlink_metadata(socket)
+            .unwrap()
+            .file_type()
+            .is_socket(),
+        "actual abrupt predecessor leaves its UDS pathname"
+    );
     // The real OS connect, after exact owned group reap/absence, must refuse
     // before we launch the actual successor. No fake frame or listener is used.
-    let deadline=std::time::Instant::now()+std::time::Duration::from_millis(250);
-    match GatewayConnection::connect(socket,deadline) {
-        Err(GatewayError::Io(error))=>assert_eq!(error.kind(),std::io::ErrorKind::ConnectionRefused,"actual stale UDS must have no listener"),
-        Err(error)=>panic!("stale Gateway endpoint refusal was not the native no-listener cause: {error}"),
-        Ok(_)=>panic!("retired Gateway endpoint still admitted a native connection"),
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(250);
+    match GatewayConnection::connect(socket, deadline) {
+        Err(GatewayError::Io(error)) => assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::ConnectionRefused,
+            "actual stale UDS must have no listener"
+        ),
+        Err(error) => {
+            panic!("stale Gateway endpoint refusal was not the native no-listener cause: {error}")
+        }
+        Ok(_) => panic!("retired Gateway endpoint still admitted a native connection"),
     }
 }
 #[cfg(unix)]
-fn capture_gateway_policy(path:&Path) {
+fn capture_gateway_policy(path: &Path) {
     fs::write(path,json!({"schema":"actuation.gateway-policy/v1","attach":[{"subject":"agent:factory-capture-native",
         "stream_ref":"stream:factory-capture-native","role":"agent","agency_ref":"agency:factory-capture-native",
         "agent_ref":"agent:factory-capture-native","locus_ref":"locus:factory-capture-native","may_invoke":false}],"invoke":[]}).to_string()).unwrap();
 }
 #[cfg(unix)]
-fn capture_gateway_invocation(socket:&Path,program:&Path,args:Vec<String>,return_ref:&str) -> Value {
+fn capture_gateway_invocation(
+    socket: &Path,
+    program: &Path,
+    args: Vec<String>,
+    return_ref: &str,
+) -> Value {
     json!({"operation":"actuation-gateway","socket_path":socket,"subject":"agent:factory-capture-native",
         "stream_ref":"stream:factory-capture-native","actuation_ref":"actuation:factory-capture-native",
         "agency_ref":"agency:factory-capture-native","agent_session_ref":"session:factory-capture-native","return_ref":return_ref,
         "contract_revision":epilogos_factory::native_owner::ACTUATION_GATEWAY_CONTRACT,"timeout_ms":1000,"executor_wait_ms":0,"program":program,"args":args})
 }
 #[cfg(unix)]
-fn capture_gateway_child(root:&Path,input:&Value,standing:&str,label:&str) -> Value {
+fn capture_gateway_child(root: &Path, input: &Value, standing: &str, label: &str) -> Value {
     use std::os::unix::fs::PermissionsExt;
-    let request=root.join(format!("{label}.input.json"));let evidence=root.join(format!("{label}.actual-evidence.json"));
-    let mut file=fs::OpenOptions::new().write(true).create_new(true).open(&request).unwrap();
-    file.set_permissions(fs::Permissions::from_mode(0o600)).unwrap();file.write_all(input.to_string().as_bytes()).unwrap();file.sync_all().unwrap();
-    let output=Command::new(std::env::current_exe().unwrap()).args(["--exact","native_capture_gateway_actual_child","--ignored","--nocapture"])
-        .env("FACTORY_CAPTURE_GATEWAY_CHILD_INPUT",&request).env("FACTORY_CAPTURE_GATEWAY_CHILD_EVIDENCE",&evidence)
-        .env("FACTORY_CAPTURE_GATEWAY_CHILD_STANDING",standing)
-        .env(epilogos_factory::native_gateway::GATEWAY_TOKEN_ENV,"controlled-isolated-capture-gateway-credential")
-        .output_finite().unwrap();
-    assert!(output.status.success(),"actual child regression failed; safe stderr {}",String::from_utf8_lossy(&output.stderr));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),"actual child test cannot pass with zero selected tests");
+    let request = root.join(format!("{label}.input.json"));
+    let evidence = root.join(format!("{label}.actual-evidence.json"));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&request)
+        .unwrap();
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .unwrap();
+    file.write_all(input.to_string().as_bytes()).unwrap();
+    file.sync_all().unwrap();
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "native_capture_gateway_actual_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("FACTORY_CAPTURE_GATEWAY_CHILD_INPUT", &request)
+        .env("FACTORY_CAPTURE_GATEWAY_CHILD_EVIDENCE", &evidence)
+        .env("FACTORY_CAPTURE_GATEWAY_CHILD_STANDING", standing)
+        .env(
+            epilogos_factory::native_gateway::GATEWAY_TOKEN_ENV,
+            "controlled-isolated-capture-gateway-credential",
+        )
+        .output_finite()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "actual child regression failed; safe stderr {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"),
+        "actual child test cannot pass with zero selected tests"
+    );
     assert!(!String::from_utf8_lossy(&output.stdout).contains("capture-private"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("capture-private"));
-    let metadata=fs::metadata(&evidence).unwrap();assert_eq!(metadata.permissions().mode()&0o777,0o600);
+    let metadata = fs::metadata(&evidence).unwrap();
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
     serde_json::from_slice(&fs::read(evidence).unwrap()).unwrap()
 }
 #[cfg(unix)]
-fn actual_gateway_lines(store:&Path)->(PathBuf,Vec<u8>,Vec<Value>) {
-    let paths=fs::read_dir(store).unwrap().map(|entry|entry.unwrap().path()).filter(|p|p.extension().is_some_and(|x|x=="jsonl")).collect::<Vec<_>>();
-    assert_eq!(paths.len(),1,"exact isolated native stream");let raw=fs::read(&paths[0]).unwrap();
-    let rows=std::str::from_utf8(&raw).unwrap().lines().map(|line|serde_json::from_str::<Value>(line).unwrap()).collect();(paths[0].clone(),raw,rows)
+fn actual_gateway_lines(store: &Path) -> (PathBuf, Vec<u8>, Vec<Value>) {
+    let paths = fs::read_dir(store)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+        .collect::<Vec<_>>();
+    assert_eq!(paths.len(), 1, "exact isolated native stream");
+    let raw = fs::read(&paths[0]).unwrap();
+    let rows = std::str::from_utf8(&raw)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+        .collect();
+    (paths[0].clone(), raw, rows)
 }
 #[cfg(unix)]
 #[test]
-#[ignore="required child gate; three actual executions through the two real native Gateway parents, no standalone fallback"]
+#[ignore = "required child gate; three actual executions through the two real native Gateway parents, no standalone fallback"]
 fn native_capture_gateway_actual_child() {
     use std::error::Error;
     use std::os::unix::fs::OpenOptionsExt;
-    let input=PathBuf::from(std::env::var_os("FACTORY_CAPTURE_GATEWAY_CHILD_INPUT").expect("only the actual native parent fixture provides input"));
-    let evidence=PathBuf::from(std::env::var_os("FACTORY_CAPTURE_GATEWAY_CHILD_EVIDENCE").unwrap());
-    let standing=std::env::var("FACTORY_CAPTURE_GATEWAY_CHILD_STANDING").unwrap();
-    let invocation=serde_json::from_slice::<epilogos_factory::native_owner::NativeOwnerInvocation>(&fs::read(input).unwrap()).unwrap();
-    let observed=epilogos_factory::native_owner::invoke_native_owner(&invocation);
-    let actual=match standing.as_str() {
+    let input = PathBuf::from(
+        std::env::var_os("FACTORY_CAPTURE_GATEWAY_CHILD_INPUT")
+            .expect("only the actual native parent fixture provides input"),
+    );
+    let evidence =
+        PathBuf::from(std::env::var_os("FACTORY_CAPTURE_GATEWAY_CHILD_EVIDENCE").unwrap());
+    let standing = std::env::var("FACTORY_CAPTURE_GATEWAY_CHILD_STANDING").unwrap();
+    let invocation =
+        serde_json::from_slice::<epilogos_factory::native_owner::NativeOwnerInvocation>(
+            &fs::read(input).unwrap(),
+        )
+        .unwrap();
+    let observed = epilogos_factory::native_owner::invoke_native_owner(&invocation);
+    let actual = match standing.as_str() {
         "acknowledged-capture" => {
-            let receipt=observed.unwrap();assert_eq!(receipt.phase,epilogos_factory::attempt_runtime::OwnerOperationPhase::Uncertain);
-            assert_eq!(receipt.payload["native_capture"]["stdoutTruncated"],true);
-            assert_eq!(receipt.payload["tool_result_receipt"]["ok"],true);assert_eq!(receipt.payload["return_receipt"]["ok"],true);
-            assert!(!format!("{receipt:?}").contains("retainedPrefix"));serde_json::to_value(receipt).unwrap()
-        },
-        "complete-nonzero" => {let receipt=observed.unwrap();assert_eq!(receipt.phase,epilogos_factory::attempt_runtime::OwnerOperationPhase::Failed);
-            assert_eq!(receipt.payload["exit_code"],7);assert!(receipt.payload["native_capture"].is_null());serde_json::to_value(receipt).unwrap()},
+            let receipt = observed.unwrap();
+            assert_eq!(
+                receipt.phase,
+                epilogos_factory::attempt_runtime::OwnerOperationPhase::Uncertain
+            );
+            assert_eq!(receipt.payload["native_capture"]["stdoutTruncated"], true);
+            assert_eq!(receipt.payload["tool_result_receipt"]["ok"], true);
+            assert_eq!(receipt.payload["return_receipt"]["ok"], true);
+            assert!(!format!("{receipt:?}").contains("retainedPrefix"));
+            serde_json::to_value(receipt).unwrap()
+        }
+        "complete-nonzero" => {
+            let receipt = observed.unwrap();
+            assert_eq!(
+                receipt.phase,
+                epilogos_factory::attempt_runtime::OwnerOperationPhase::Failed
+            );
+            assert_eq!(receipt.payload["exit_code"], 7);
+            assert!(receipt.payload["native_capture"].is_null());
+            serde_json::to_value(receipt).unwrap()
+        }
         "post-capture-store-failure" => {
-            let error=observed.unwrap_err();assert!(!format!("{error:?} {error}").contains("retainedPrefix"));
-            let epilogos_factory::native_owner::NativeOwnerError::ToolObservation(failure)=&error else {panic!("real local capture must retain its later Gateway cause");};
-            let original=failure.primary_capture_cause().unwrap();let capture=epilogos_factory::native_process::capture_failure(original).unwrap();
-            assert!(capture.process_started());assert!(capture.stdout_truncated());assert!(capture.stdout().len()<=4*1024*1024);
-            assert!(failure.source().unwrap().downcast_ref::<std::io::Error>().is_some());
+            let error = observed.unwrap_err();
+            assert!(!format!("{error:?} {error}").contains("retainedPrefix"));
+            let epilogos_factory::native_owner::NativeOwnerError::ToolObservation(failure) = &error
+            else {
+                panic!("real local capture must retain its later Gateway cause");
+            };
+            let original = failure.primary_capture_cause().unwrap();
+            let capture = epilogos_factory::native_process::capture_failure(original).unwrap();
+            assert!(capture.process_started());
+            assert!(capture.stdout_truncated());
+            assert!(capture.stdout().len() <= 4 * 1024 * 1024);
+            assert!(failure
+                .source()
+                .unwrap()
+                .downcast_ref::<std::io::Error>()
+                .is_some());
             assert!(!failure.acknowledged_receipts()["tool_request_receipt"].is_null());
             assert!(failure.acknowledged_receipts()["tool_result_receipt"].is_null());
             json!({"actualCapture":failure.observation(),"actualAcknowledgedReceipts":failure.acknowledged_receipts(),
                 "gatewayCauseStanding":"actual producer refusal; no local ACK or invented durable event","durableCaptureAcknowledged":false})
-        },_=>panic!("unrecognised real native child standing"),
+        }
+        _ => panic!("unrecognised real native child standing"),
     };
-    let mut out=fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&evidence).unwrap();
-    out.write_all(serde_json::to_vec(&actual).unwrap().as_slice()).unwrap();out.sync_all().unwrap();
+    let mut out = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&evidence)
+        .unwrap();
+    out.write_all(serde_json::to_vec(&actual).unwrap().as_slice())
+        .unwrap();
+    out.sync_all().unwrap();
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual hash-pinned Actuation server; real local overflow, native ACK and owned restart, no provider"]
+#[ignore = "actual hash-pinned Actuation server; real local overflow, native ACK and owned restart, no provider"]
 fn native_gateway_capture_acknowledgement_survives_actual_store_restart_and_complete_nonzero() {
-    let root=tempfile::tempdir().unwrap();let root=root.path().canonicalize().unwrap();let (binary,sha)=native_gateway_binary();
-    let socket=root.join("gateway.sock");let store=root.join("stream-store");let policy=root.join("gateway-policy.json");capture_gateway_policy(&policy);
-    let (mut server,initial_hello)=start_capture_gateway(&root,&binary,&socket,&store,&policy);
-    assert_eq!(initial_hello["store"],json!(store));assert_eq!(initial_hello["ok"],true);
-    let input=capture_gateway_invocation(&socket,Path::new("/bin/sh"),vec!["-c".into(),"while :; do printf '%8192s' capture-private-gateway-overflow; done".into()],"return:capture-native-overflow");
-    let receipt=capture_gateway_child(&root,&input,"acknowledged-capture","overflow");
-    let (_,before,rows)=actual_gateway_lines(&store);
-    let tool_event=epilogos_factory::native_gateway::receipt_event(&receipt["payload"]["tool_result_receipt"]);
-    let return_event=epilogos_factory::native_gateway::receipt_event(&receipt["payload"]["return_receipt"]);
-    assert_eq!(tool_event["kind"],"tool-result");assert_eq!(tool_event["return_ref"],"return:capture-native-overflow");
-    assert_eq!(tool_event["metadata"]["native_capture"],receipt["payload"]["native_capture"]);
-    assert_eq!(return_event["kind"],"return");assert_eq!(return_event["return_ref"],"return:capture-native-overflow");
-    assert!(rows.iter().any(|row|row==tool_event),"actual native JSONL retains the exact ACKed tool event and capture");
-    assert!(rows.iter().any(|row|row==return_event),"actual native JSONL retains the exact correlated Return event");
-    server.retire().unwrap();capture_gateway_stale_listener_is_closed(&socket);
-    assert_eq!(before,actual_gateway_lines(&store).1,"stale-socket native refusal cannot change retained stream bytes");
-    let (mut restarted,successor_hello)=start_capture_gateway(&root,&binary,&socket,&store,&policy);
-    assert_eq!(successor_hello["store"],initial_hello["store"]);assert_eq!(successor_hello["ok"],true);
-    let (_,restored,_)=actual_gateway_lines(&store);assert_eq!(before,restored,"server restart cannot rewrite prior actual bytes");
-    let input=capture_gateway_invocation(&socket,Path::new("/bin/sh"),vec!["-c".into(),"printf actual-complete-nonzero; exit 7".into()],"return:capture-native-complete-nonzero");
-    let control=capture_gateway_child(&root,&input,"complete-nonzero","complete-nonzero");
-    assert_eq!(control["phase"],"failed");assert_eq!(receipt["phase"],"uncertain");
-    let (_,after,_)=actual_gateway_lines(&store);assert!(after.starts_with(&before));
-    restarted.retire().unwrap();assert_eq!(format!("{:x}",Sha256::digest(fs::read(binary).unwrap())),sha);
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let (binary, sha) = native_gateway_binary();
+    let socket = root.join("gateway.sock");
+    let store = root.join("stream-store");
+    let policy = root.join("gateway-policy.json");
+    capture_gateway_policy(&policy);
+    let (mut server, initial_hello) =
+        start_capture_gateway(&root, &binary, &socket, &store, &policy);
+    assert_eq!(initial_hello["store"], json!(store));
+    assert_eq!(initial_hello["ok"], true);
+    let input = capture_gateway_invocation(
+        &socket,
+        Path::new("/bin/sh"),
+        vec![
+            "-c".into(),
+            "while :; do printf '%8192s' capture-private-gateway-overflow; done".into(),
+        ],
+        "return:capture-native-overflow",
+    );
+    let receipt = capture_gateway_child(&root, &input, "acknowledged-capture", "overflow");
+    let (_, before, rows) = actual_gateway_lines(&store);
+    let tool_event =
+        epilogos_factory::native_gateway::receipt_event(&receipt["payload"]["tool_result_receipt"]);
+    let return_event =
+        epilogos_factory::native_gateway::receipt_event(&receipt["payload"]["return_receipt"]);
+    assert_eq!(tool_event["kind"], "tool-result");
+    assert_eq!(tool_event["return_ref"], "return:capture-native-overflow");
+    assert_eq!(
+        tool_event["metadata"]["native_capture"],
+        receipt["payload"]["native_capture"]
+    );
+    assert_eq!(return_event["kind"], "return");
+    assert_eq!(return_event["return_ref"], "return:capture-native-overflow");
+    assert!(
+        rows.iter().any(|row| row == tool_event),
+        "actual native JSONL retains the exact ACKed tool event and capture"
+    );
+    assert!(
+        rows.iter().any(|row| row == return_event),
+        "actual native JSONL retains the exact correlated Return event"
+    );
+    server.retire().unwrap();
+    capture_gateway_stale_listener_is_closed(&socket);
+    assert_eq!(
+        before,
+        actual_gateway_lines(&store).1,
+        "stale-socket native refusal cannot change retained stream bytes"
+    );
+    let (mut restarted, successor_hello) =
+        start_capture_gateway(&root, &binary, &socket, &store, &policy);
+    assert_eq!(successor_hello["store"], initial_hello["store"]);
+    assert_eq!(successor_hello["ok"], true);
+    let (_, restored, _) = actual_gateway_lines(&store);
+    assert_eq!(
+        before, restored,
+        "server restart cannot rewrite prior actual bytes"
+    );
+    let input = capture_gateway_invocation(
+        &socket,
+        Path::new("/bin/sh"),
+        vec!["-c".into(), "printf actual-complete-nonzero; exit 7".into()],
+        "return:capture-native-complete-nonzero",
+    );
+    let control = capture_gateway_child(&root, &input, "complete-nonzero", "complete-nonzero");
+    assert_eq!(control["phase"], "failed");
+    assert_eq!(receipt["phase"], "uncertain");
+    let (_, after, _) = actual_gateway_lines(&store);
+    assert!(after.starts_with(&before));
+    restarted.retire().unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(binary).unwrap())),
+        sha
+    );
 }
 #[cfg(unix)]
 #[test]
-#[ignore="actual hash-pinned Actuation JSONL owner; real EACCES after tool request plus actual local overflow"]
+#[ignore = "actual hash-pinned Actuation JSONL owner; real EACCES after tool request plus actual local overflow"]
 fn native_gateway_after_capture_publication_failure_keeps_both_causes_and_no_false_ack() {
     use std::os::unix::fs::PermissionsExt;
-    assert_ne!(unsafe {libc::geteuid()},0,"real EACCES fixture requires an unprivileged native owner");
-    let root=tempfile::tempdir().unwrap();let root=root.path().canonicalize().unwrap();let (binary,sha)=native_gateway_binary();
-    let socket=root.join("gateway.sock");let store=root.join("stream-store");let policy=root.join("gateway-policy.json");capture_gateway_policy(&policy);
-    let (mut server,initial_hello)=start_capture_gateway(&root,&binary,&socket,&store,&policy);
-    assert_eq!(initial_hello["store"],json!(store));assert_eq!(initial_hello["ok"],true);
+    assert_ne!(
+        unsafe { libc::geteuid() },
+        0,
+        "real EACCES fixture requires an unprivileged native owner"
+    );
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let (binary, sha) = native_gateway_binary();
+    let socket = root.join("gateway.sock");
+    let store = root.join("stream-store");
+    let policy = root.join("gateway-policy.json");
+    capture_gateway_policy(&policy);
+    let (mut server, initial_hello) =
+        start_capture_gateway(&root, &binary, &socket, &store, &policy);
+    assert_eq!(initial_hello["store"], json!(store));
+    assert_eq!(initial_hello["ok"], true);
     let tail=format!("set -- {}/*.jsonl; [ \"$#\" -eq 1 ] || exit 65; /bin/chmod 000 \"$1\" || exit 66; while :; do printf '%8192s' capture-private-gateway-overflow; done",native_shell_quote(&store));
-    let input=capture_gateway_invocation(&socket,Path::new("/bin/sh"),vec!["-c".into(),tail],"return:capture-native-store-denied");
-    let actual=capture_gateway_child(&root,&input,"post-capture-store-failure","store-denied");
-    let paths=fs::read_dir(&store).unwrap().map(|e|e.unwrap().path()).filter(|p|p.extension().is_some_and(|s|s=="jsonl")).collect::<Vec<_>>();assert_eq!(paths.len(),1);
-    fs::set_permissions(&paths[0],fs::Permissions::from_mode(0o600)).unwrap();
-    let (_,before,rows)=actual_gateway_lines(&store);
-    let request_event=epilogos_factory::native_gateway::receipt_event(&actual["actualAcknowledgedReceipts"]["tool_request_receipt"]);
-    assert_eq!(request_event["kind"],"tool-request");assert_eq!(request_event["return_ref"],"return:capture-native-store-denied");
-    assert!(rows.iter().any(|row|row==request_event),"actual native tool-request ACK must be retained verbatim");
-    assert!(!rows.iter().any(|row|row["kind"]=="tool-result" || row["kind"]=="return"),"failed native store append cannot be certified by consumer metadata");
-    assert_eq!(actual["durableCaptureAcknowledged"],false);
-    server.retire().unwrap();capture_gateway_stale_listener_is_closed(&socket);
-    assert_eq!(before,actual_gateway_lines(&store).1,"real stale-socket refusal cannot create an event");
-    let (mut restarted,successor_hello)=start_capture_gateway(&root,&binary,&socket,&store,&policy);
-    assert_eq!(successor_hello["store"],initial_hello["store"]);assert_eq!(successor_hello["ok"],true);
-    assert_eq!(before,actual_gateway_lines(&store).1,"native successor hello/restart cannot create the refused result/evidence/Return");
-    restarted.retire().unwrap();assert_eq!(format!("{:x}",Sha256::digest(fs::read(binary).unwrap())),sha);
+    let input = capture_gateway_invocation(
+        &socket,
+        Path::new("/bin/sh"),
+        vec!["-c".into(), tail],
+        "return:capture-native-store-denied",
+    );
+    let actual = capture_gateway_child(&root, &input, "post-capture-store-failure", "store-denied");
+    let paths = fs::read_dir(&store)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|s| s == "jsonl"))
+        .collect::<Vec<_>>();
+    assert_eq!(paths.len(), 1);
+    fs::set_permissions(&paths[0], fs::Permissions::from_mode(0o600)).unwrap();
+    let (_, before, rows) = actual_gateway_lines(&store);
+    let request_event = epilogos_factory::native_gateway::receipt_event(
+        &actual["actualAcknowledgedReceipts"]["tool_request_receipt"],
+    );
+    assert_eq!(request_event["kind"], "tool-request");
+    assert_eq!(
+        request_event["return_ref"],
+        "return:capture-native-store-denied"
+    );
+    assert!(
+        rows.iter().any(|row| row == request_event),
+        "actual native tool-request ACK must be retained verbatim"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["kind"] == "tool-result" || row["kind"] == "return"),
+        "failed native store append cannot be certified by consumer metadata"
+    );
+    assert_eq!(actual["durableCaptureAcknowledged"], false);
+    server.retire().unwrap();
+    capture_gateway_stale_listener_is_closed(&socket);
+    assert_eq!(
+        before,
+        actual_gateway_lines(&store).1,
+        "real stale-socket refusal cannot create an event"
+    );
+    let (mut restarted, successor_hello) =
+        start_capture_gateway(&root, &binary, &socket, &store, &policy);
+    assert_eq!(successor_hello["store"], initial_hello["store"]);
+    assert_eq!(successor_hello["ok"], true);
+    assert_eq!(
+        before,
+        actual_gateway_lines(&store).1,
+        "native successor hello/restart cannot create the refused result/evidence/Return"
+    );
+    restarted.retire().unwrap();
+    assert_eq!(
+        format!("{:x}", Sha256::digest(fs::read(binary).unwrap())),
+        sha
+    );
 }
-
 
 #[test]
 #[ignore = "requires actual pinned ctrl and admitted FACTORY_NATIVE_EVIDENCE_DIR; no provider-double fallback"]
@@ -2197,18 +3188,26 @@ fn actual_late_return_before_termination_retains_current_stop_across_restart() {
         let attempt = world.start("inspect-source");
         let unit = world.workflow.unit("inspect-source").unwrap();
         let (returned, artifact) = world.prepare_native_contribution(
-            "inspect-source", &attempt, "late-before-termination");
+            "inspect-source",
+            &attempt,
+            "late-before-termination",
+        );
         // Central's genuine finite subprocess has exited. These Factory facts
         // record its returned material and stop chronology; no model is launched.
         world.action(json!({"operation":"request-cancellation","attempt_ref":attempt}));
         world.action(json!({"operation":"accept-cancellation","attempt_ref":attempt}));
         if move_subject {
-            world.action(json!({"operation":"advance-subject","subject_ref":unit.subject_ref,
-                "revision":returned["revision"]}));
+            world.action(
+                json!({"operation":"advance-subject","subject_ref":unit.subject_ref,
+                "revision":returned["revision"]}),
+            );
         }
         world.action(artifact);
         let (late, _) = world.closure_readings("late-before-termination");
-        assert_eq!(late["legs"][unit.reference.to_string()]["status"], "late_result");
+        assert_eq!(
+            late["legs"][unit.reference.to_string()]["status"],
+            "late_result"
+        );
         let old_late = world.reading().legs[&unit.reference].late_artifacts.clone();
         assert_eq!(old_late.len(), 1);
         // Exact bytes from the real owner at this point, before termination.
@@ -2219,7 +3218,8 @@ fn actual_late_return_before_termination_retains_current_stop_across_restart() {
         assert!(source_file.metadata().unwrap().len() <= 16 * 1024 * 1024);
         let mut source_bytes = Vec::new();
         Read::take(&mut source_file, 16 * 1024 * 1024 + 1)
-            .read_to_end(&mut source_bytes).unwrap();
+            .read_to_end(&mut source_bytes)
+            .unwrap();
         assert!(source_bytes.len() <= 16 * 1024 * 1024);
         let snapshot_path = world._dir.path().join(if move_subject {
             "late-before-termination-moved.owner-state.json"
@@ -2261,30 +3261,51 @@ fn actual_late_return_before_termination_retains_current_stop_across_restart() {
             .unwrap();
         manifest_file.write_all(&manifest_bytes).unwrap();
         manifest_file.sync_all().unwrap();
-        fs::File::open(world._dir.path()).unwrap().sync_all().unwrap();
+        fs::File::open(world._dir.path())
+            .unwrap()
+            .sync_all()
+            .unwrap();
         assert_eq!(fs::read(&manifest_path).unwrap(), manifest_bytes);
-        eprintln!("native cancellation engine basis: {} sha256:{}",
-            snapshot_path.display(), snapshot_sha);
-        let request = world.request(json!({"operation":"record-process-termination","attempt_ref":attempt}));
+        eprintln!(
+            "native cancellation engine basis: {} sha256:{}",
+            snapshot_path.display(),
+            snapshot_sha
+        );
+        let request =
+            world.request(json!({"operation":"record-process-termination","attempt_ref":attempt}));
         let receipt = value(world.raw_action(&request));
         let committed = fs::read(&world.state).unwrap();
         assert_eq!(value(world.raw_action(&request)), receipt);
-        assert_eq!(fs::read(&world.state).unwrap(), committed,
-            "exact restart replay must not record a second termination");
+        assert_eq!(
+            fs::read(&world.state).unwrap(),
+            committed,
+            "exact restart replay must not record a second termination"
+        );
         let current = world.reading();
         let leg = &current.legs[&unit.reference];
         assert_eq!(leg.status, LegStatus::ProcessTerminated);
         assert_eq!(leg.late_artifacts, old_late);
         assert_eq!(leg.attempts.last().unwrap().late_artifacts, old_late);
-        assert_eq!(leg.status_history.iter().filter(|s| **s == LegStatus::ProcessTerminated).count(), 1);
+        assert_eq!(
+            leg.status_history
+                .iter()
+                .filter(|s| **s == LegStatus::ProcessTerminated)
+                .count(),
+            1
+        );
         assert!(!leg.status_history.contains(&LegStatus::Quiescent));
         assert!(!current.completion_verified);
         if move_subject {
-            world.refuse_with_reason(json!({"operation":"incorporate-late-result","attempt_ref":attempt}),
-                &["StaleLateResult"]);
+            world.refuse_with_reason(
+                json!({"operation":"incorporate-late-result","attempt_ref":attempt}),
+                &["StaleLateResult"],
+            );
         } else {
             world.action(json!({"operation":"incorporate-late-result","attempt_ref":attempt}));
-            assert_eq!(world.reading().legs[&unit.reference].status, LegStatus::Returned);
+            assert_eq!(
+                world.reading().legs[&unit.reference].status,
+                LegStatus::Returned
+            );
             assert!(!world.reading().completion_verified);
         }
         world.closure_readings("late-termination-final");
@@ -2298,23 +3319,32 @@ fn actual_termination_before_late_return_replays_original_stop_without_reissue()
     let world = World::new_retained(false);
     let attempt = world.start("inspect-source");
     let unit = world.workflow.unit("inspect-source").unwrap();
-    let (_, artifact) = world.prepare_native_contribution(
-        "inspect-source", &attempt, "termination-before-late");
+    let (_, artifact) =
+        world.prepare_native_contribution("inspect-source", &attempt, "termination-before-late");
     world.action(json!({"operation":"request-cancellation","attempt_ref":attempt}));
     world.action(json!({"operation":"accept-cancellation","attempt_ref":attempt}));
-    let request = world.request(json!({"operation":"record-process-termination","attempt_ref":attempt}));
+    let request =
+        world.request(json!({"operation":"record-process-termination","attempt_ref":attempt}));
     let receipt = value(world.raw_action(&request));
     world.action(artifact);
     let committed = fs::read(&world.state).unwrap();
     assert_eq!(value(world.raw_action(&request)), receipt);
     assert_eq!(fs::read(&world.state).unwrap(), committed);
-    world.refuse_with_reason(json!({"operation":"record-process-termination","attempt_ref":attempt}),
-        &["InvalidTransition", "LateResult"]);
+    world.refuse_with_reason(
+        json!({"operation":"record-process-termination","attempt_ref":attempt}),
+        &["InvalidTransition", "LateResult"],
+    );
     let current = world.reading();
     let leg = &current.legs[&unit.reference];
     assert_eq!(leg.status, LegStatus::LateResult);
     assert_eq!(leg.late_artifacts.len(), 1);
-    assert_eq!(leg.status_history.iter().filter(|s| **s == LegStatus::ProcessTerminated).count(), 1);
+    assert_eq!(
+        leg.status_history
+            .iter()
+            .filter(|s| **s == LegStatus::ProcessTerminated)
+            .count(),
+        1
+    );
     assert!(!current.completion_verified);
     world.closure_readings("termination-before-late-final");
 }
@@ -2326,57 +3356,84 @@ fn actual_retry_late_material_cannot_borrow_predecessor_cancellation() {
     let world = World::new_retained(false);
     let original = world.start("inspect-source");
     let unit = world.workflow.unit("inspect-source").unwrap();
-    let (first_returned, first_artifact) = world.prepare_native_contribution(
-        "inspect-source", &original, "retry-predecessor");
+    let (first_returned, first_artifact) =
+        world.prepare_native_contribution("inspect-source", &original, "retry-predecessor");
     world.action(json!({"operation":"request-cancellation","attempt_ref":original}));
     world.action(json!({"operation":"accept-cancellation","attempt_ref":original}));
     world.action(first_artifact);
     world.action(json!({"operation":"record-process-termination","attempt_ref":original}));
     world.action(json!({"operation":"mark-quiescent","attempt_ref":original}));
     let prior = world.reading();
-    let record = prior.attempts.iter().find(|r| r.attempt_ref == original).unwrap();
+    let record = prior
+        .attempts
+        .iter()
+        .find(|r| r.attempt_ref == original)
+        .unwrap();
     let mut selected = record.disposition.clone();
     selected.body.agent_session_ref = "session:native-stop-retry".into();
-    let mut partial = record.dispatch.iter().chain(&record.observations)
-        .flat_map(|receipt| receipt.partial_effect_refs.iter().cloned()).collect::<BTreeSet<_>>();
+    let mut partial = record
+        .dispatch
+        .iter()
+        .chain(&record.observations)
+        .flat_map(|receipt| receipt.partial_effect_refs.iter().cloned())
+        .collect::<BTreeSet<_>>();
     partial.insert(first_returned["return_ref"].as_str().unwrap().to_owned());
     let resolution = ReresolutionRecord {
         resolution_ref: "resolution:native-stop-retry".into(),
         reason: "Fresh controlled native operation after observed predecessor stop".into(),
         source_revision: selected.participant.source_revision.clone(),
         evidence_refs: partial,
-        replacement_now_ref: None, replacement_material_ref: None, replacement_harness_ref: None,
+        replacement_now_ref: None,
+        replacement_material_ref: None,
+        replacement_harness_ref: None,
     };
     let replacement = "attempt:native-stop-retry";
     world.action(json!({"operation":"retry","attempt_ref":replacement,
         "task_ref":record.task_ref,"parent_journey_ref":"journey:controlled-native-receiving",
         "workflow_unit_ref":unit.reference,"grant_ref":"grant:native-inspect-source",
         "disposition":selected,"tracking":[],"reresolution":resolution}));
-    let (returned, second_artifact) = world.prepare_native_contribution(
-        "inspect-source", replacement, "retry-successor");
-    world.action(json!({"operation":"advance-subject","subject_ref":unit.subject_ref,
-        "revision":returned["revision"]}));
+    let (returned, second_artifact) =
+        world.prepare_native_contribution("inspect-source", replacement, "retry-successor");
+    world.action(
+        json!({"operation":"advance-subject","subject_ref":unit.subject_ref,
+        "revision":returned["revision"]}),
+    );
     world.action(second_artifact);
     let current = world.reading();
     let leg = &current.legs[&unit.reference];
     assert_eq!(leg.status, LegStatus::LateResult);
     assert_eq!(leg.attempts.len(), 2);
-    assert!(leg.attempts[0].status_history.contains(&LegStatus::CancellationAccepted));
-    assert!(!leg.attempts[1].status_history.contains(&LegStatus::CancellationAccepted));
-    world.refuse_with_reason(json!({"operation":"record-process-termination","attempt_ref":replacement}),
-        &["InvalidTransition", "LateResult"]);
-    world.refuse_with_reason(json!({"operation":"record-process-termination","attempt_ref":original}),
-        &["historical attempt cannot mutate its replacement"]);
+    assert!(leg.attempts[0]
+        .status_history
+        .contains(&LegStatus::CancellationAccepted));
+    assert!(!leg.attempts[1]
+        .status_history
+        .contains(&LegStatus::CancellationAccepted));
+    world.refuse_with_reason(
+        json!({"operation":"record-process-termination","attempt_ref":replacement}),
+        &["InvalidTransition", "LateResult"],
+    );
+    world.refuse_with_reason(
+        json!({"operation":"record-process-termination","attempt_ref":original}),
+        &["historical attempt cannot mutate its replacement"],
+    );
     world.action(json!({"operation":"request-cancellation","attempt_ref":replacement}));
-    world.refuse_with_reason(json!({"operation":"record-process-termination","attempt_ref":replacement}),
-        &["InvalidTransition", "CancelRequested"]);
+    world.refuse_with_reason(
+        json!({"operation":"record-process-termination","attempt_ref":replacement}),
+        &["InvalidTransition", "CancelRequested"],
+    );
     world.action(json!({"operation":"accept-cancellation","attempt_ref":replacement}));
     world.action(json!({"operation":"record-process-termination","attempt_ref":replacement}));
     let final_read = world.reading();
-    assert_eq!(final_read.legs[&unit.reference].status, LegStatus::ProcessTerminated);
+    assert_eq!(
+        final_read.legs[&unit.reference].status,
+        LegStatus::ProcessTerminated
+    );
     assert_eq!(final_read.legs[&unit.reference].late_artifacts.len(), 1);
     assert!(!final_read.completion_verified);
-    world.refuse_with_reason(json!({"operation":"incorporate-late-result","attempt_ref":replacement}),
-        &["StaleLateResult"]);
+    world.refuse_with_reason(
+        json!({"operation":"incorporate-late-result","attempt_ref":replacement}),
+        &["StaleLateResult"],
+    );
     world.closure_readings("retry-cancellation-final");
 }
