@@ -71,12 +71,12 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertEqual(['ubuntu-latest', 'macos-14'], self.job['strategy']['matrix']['os'])
         self.assertEqual('false', self.job['strategy']['fail-fast'])
         upload = next(step for step in self.steps if step.get('uses') == 'actions/upload-artifact@v4')
-        self.assertEqual('${{ always() }}', upload['if'])
+        self.assertEqual("${{ always() && steps.evidence_paths.outcome == 'success' }}", upload['if'])
         self.assertIn('runner.os', upload['with']['name'])
 
     def test_binary_admission_requires_every_actual_native_leg(self):
         import re
-        gates = {step['id'] for step in self.steps if 'id' in step and step['id'] != 'build'}
+        gates = {step['id'] for step in self.steps if 'id' in step and step['id'] not in ('build', 'evidence_paths')}
         publication = next(step for step in self.steps if step.get('name') == 'Preserve integration-tested native binary')
         guarded = set(re.findall(r"steps\.(\w+)\.outcome == 'success'", publication['if']))
         self.assertEqual(gates, guarded)
@@ -115,7 +115,7 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
 
     def test_preparation_selects_its_actual_nonignored_bodies(self):
         preparation = next(step for step in self.steps if step.get('id') == 'integration')
-        self.assertIn('--exact --test-threads=1', preparation['run'])
+        self.assertIn('--include-ignored --exact --test-threads=1', preparation['run'])
         self.assertNotIn('--ignored', preparation['run'])
         self.assertIn('names preparation', preparation['run'])
 
@@ -130,7 +130,9 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertEqual(32, len(sets['groups']['receiving']))
         self.assertEqual(3, len(sets['groups']['consumer-os']))
         self.assertNotIn(sets['integration_child_definition'], sets['groups']['receiving'])
-        self.assertEqual(8, len(sets['groups']['preparation']))
+        self.assertEqual(9, len(sets['groups']['preparation']))
+        self.assertIn('central_cases::followup::native_central_return_keeps_the_allocated_now_without_including_the_document', sets['groups']['preparation'])
+        self.assertEqual(64, sum(len(cases) for cases in sets['groups'].values()))
         self.assertFalse(sets['full_native_composite_qualified'])
 
     def test_owner_dispatch_requires_six_actual_bodies_and_observed_inputs(self):
@@ -198,6 +200,28 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertIn('native_evidence_inputs.py fixtures', retained['run'])
 
 
+    def test_every_case_projection_is_declared_before_dispatch_and_reused_by_snapshot(self):
+        for group, step_id in (('capture', 'capture'), ('preparation', 'integration'),
+                               ('receiving', 'receiving'), ('cancellation-guard', 'cancellation_guard'),
+                               ('consumer-os', 'consumer_os'), ('owner-dispatch', 'owner_dispatch'),
+                               ('paired', 'paired')):
+            command = next(step for step in self.steps if step.get('id') == step_id)['run']
+            declaration = 'log-path ' + group + ' --case "$case" --input native-evidence'
+            self.assertIn(declaration, command)
+            self.assertLess(command.index(declaration), command.index('"$case" -- --'))
+            self.assertIn('tee "$log"', command)
+            self.assertIn('run ' + group + ' --case "$case" --input "$log"', command)
+            self.assertNotIn('-$case.log', command)
+        inputs = (ROOT / 'scripts/native_evidence_inputs.py').read_text()
+        self.assertIn('EVIDENCE / portable_log_path("receiving", producer)', inputs)
+        self.assertIn('validate_run(producer_bytes.decode("utf-8"), producer)', inputs)
+        gate = next(step for step in self.steps if step.get('id') == 'evidence_paths')
+        self.assertEqual('${{ always() }}', gate['if'])
+        self.assertIn('upload-paths --input native-evidence', gate['run'])
+        upload = next(step for step in self.steps if step.get('uses') == 'actions/upload-artifact@v4')
+        self.assertLess(self.steps.index(gate), self.steps.index(upload))
+
+
 
 class NativeCensusRefusalTests(unittest.TestCase):
     """Real pure-validator inputs; no fabricated native-owner positive receipt."""
@@ -228,6 +252,93 @@ class NativeCensusRefusalTests(unittest.TestCase):
         for text in (prefix + 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n', prefix[:-1], prefix.split(' finished in')[0]+'\n', prefix+'test required ... FAILED\n'):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 self.census.validate_run(text, 'required')
+
+
+class NativeEvidencePathTests(unittest.TestCase):
+    """Actual filesystem evidence projection checks, not native-owner pass receipts."""
+    def setUp(self):
+        NativeCensusRefusalTests.setUp(self)
+        import json
+        import tempfile
+        self.sets = json.loads((ROOT / 'scripts/native_evidence_case_sets.json').read_text())
+        scratch = ROOT / 'ProjectCentral/now/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.owned = tempfile.TemporaryDirectory(prefix='native-evidence-path-', dir=scratch)
+        self.addCleanup(self.owned.cleanup)
+        self.directory = Path(self.owned.name)
+
+    def test_declared_exact_case_has_portable_pre_dispatch_identity_and_unchanged_raw_bytes(self):
+        import hashlib
+        import json
+        case = self.sets['groups']['capture'][-1]
+        self.assertIn('::', case)
+        log = self.census.declare_log_path(self.directory, 'capture', case, self.sets)
+        self.assertFalse(log.exists())
+        identity = json.loads(log.with_suffix('.identity.json').read_text())
+        self.assertEqual(case, identity['case'])
+        self.assertEqual(str(log), identity['actual_log'])
+        self.assertTrue(identity['before_dispatch'])
+        self.assertFalse(identity['native_body_admitted'])
+        self.assertEqual('capture-' + hashlib.sha256(case.encode()).hexdigest() + '.log', log.name)
+        # Raw evidence is opaque here; no synthetic libtest text is admitted.
+        raw = bytes(range(256)) + b'\x00stdout\nstderr\nlast-exit-result\n'
+        log.write_bytes(raw)
+        self.assertEqual(raw, log.read_bytes())
+        result = self.census.validate_upload_tree(self.directory)
+        self.assertTrue(result['portable'])
+        self.assertEqual(2, result['ordinary_files'])
+        self.assertFalse(result['native_body_admission'])
+
+    def test_duplicate_identity_undeclared_case_and_existing_output_are_refused_before_dispatch(self):
+        import copy
+        case = self.sets['groups']['capture'][0]
+        duplicate = copy.deepcopy(self.sets)
+        duplicate['groups']['capture'].append(case)
+        with self.assertRaises(ValueError):
+            self.census.case_path_mapping(duplicate)
+        with self.assertRaises(ValueError):
+            self.census.declare_log_path(self.directory, 'capture', 'foreign::case', self.sets)
+        log = self.census.declare_log_path(self.directory, 'capture', case, self.sets)
+        with self.assertRaises(FileExistsError):
+            self.census.declare_log_path(self.directory, 'capture', case, self.sets)
+        log.write_bytes(b'original output')
+        with self.assertRaises(ValueError):
+            self.census.declare_log_path(self.directory, 'capture', case, self.sets)
+        self.assertEqual(b'original output', log.read_bytes())
+        mapping = self.census.case_path_mapping(self.sets)
+        self.assertEqual(64, len(mapping))
+        self.assertEqual(64, len(set(mapping.values())))
+
+    def test_nested_actual_unsupported_names_refuse_upload_without_renaming_or_losing_bytes(self):
+        nested = self.directory / 'fixture-snapshot'
+        nested.mkdir()
+        ordinary = nested / 'entry-1'
+        ordinary.write_bytes(b'actual retained bytes')
+        bad = nested / 'capture-native_process::case.log'
+        bad.write_bytes(b'failure evidence remains')
+        with self.assertRaises(ValueError):
+            self.census.validate_upload_tree(self.directory)
+        self.assertEqual(b'failure evidence remains', bad.read_bytes())
+        self.assertEqual(b'actual retained bytes', ordinary.read_bytes())
+        for component in ('CON', 'entry.', 'entry ', 'a\\b', 'a\nb', 'a?b'):
+            with self.subTest(component=component), self.assertRaises(ValueError):
+                self.census.validate_portable_component(component)
+
+    @unittest.skipUnless(__import__('os').name == 'posix', 'actual Unix FIFO/alias case')
+    def test_actual_alias_and_fifo_are_refused_before_upload_without_body_read(self):
+        import os
+        ordinary = self.directory / 'ordinary'
+        ordinary.write_bytes(b'original')
+        alias = self.directory / 'alias'
+        alias.symlink_to(ordinary.name)
+        with self.assertRaises(ValueError):
+            self.census.validate_upload_tree(self.directory)
+        alias.unlink()
+        fifo = self.directory / 'fifo'
+        os.mkfifo(fifo)
+        with self.assertRaises(ValueError):
+            self.census.validate_upload_tree(self.directory)
+        self.assertEqual(b'original', ordinary.read_bytes())
 
 
 if __name__ == '__main__':

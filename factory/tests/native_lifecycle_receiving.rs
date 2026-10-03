@@ -2123,7 +2123,7 @@ fn native_receiving_byref_same_visible_result_refuses_changed_original_digest() 
         .iter()
         .find(|record| record.attempt_ref == attempt)
         .unwrap();
-    let native_ref = &record.dispatch.first().unwrap().receipt_ref;
+    let native_ref = &record.dispatch.as_ref().unwrap().receipt_ref;
     let native = ctrl_call(
         &world.ctrl,
         &world.root,

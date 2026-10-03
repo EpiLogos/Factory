@@ -291,8 +291,9 @@ jobs:
           python3 scripts/native_evidence_census.py list capture --input native-evidence/capture-cases.txt
           python3 scripts/native_evidence_census.py names capture > native-evidence/capture-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/capture-$case.log"
-            python3 scripts/native_evidence_census.py run capture --case "$case" --input "native-evidence/capture-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path capture --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run capture --case "$case" --input "$log"
           done < native-evidence/capture-required.txt
       - name: Real native Central to Factory preparation and dispatch gates
         id: integration
@@ -306,8 +307,9 @@ jobs:
           python3 scripts/native_evidence_census.py list preparation --input native-evidence/native-central-cases.txt
           python3 scripts/native_evidence_census.py names preparation > native-evidence/preparation-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --test attempt_owner_delivery "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/preparation-$case.log"
-            python3 scripts/native_evidence_census.py run preparation --case "$case" --input "native-evidence/preparation-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path preparation --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --test attempt_owner_delivery "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run preparation --case "$case" --input "$log"
           done < native-evidence/preparation-required.txt
       - name: Every actual receiving and capture-consumer parent, child bodies only through parents
         id: receiving
@@ -322,8 +324,9 @@ jobs:
           python3 scripts/native_evidence_census.py list receiving --input native-evidence/native-lifecycle-cases.txt
           python3 scripts/native_evidence_census.py names receiving > native-evidence/receiving-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --test native_lifecycle_receiving "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/receiving-$case.log"
-            python3 scripts/native_evidence_census.py run receiving --case "$case" --input "native-evidence/receiving-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path receiving --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --test native_lifecycle_receiving "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run receiving --case "$case" --input "$log"
           done < native-evidence/receiving-required.txt
       - name: Select the actual original native producer snapshot independently
         id: snapshot_selection
@@ -340,8 +343,9 @@ jobs:
           python3 scripts/native_evidence_census.py list cancellation-guard --input native-evidence/cancellation-guard-cases.txt
           python3 scripts/native_evidence_census.py names cancellation-guard > native-evidence/cancellation-guard-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/cancellation-guard-$case.log"
-            python3 scripts/native_evidence_census.py run cancellation-guard --case "$case" --input "native-evidence/cancellation-guard-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path cancellation-guard --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run cancellation-guard --case "$case" --input "$log"
           done < native-evidence/cancellation-guard-required.txt
       - name: Actual OS capture and native publication failure consumers
         id: consumer_os
@@ -351,8 +355,9 @@ jobs:
           python3 scripts/native_evidence_census.py list consumer-os --input native-evidence/library-cases.txt
           python3 scripts/native_evidence_census.py names consumer-os > native-evidence/consumer-os-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/consumer-os-$case.log"
-            python3 scripts/native_evidence_census.py run consumer-os --case "$case" --input "native-evidence/consumer-os-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path consumer-os --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run consumer-os --case "$case" --input "$log"
           done < native-evidence/consumer-os-required.txt
       - name: Every actual owner-dispatch failure and publication consumer
         id: owner_dispatch
@@ -362,8 +367,9 @@ jobs:
           python3 scripts/native_evidence_census.py list owner-dispatch --input native-evidence/owner-dispatch-cases.txt
           python3 scripts/native_evidence_census.py names owner-dispatch > native-evidence/owner-dispatch-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --lib "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "native-evidence/owner-dispatch-$case.log"
-            python3 scripts/native_evidence_census.py run owner-dispatch --case "$case" --input "native-evidence/owner-dispatch-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path owner-dispatch --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --lib "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run owner-dispatch --case "$case" --input "$log"
           done < native-evidence/owner-dispatch-required.txt
           python3 - <<'PY'
           import hashlib, json, os, stat
@@ -425,8 +431,9 @@ jobs:
           python3 scripts/native_evidence_census.py list paired --input native-evidence/fci06-cases.txt
           python3 scripts/native_evidence_census.py names paired > native-evidence/fci06-required.txt
           while IFS= read -r case; do
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/fci06-$case.log"
-            python3 scripts/native_evidence_census.py run paired --case "$case" --input "native-evidence/fci06-$case.log"
+            log=$(python3 scripts/native_evidence_census.py log-path paired --case "$case" --input native-evidence)
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            python3 scripts/native_evidence_census.py run paired --case "$case" --input "$log"
           done < native-evidence/fci06-required.txt
       - name: Reobserve actual receiving compiler inputs and unchanged Source after native gates
         id: input_reobservation
@@ -512,8 +519,14 @@ jobs:
           result = {'schema': 'factory.native-evidence-qualification/v1', 'source': os.environ['GITHUB_SHA'], 'platform': os.environ['RUNNER_OS'], 'required_leg_outcomes': outcomes, 'component_gates_passed': all(outcomes[key] == 'success' for key in components), 'required_paired_FCI06': outcomes['paired'], 'paired_source_and_body_passed': all(outcomes[key] == 'success' for key in ['paired_build', 'paired']), 'missing_arm_negative_dependency': 'SEPARATE_SOURCE_SUCCESSOR_NOT_COMPOSED_OR_QUALIFIED', 'full_native_composite_qualified': False, 'Original_Run_credit': False}
           Path('native-evidence/qualification.json').write_text(json.dumps(result, indent=2)+'\n')
           PY
-      - uses: actions/upload-artifact@v4
+      - name: Admit every actual evidence path before portable artifact upload
+        id: evidence_paths
         if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          python3 scripts/native_evidence_census.py upload-paths --input native-evidence > native-evidence/evidence-path-admission.json
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && steps.evidence_paths.outcome == 'success' }}
         with:
           name: factory-native-${{ runner.os }}-${{ github.run_id }}
           path: |

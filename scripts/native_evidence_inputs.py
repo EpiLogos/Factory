@@ -156,9 +156,9 @@ def snapshot(_args):
     candidates = []
     observations = []
     producer = "actual_late_return_before_termination_retains_current_stop_across_restart"
-    producer_log = EVIDENCE / ("receiving-" + producer + ".log")
-    # Use the SAME existing census, not a passing metadata assertion.
-    from native_evidence_census import validate_run
+    # Use the SAME filename projection and census, not a passing metadata assertion.
+    from native_evidence_census import portable_log_path, validate_run
+    producer_log = EVIDENCE / portable_log_path("receiving", producer)
     producer_bytes, _ = held_bytes(producer_log, MAX_LOG)
     validate_run(producer_bytes.decode("utf-8"), producer)
     try:

@@ -639,8 +639,21 @@ recursively deleted or directly passed to the artifact uploader. No inner
 retirement witness, universal ACL, concurrent-writer exclusion or installed
 baseline is inferred from this retention.
 
-The complete named Source census is 63 parent definitions: the prior 59 plus
-three cancellation parents and one library guard. The one internal capture
+The complete named Source census is 64 parent definitions: the original 63
+remain selected, with the existing ninth preparation followup now included.
+That followup uses an explicit controlled provider turn and actual native
+document creation, NOW allocation and successful Receiving without document
+inclusion; it does not grant
+model execution or document inclusion. Preparation selects all nine exact
+bodies, including the ignored followup, through the same complete-run census.
+Portable log filenames use the group and SHA256 of the exact case solely as
+evidence geometry. Exclusive sidecars retain each exact case-to-path mapping
+before dispatch; completed libtest bodies still prove the selected case. The
+existing cancellation snapshot reader uses that same mapping. All actual
+evidence paths, including Flow/FCI06 captures and numbered fixture copies,
+require a finite ordinary/portable path checkpoint before artifact upload;
+refusal retains the host failure and never renames a semantic identity or
+certifies missing cases. The one internal capture
 child still executes through its three existing parents, and is not another
 parent. Existing Flow and sensing targets, normal format/Clippy/workspace/doc
 gates, paired FCI06 and its uncomposed missing-arm dependency keep their prior

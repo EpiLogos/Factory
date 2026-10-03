@@ -62,7 +62,8 @@
       "central_cases::native_central_stale_policy_and_wrong_cwd_stop_before_worker_transport",
       "central_cases::native_central_changed_now_or_destination_anchor_stops_dispatch",
       "central_cases::native_central_rejected_root_scratch_keeps_actual_allocation_for_corrected_retry",
-      "central_cases::native_central_required_worker_enforcement_cannot_be_bypassed_by_preparation"
+      "central_cases::native_central_required_worker_enforcement_cannot_be_bypassed_by_preparation",
+      "central_cases::followup::native_central_return_keeps_the_allocated_now_without_including_the_document"
     ],
     "owner-dispatch": [
       "attempt_owner_dispatch::native_failure_tests::actual_timeout_incomplete_pipes_retain_original_private_capture",
@@ -94,9 +95,14 @@
   "preparation_source_basis": {
     "path": "factory/tests/support/attempt_central_cases.rs",
     "sha256": "1659813fb28f7c134e71ad74cbbbfef89a576e5631530b094327fdf63b4ad489",
-    "observed_definitions": 8,
+    "observed_definitions": 9,
+    "direct_definitions": 8,
+    "followup_path": "factory/tests/support/attempt_central_followup.rs",
+    "followup_sha256": "3435a03a1c5757476d3edc0050af872275f1bb0e55d88422221aadf2b645177e",
+    "ignored_followup_definition": "central_cases::followup::native_central_return_keeps_the_allocated_now_without_including_the_document",
     "prior_workflow_count": 9,
-    "basis": "eight actual exact public Source definitions; old nine-count does not match current Source; compiled discovery remains mandatory",
+    "basis": "eight direct definitions plus the existing ignored followup; all nine require explicit exact body selection and compiled discovery",
+    "followup_scope": "Controlled explicit provider turn; actual native document creation, NOW allocation and successful Receiving with included=false, not a model/provider or document inclusion grant",
     "no_removed_actual_definition": true
   },
   "cancellation_snapshot_contract": {
