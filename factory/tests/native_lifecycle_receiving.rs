@@ -1932,7 +1932,7 @@ impl OwnedReceivingProcess {
         self.observe_running()?;
         let actual_group = unsafe { libc::getpgid(self.child.id() as libc::pid_t) };
         if actual_group != self.group {
-            let os_error = (actual_group == -1).then(|| std::io::Error::last_os_error());
+            let os_error = (actual_group == -1).then(std::io::Error::last_os_error);
             let cause = format!("owned coordinator group changed/unavailable ({actual_group}, OS {:?}); no signal sent", os_error.as_ref().and_then(std::io::Error::raw_os_error));
             self.signal_forbidden = Some(cause.clone());
             return Err(cause);
@@ -3025,10 +3025,19 @@ fn native_capture_gateway_actual_child() {
 #[test]
 #[ignore = "actual hash-pinned Actuation server; real local overflow, native ACK and owned restart, no provider"]
 fn native_gateway_capture_acknowledgement_survives_actual_store_restart_and_complete_nonzero() {
-    let root = tempfile::tempdir().unwrap();
+    let mut root = tempfile::Builder::new()
+        .prefix("g")
+        .rand_bytes(6)
+        .tempdir()
+        .unwrap();
+    // Keep actual store/capture material on unwind or uncertain retirement.
+    // Existing qualification custody owns disposal after native observations.
+    root.disable_cleanup(true);
     let root = root.path().canonicalize().unwrap();
     let (binary, sha) = native_gateway_binary();
-    let socket = root.join("gateway.sock");
+    let socket = root.join("s");
+    std::os::unix::net::SocketAddr::from_pathname(&socket)
+        .expect("admitted Gateway fixture must fit the native Unix socket pathname before launch");
     let store = root.join("stream-store");
     let policy = root.join("gateway-policy.json");
     capture_gateway_policy(&policy);
@@ -3110,10 +3119,19 @@ fn native_gateway_after_capture_publication_failure_keeps_both_causes_and_no_fal
         0,
         "real EACCES fixture requires an unprivileged native owner"
     );
-    let root = tempfile::tempdir().unwrap();
+    let mut root = tempfile::Builder::new()
+        .prefix("g")
+        .rand_bytes(6)
+        .tempdir()
+        .unwrap();
+    // Keep actual store/capture material on unwind or uncertain retirement.
+    // Existing qualification custody owns disposal after native observations.
+    root.disable_cleanup(true);
     let root = root.path().canonicalize().unwrap();
     let (binary, sha) = native_gateway_binary();
-    let socket = root.join("gateway.sock");
+    let socket = root.join("s");
+    std::os::unix::net::SocketAddr::from_pathname(&socket)
+        .expect("admitted Gateway fixture must fit the native Unix socket pathname before launch");
     let store = root.join("stream-store");
     let policy = root.join("gateway-policy.json");
     capture_gateway_policy(&policy);
