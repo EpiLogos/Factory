@@ -323,7 +323,10 @@ fn success(output: Output) -> Value {
 // the same native attempt instead of exporting private failure evidence.
 fn failed_owner_call(world: &World, request_ref: &str, output: Output) {
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty(), "ordinary failure exported a result");
+    assert!(
+        output.stdout.is_empty(),
+        "ordinary failure exported a result"
+    );
     let diagnostic = std::str::from_utf8(&output.stderr).unwrap();
     let expected = format!(
         "factory: factory.attempt-owner-receipt/v1\nRun: {RUN}\nAttempt: {ATTEMPT}\nRequest: {request_ref}\nReplayed: false\nNeeds reconciliation: true\nOwner phase: Uncertain\n"

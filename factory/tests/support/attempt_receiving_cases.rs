@@ -4,11 +4,11 @@ use epilogos_factory::attempt_receiving::CENTRAL_CONTRACT_REVISION;
 use std::os::unix::fs::PermissionsExt;
 
 const CTRL: &str = r#"#!/usr/bin/env python3
-import json, os, pathlib, sys
+import hashlib, json, os, pathlib, sys
 root=pathlib.Path(sys.argv[sys.argv.index('--root')+1])
 action=sys.argv[-2]
 request=json.loads(sys.argv[-1])
-assert action in ['central.receiving.submit','central.receiving.read'], 'Factory attempted review/inclusion'
+assert action in ['central.receiving.submit','central.receiving.read','action.describe'], 'Factory attempted review/inclusion'
 assert os.environ.get('CENTRAL_NATIVE_TOKEN')=='test-only-central-credential'
 assert 'test-only-central-credential' not in ' '.join(sys.argv)
 state=json.loads((root/'state.json').read_text())
@@ -19,6 +19,13 @@ def walk(value):
     elif isinstance(value,list):
         for child in value: yield from walk(child)
 assert any(item['phase']=='dispatching' for item in walk(state)), 'missing durable Factory receiving intent'
+if action=='action.describe':
+    assert request=={'action':'central.receiving.read'}, 'unexpected descriptor selection'
+    data={'id':'central.receiving.read','mutation_class':'read-only','availability':{'available':True},
+        'output':{'type':'object'},'inputs':[{'name':name,'type':kind,'required':False}
+        for name,kind in [('producer_key','string'),('original_request','object'),('return_ref','string')]]}
+    print(json.dumps({'ok':True,'status':'success','action':action,'data':data}))
+    sys.exit(0)
 with (root/'receiving-calls.jsonl').open('a') as file: file.write(json.dumps({'action':action,'request':request})+'\n')
 mode=(root/'central-mode').read_text().strip()
 path=root/'central-record.json'
@@ -35,17 +42,27 @@ if action=='central.receiving.submit':
             'author':{'principal_ref':principal,'actor_kind':'agent'},'run_ref':request['run_ref'],
             'task_ref':request['task_ref'],'session_ref':request['session_ref'],
             'now_ref':request.get('now_ref'),'day_ref':request.get('day_ref'),
-            'status':'needs-review' if mode=='stale' else 'pending','sequence':1}
+            'status':'needs-review' if mode=='stale' else 'pending','sequence':1,
+            'request_digest':hashlib.sha256(sys.argv[-1].encode('utf-8')).hexdigest()}
         saved={'input':request,'record':record,'revision':'receiving-r1'}
         path.write_text(json.dumps(saved))
         (root/'created-count').write_text('1')
     if mode=='lost': sys.exit(3)
 else:
     saved=json.loads(path.read_text())
-    assert request['return_ref']==saved['record']['return_ref']
+    assert 'return_ref' not in request, 'recovery attempted a by-ref shortcut'
+    original=request['original_request']
+    assert request['producer_key']==original['producer_key']==saved['input']['producer_key'], 'producer key changed'
+    assert original==saved['input'], 'lookup changed exact original request'
+    assert request.get('project')==saved['input'].get('project'), 'lookup changed owner scope'
+    assert saved['record']['author']['principal_ref']==(root/'producer-ref').read_text(), 'lookup changed authenticated carrier'
+    original_json=json.dumps(original,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    assert hashlib.sha256(original_json.encode('utf-8')).hexdigest()==saved['record']['request_digest'], 'original request digest changed'
 record=saved['record']
 data={'schema':'central.receiving-reading/v1','return_ref':record['return_ref'],'revision':saved['revision'],
     'record':record,'included':record['status']=='included','source_changed_by_arrival_or_review':False,'automatic_agent_or_model_invocation':False}
+if action=='central.receiving.read':
+    data['lookup']={'selector':'authenticated_producer_key','original_request_verified':True}
 print(json.dumps({'ok':True,'status':'success','action':action,'data':data}))
 "#;
 
@@ -233,7 +250,11 @@ fn lost_receiving_ack_recovers_the_same_native_producer_key_without_a_second_con
     assert_eq!(recovered["needsReconciliation"], false);
     let calls = world.central_calls();
     assert_eq!(calls.len(), 2);
-    assert_eq!(calls[0]["request"], calls[1]["request"]);
+    assert_eq!(calls[0]["request"], calls[1]["request"]["original_request"]);
+    assert_eq!(
+        calls[0]["request"]["producer_key"],
+        calls[1]["request"]["producer_key"]
+    );
     assert_eq!(
         std::fs::read_to_string(world.dir.path().join("created-count")).unwrap(),
         "1"
