@@ -3674,6 +3674,8 @@ pub enum FactoryDevelopmentalProviderError {
     PublicationUncertain(crate::NativePublicationUncertainty),
     RoutineContinuation(RoutineContinuationError),
     Commission(CommissionError),
+    /// Original native Flow invocation evidence; broad diagnostics withhold its bytes.
+    NativeFlowRead(crate::attempt_receiving::NativeCallFailure),
 }
 
 impl From<io::Error> for FactoryDevelopmentalProviderError {
@@ -3728,6 +3730,7 @@ impl Error for FactoryDevelopmentalProviderError {
             Self::PublicationUncertain(error) => Some(error),
             Self::Io(error) => Some(error),
             Self::Json(error) => Some(error),
+            Self::NativeFlowRead(error) => Some(error),
             _ => None,
         }
     }

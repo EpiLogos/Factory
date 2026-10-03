@@ -870,10 +870,38 @@ impl ExecutableOrchestration {
         &mut self,
         unit: &WorkflowUnitRef,
     ) -> Result<(), OrchestrationError> {
+        let leg = self
+            .leg(unit)
+            .ok_or_else(|| OrchestrationError::MissingLeg(unit.to_string()))?;
+        if leg.status == LegStatus::LateResult {
+            // Late material does not erase this execution's accepted stop.
+            // Earlier candidates retain their own history; a retry starts
+            // a fresh cancellation sequence on the current attempt.
+            let accepted = leg.attempts.last().is_some_and(|attempt| {
+                attempt.execution_ref == leg.execution_ref
+                    && attempt.delegation == leg.delegation
+                    && attempt.status == LegStatus::LateResult
+                    && attempt.status_history.iter().rev().find(|status| {
+                        matches!(
+                            status,
+                            LegStatus::CancelRequested
+                                | LegStatus::CancellationAccepted
+                                | LegStatus::ProcessTerminated
+                                | LegStatus::Quiescent
+                        )
+                    }) == Some(&LegStatus::CancellationAccepted)
+            });
+            if !accepted {
+                return Err(OrchestrationError::InvalidTransition {
+                    unit: unit.clone(),
+                    status: leg.status,
+                });
+            }
+        }
         self.transition(
             unit,
             LegStatus::ProcessTerminated,
-            &[LegStatus::CancellationAccepted],
+            &[LegStatus::CancellationAccepted, LegStatus::LateResult],
         )
     }
 
@@ -1577,4 +1605,199 @@ fn is_writer(unit: &CompiledWorkflowUnit) -> bool {
         let effect = effect.to_ascii_lowercase();
         effect.starts_with("write:") || effect.starts_with("mutate:") || effect.contains("write ")
     })
+}
+
+#[cfg(all(test, unix))]
+mod native_cancellation_guard_tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::fs;
+    use std::io::{Read, Seek, SeekFrom};
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::path::PathBuf;
+
+    // This is an engine guard regression over an actual captured native owner
+    // snapshot, not a second public Return, receipt or worker termination proof.
+    #[test]
+    #[ignore = "requires exact captured native cancellation snapshot and SHA256; no synthetic-state fallback"]
+    fn actual_native_snapshot_new_request_cannot_borrow_prior_acceptance() {
+        let path = PathBuf::from(
+            std::env::var_os("FACTORY_NATIVE_CANCELLATION_SNAPSHOT")
+                .expect("supply the actual first-case original owner snapshot"),
+        );
+        let expected_sha = std::env::var("FACTORY_NATIVE_CANCELLATION_SNAPSHOT_SHA256")
+            .expect("supply the independently measured actual snapshot SHA256");
+        assert!(
+            expected_sha.len() == 64 && expected_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        );
+        assert!(path.is_absolute());
+        assert_eq!(path.canonicalize().unwrap(), path);
+        let mut file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        let held = file.metadata().unwrap();
+        assert!(held.is_file() && held.nlink() == 1 && held.len() <= 16 * 1024 * 1024);
+        let mut bytes = Vec::new();
+        file.by_ref()
+            .take(16 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert!(bytes.len() <= 16 * 1024 * 1024);
+        assert_eq!(bytes.len() as u64, held.len());
+        assert_eq!(format!("{:x}", Sha256::digest(&bytes)), expected_sha);
+        let after = file.metadata().unwrap();
+        assert_eq!(
+            (
+                held.dev(),
+                held.ino(),
+                held.len(),
+                held.mtime(),
+                held.mtime_nsec(),
+                held.ctime(),
+                held.ctime_nsec()
+            ),
+            (
+                after.dev(),
+                after.ino(),
+                after.len(),
+                after.mtime(),
+                after.mtime_nsec(),
+                after.ctime(),
+                after.ctime_nsec()
+            )
+        );
+        let named = fs::symlink_metadata(&path).unwrap();
+        assert!(named.is_file() && !named.file_type().is_symlink());
+        assert_eq!((named.dev(), named.ino()), (held.dev(), held.ino()));
+
+        let manifest_path = path.with_extension("manifest.json");
+        assert!(fs::symlink_metadata(&manifest_path).unwrap().is_file());
+        let mut manifest_file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&manifest_path)
+            .unwrap();
+        assert!(manifest_file.metadata().unwrap().is_file());
+        let mut manifest_bytes = Vec::new();
+        manifest_file
+            .by_ref()
+            .take(64 * 1024 + 1)
+            .read_to_end(&mut manifest_bytes)
+            .unwrap();
+        assert!(manifest_bytes.len() <= 64 * 1024);
+        let manifest: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+        assert_eq!(
+            manifest["schema"],
+            "factory.native-cancellation-engine-basis/v1"
+        );
+        assert_eq!(manifest["sha256"], expected_sha);
+        assert_eq!(manifest["bytes"], bytes.len());
+        assert_eq!(
+            manifest["snapshotPath"],
+            serde_json::to_value(&path).unwrap()
+        );
+        assert_eq!(manifest["moveSubject"], false);
+        assert_eq!(manifest["status"], "late_result");
+
+        let run_ref: crate::core::run::RunRef =
+            serde_json::from_value(manifest["runRef"].clone()).unwrap();
+        let unit: WorkflowUnitRef =
+            serde_json::from_value(manifest["workflowUnitRef"].clone()).unwrap();
+        // The real file is the native local-provider wrapper. Decode only its
+        // actual /state member after checking that owner's schema; the retained
+        // whole-file bytes and SHA remain the provenance, not a new receipt.
+        let provider: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            provider["schema"],
+            crate::developmental_read::FACTORY_DEVELOPMENTAL_LOCAL_PROVIDER
+        );
+        let state = provider
+            .get("state")
+            .expect("actual native provider /state");
+        assert!(state.is_object());
+        let native: crate::developmental_read::FactoryDevelopmentalState =
+            serde_json::from_value(state.clone()).unwrap();
+        native.validate().unwrap();
+        let retained = native.attempt_states.get(&run_ref).unwrap();
+        let run = native.build.run(&run_ref).unwrap().clone();
+        let workflow =
+            crate::workflow::compile_workflow(retained.workflow_source().clone()).unwrap();
+        assert_eq!(
+            manifest["workflowSource"],
+            serde_json::to_value(&workflow.source).unwrap()
+        );
+        let mut engine = retained.snapshot().restore(workflow, run).unwrap();
+        let leg = engine.leg(&unit).unwrap();
+        assert_eq!(leg.status, LegStatus::LateResult);
+        assert_eq!(leg.late_artifacts.len(), 1);
+        let artifact = leg.late_artifacts[0].clone();
+        assert_eq!(manifest["artifactRef"], artifact.artifact_ref);
+        assert_eq!(artifact.producing_execution_ref, leg.execution_ref);
+        assert_eq!(
+            leg.status_history
+                .iter()
+                .filter(|status| **status == LegStatus::ProcessTerminated)
+                .count(),
+            0
+        );
+        assert_eq!(
+            leg.status_history.iter().rev().find(|status| matches!(
+                status,
+                LegStatus::CancelRequested | LegStatus::CancellationAccepted
+            )),
+            Some(&LegStatus::CancellationAccepted)
+        );
+
+        engine.request_cancellation(&unit).unwrap();
+        // Reuse exactly the already owner-retained artifact. This is only the
+        // existing internal superseded intake, never a forged native response.
+        engine
+            .retain_superseded_artifact(&unit, artifact.clone())
+            .unwrap();
+        let before_refusal = engine.snapshot();
+        assert!(matches!(
+            engine.record_process_termination(&unit),
+            Err(OrchestrationError::InvalidTransition {
+                status: LegStatus::LateResult,
+                ..
+            })
+        ));
+        assert_eq!(
+            engine.snapshot(),
+            before_refusal,
+            "borrowedCancellationRejected: refusal must not mutate coordinator state"
+        );
+
+        engine.request_cancellation(&unit).unwrap();
+        engine.accept_cancellation(&unit).unwrap();
+        engine.retain_superseded_artifact(&unit, artifact).unwrap();
+        let accepted_artifacts = engine.leg(&unit).unwrap().late_artifacts.clone();
+        engine.record_process_termination(&unit).unwrap();
+        let leg = engine.leg(&unit).unwrap();
+        assert_eq!(leg.status, LegStatus::ProcessTerminated);
+        assert_eq!(leg.late_artifacts, accepted_artifacts);
+        assert_eq!(
+            leg.status_history
+                .iter()
+                .filter(|status| **status == LegStatus::ProcessTerminated)
+                .count(),
+            1
+        );
+        file.seek(SeekFrom::Start(0)).unwrap();
+        let mut unchanged = Vec::new();
+        file.by_ref()
+            .take(16 * 1024 * 1024 + 1)
+            .read_to_end(&mut unchanged)
+            .unwrap();
+        assert!(unchanged.len() <= 16 * 1024 * 1024);
+        assert_eq!(
+            unchanged, bytes,
+            "engine-only guard test must leave actual native fixture bytes unchanged"
+        );
+        let named = fs::symlink_metadata(&path).unwrap();
+        assert!(named.is_file() && !named.file_type().is_symlink());
+        assert_eq!((named.dev(), named.ino()), (held.dev(), held.ino()));
+    }
 }

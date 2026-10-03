@@ -80,7 +80,9 @@ pub fn cli_main() -> ExitCode {
         }
         Err(error) => {
             if args.iter().any(|arg| arg == "--json") {
-                if let Some(result) = error.native_publication_failure() {
+                if let Some(result) = error.native_owner_failure_result() {
+                    println!("{result}");
+                } else if let Some(result) = error.native_publication_failure() {
                     println!("{result}");
                 }
             }
@@ -1140,11 +1142,19 @@ fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
     args.len() != before
 }
 
-#[derive(Debug)]
 pub struct CliError {
     cause: Box<dyn Error + Send + Sync>,
     display_message: Option<String>,
     native_result: Option<serde_json::Value>,
+}
+impl std::fmt::Debug for CliError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CliError")
+            .field("message", &self.to_string())
+            .field("has_native_result", &self.native_result.is_some())
+            .field("native_result", &"private evidence withheld")
+            .finish()
+    }
 }
 #[derive(Debug)]
 struct CliMessage(String);
@@ -1175,12 +1185,25 @@ impl CliError {
         self
     }
     /// Retain only a result actually returned by this invocation after a typed
-    /// uncertain publication. This transports evidence, never grants authority.
+    /// uncertain publication or failed owner invocation. This transports evidence,
+    /// never grants authority.
     pub(crate) fn with_native_result(mut self, result: serde_json::Value) -> Self {
-        if crate::native_publication_uncertainty(&self).is_some() {
+        if crate::native_publication_uncertainty(&self).is_some()
+            || self
+                .cause
+                .downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>()
+                .is_some()
+        {
             self.native_result = Some(result);
         }
         self
+    }
+    /// Actual failed owner invocation result retained by the existing dispatcher.
+    /// No result is reconstructed from private error bytes or historical prose.
+    pub fn native_owner_failure_result(&self) -> Option<&serde_json::Value> {
+        self.cause
+            .downcast_ref::<crate::attempt_owner_dispatch::AttemptOwnerError>()?;
+        self.native_result.as_ref()
     }
     pub fn native_publication_failure(&self) -> Option<serde_json::Value> {
         crate::native_publication_uncertainty(self)?;

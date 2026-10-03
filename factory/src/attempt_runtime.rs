@@ -168,7 +168,7 @@ pub enum OwnerOperationPhase {
 
 /// Opaque evidence returned by a native owner operation. Factory retains the
 /// payload and exact source revision, but interprets only the explicit phase.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OwnerOperationReceipt {
     pub owner_ref: String,
@@ -182,6 +182,25 @@ pub struct OwnerOperationReceipt {
     #[serde(default)]
     pub partial_effect_refs: BTreeSet<String>,
     pub payload: Value,
+}
+
+impl std::fmt::Debug for OwnerOperationReceipt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OwnerOperationReceipt")
+            .field("owner_ref", &self.owner_ref)
+            .field("contract", &self.contract)
+            .field("operation_ref", &self.operation_ref)
+            .field("receipt_ref", &self.receipt_ref)
+            .field("source_revision", &self.source_revision)
+            .field("phase", &self.phase)
+            .field("evidence_refs", &self.evidence_refs)
+            .field("partial_effect_refs", &self.partial_effect_refs)
+            .field(
+                "payload",
+                &"private evidence withheld; explicit serde/read accessor only",
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1897,8 +1916,52 @@ fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
     before != args.len()
 }
 
+/// An actual native store failure retained without expanding public diagnostics.
+/// The original owned object is available through the error source or this
+/// explicit accessor; ordinary Debug omits the newly retained cause body.
+pub struct NativeAttemptStoreFailure {
+    cause: crate::project_development_store::ProjectDevelopmentStoreError,
+    legacy_message: String,
+}
+impl NativeAttemptStoreFailure {
+    pub(crate) fn new(
+        cause: crate::project_development_store::ProjectDevelopmentStoreError,
+        legacy_message: String,
+    ) -> Self {
+        Self {
+            cause,
+            legacy_message,
+        }
+    }
+    pub fn original_native_store_error(
+        &self,
+    ) -> &crate::project_development_store::ProjectDevelopmentStoreError {
+        &self.cause
+    }
+}
+impl std::fmt::Debug for NativeAttemptStoreFailure {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativeAttemptStoreFailure")
+            .field("cause", &"<retained native store cause>")
+            .finish_non_exhaustive()
+    }
+}
+impl Display for NativeAttemptStoreFailure {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.legacy_message, formatter)
+    }
+}
+impl Error for NativeAttemptStoreFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
 #[derive(Debug)]
 pub enum FactoryAttemptError {
+    NativeStore(Box<NativeAttemptStoreFailure>),
+    NativeReceiving(Box<crate::attempt_receiving::NativeCallFailure>),
     PublicationUncertain {
         cause: crate::NativePublicationUncertainty,
         legacy_message: String,
@@ -1936,6 +1999,12 @@ impl Display for FactoryAttemptError {
                 formatter,
                 "Factory attempt error: InvalidOperation({legacy_message:?})"
             )
+        } else if let Self::NativeStore(cause) = self {
+            write!(
+                formatter,
+                "Factory attempt error: InvalidOperation({:?})",
+                cause.legacy_message
+            )
         } else {
             write!(formatter, "Factory attempt error: {self:?}")
         }
@@ -1945,6 +2014,8 @@ impl Display for FactoryAttemptError {
 impl Error for FactoryAttemptError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
+            Self::NativeStore(cause) => Some(cause.as_ref()),
+            Self::NativeReceiving(cause) => Some(cause.as_ref()),
             Self::PublicationUncertain { cause, .. } => Some(cause),
             Self::Io(cause) => Some(cause),
             Self::Json(cause) => Some(cause),

@@ -1,6 +1,9 @@
 //! Live Central receiving admission. JSON observations and role labels cannot
 //! construct the private witness consumed by the canonical Factory transaction.
-use crate::attempt_native_store::{source_is_current, view_for, FileAttemptStore};
+use crate::attempt_native_store::{
+    source_is_current, view_for, FileAttemptStore, NativeReceivingObservationAdmission,
+    ReceivingIntentClaim,
+};
 use crate::attempt_receiving::{CentralReceivingEndpoint, CENTRAL_CONTRACT_REVISION};
 use crate::attempt_runtime::{
     FactoryAttemptActionRequest, FactoryAttemptOperation, FactoryAttemptRecord,
@@ -48,19 +51,72 @@ pub(crate) fn configured_endpoint() -> Result<CentralReceivingEndpoint, String> 
     }
     Ok(CentralReceivingEndpoint {
         binary: binary.canonicalize().map_err(|e| e.to_string())?,
-        root: root.canonicalize().map_err(|e| e.to_string())?,
+        root, // Preserve the original absolute locator; held Root qualification owns canonical identity.
         contract_revision: CENTRAL_CONTRACT_REVISION.into(),
         project: std::env::var("FACTORY_NATIVE_CENTRAL_PROJECT")
             .ok()
             .filter(|v| !v.trim().is_empty()),
     })
 }
-fn read(endpoint: &CentralReceivingEndpoint, reference: &str) -> Result<Value, String> {
+fn read(
+    client: &crate::attempt_receiving::QualifiedReceivingClient,
+    endpoint: &CentralReceivingEndpoint,
+    reference: &str,
+) -> Result<Value, crate::attempt_receiving::NativeCallFailure> {
     let mut input = json!({"return_ref":reference});
     if let Some(project) = &endpoint.project {
         input["project"] = json!(project);
     }
-    crate::attempt_receiving::call(endpoint, "central.receiving.read", &input)
+    client.call("central.receiving.read", &input)
+}
+/// Only a retained exact intent supplies the original owner. Cached public
+/// response JSON and current host environment cannot supply missing history.
+fn retained_intent<'a>(
+    view: &'a StoredAttemptState,
+    attempt_ref: &str,
+    input: &Value,
+    contract: &str,
+) -> Result<&'a OwnerOperationReceipt, String> {
+    let attempt = view
+        .attempts
+        .get(attempt_ref)
+        .ok_or("native receiving attempt is unavailable")?;
+    attempt
+        .observations
+        .iter()
+        .filter(|receipt| {
+            receipt.contract == contract && receipt.payload["nativeRequest"] == *input
+        })
+        .find(|receipt| receipt.phase == OwnerOperationPhase::Dispatching)
+        .or_else(|| {
+            attempt.observations.iter().find(|receipt| {
+                receipt.contract == contract && receipt.payload["nativeRequest"] == *input
+            })
+        })
+        .ok_or_else(|| {
+            "original native receiving intent is unavailable; never infer or backfill its owner"
+                .into()
+        })
+}
+fn qualified_intent(
+    view: &StoredAttemptState,
+    attempt_ref: &str,
+    input: &Value,
+    contract: &str,
+    current: &CentralReceivingEndpoint,
+) -> Result<
+    crate::attempt_receiving::QualifiedReceivingClient,
+    crate::attempt_receiving::NativeCallFailure,
+> {
+    let intent = retained_intent(view, attempt_ref, input, contract)?;
+    let original =
+        serde_json::from_value::<CentralReceivingEndpoint>(intent.payload["hostEndpoint"].clone())
+            .map_err(|error| format!("original receiving endpoint is unavailable: {error}"))?;
+    crate::attempt_receiving::host_client_for_original(
+        &original,
+        current,
+        &intent.payload["ownerClaim"],
+    )
 }
 fn checked_reading<'a>(
     response: &'a Value,
@@ -233,9 +289,11 @@ pub(crate) struct NativeReceivingAdmission {
     action_digest: String,
     pub(crate) attempt_ref: String,
     pub(crate) observation: OwnerOperationReceipt,
+    qualified_client: crate::attempt_receiving::QualifiedReceivingClient,
 }
 impl NativeReceivingAdmission {
     pub(crate) fn validate(&self, request: &FactoryAttemptActionRequest) -> Result<(), String> {
+        self.qualified_client.recheck()?;
         if self.action_digest != digest(request)? {
             return Err(
                 "native receiving admission belongs to another exact Factory Action".into(),
@@ -360,7 +418,7 @@ pub(crate) fn completion_verified(view: &StoredAttemptState) -> bool {
 pub(crate) fn prefetch(
     path: &Path,
     request: &FactoryAttemptActionRequest,
-) -> Result<Option<NativeReceivingAdmission>, String> {
+) -> Result<Option<NativeReceivingAdmission>, crate::attempt_receiving::NativeCallFailure> {
     let reference = match &request.operation {
         FactoryAttemptOperation::ResolveUnitDecision { response, .. } => {
             response.channel_receipt_ref.as_str()
@@ -450,9 +508,15 @@ pub(crate) fn prefetch(
         _ => unreachable!(),
     };
     let endpoint = endpoint?;
-    let response = read(&endpoint, reference)?;
-    let (data, _) = checked_reading(&response, reference)?;
     let (input, attempt_ref, original) = prepared;
+    let contract = if original.is_some() {
+        "factory.attempt-receiving-call/v1"
+    } else {
+        QUESTION_CALL
+    };
+    let qualified_client = qualified_intent(&view, &attempt_ref, &input, contract, &endpoint)?;
+    let response = read(&qualified_client, &endpoint, reference)?;
+    let (data, _) = checked_reading(&response, reference)?;
     match &request.operation {
         FactoryAttemptOperation::ResolveUnitDecision {
             human_request_ref,
@@ -492,12 +556,13 @@ pub(crate) fn prefetch(
         phase: OwnerOperationPhase::Observed,
         evidence_refs: BTreeSet::from([reference.into()]),
         partial_effect_refs: BTreeSet::new(),
-        payload: json!({"factoryActionDigest":request_digest,"centralResponse":response,"hostEndpoint":endpoint,"standing":"live native owner read; no caller JSON proof"}),
+        payload: json!({"factoryActionDigest":request_digest,"centralResponse":response,"hostEndpoint":endpoint,"physicalQualification":qualified_client.evidence(),"standing":"live native owner read; no caller JSON proof"}),
     };
     Ok(Some(NativeReceivingAdmission {
         action_digest: request_digest,
         attempt_ref,
         observation,
+        qualified_client,
     }))
 }
 
@@ -534,7 +599,9 @@ fn retain_question_observation(
             attempt_ref: attempt_ref.into(),
             receipt: receipt.clone(),
         };
-        match store.apply(retention) {
+        let admission = NativeReceivingObservationAdmission::new(&retention, None)
+            .map_err(CliError::from_native)?;
+        match store.apply_native_receiving_observation(retention, admission) {
             Ok(_) => return Ok(()),
             Err(error) => {
                 if crate::native_publication_uncertainty(&error).is_some() {
@@ -601,7 +668,33 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliEr
     if !source_is_current(&native, &view) {
         return Err("unit decision source is historical".into());
     }
-    let (input, attempt_ref) = question_input(&native, &view, &request_ref, &endpoint)?;
+    let original_endpoint = if submission_request.is_some() {
+        let prior = view
+            .attempts
+            .values()
+            .flat_map(|attempt| attempt.observations.iter())
+            .find(|receipt| {
+                receipt.contract == QUESTION_CALL
+                    && receipt.operation_ref == format!("factory-unit-decision:{request_ref}")
+            });
+        match prior {
+            Some(receipt) => serde_json::from_value::<CentralReceivingEndpoint>(
+                receipt.payload["hostEndpoint"].clone(),
+            )
+            .map_err(|error| {
+                CliError::new(format!(
+                    "original native question endpoint is unavailable; never backfill it: {error}"
+                ))
+            })?,
+            None => endpoint.clone(),
+        }
+    } else {
+        endpoint.clone()
+    };
+    // Digest original endpoint/input, never the replacement client's current path.
+    let (input, attempt_ref) = question_input(&native, &view, &request_ref, &original_endpoint)?;
+    let mut intent_context: Option<(OwnerOperationReceipt, String)> = None;
+    let mut qualified_client = None;
     let response = if let Some(request) = &submission_request {
         crate::attempt_runtime::validate_action_request(request).map_err(CliError::from_native)?;
         let actual = pending(&native, &view, &request_ref)?;
@@ -622,89 +715,157 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliEr
         {
             return Err("submission differs from the immutable canonical unit decision".into());
         }
-        if view.revision != request.expected_revision {
-            return Err("stale Factory revision before native question submission".into());
-        }
         crate::attempt_application::validate_native_action(
             &crate::attempt_runtime::reading_for(&view).map_err(CliError::from_native)?,
             &view.run,
             request,
         )
         .map_err(CliError::from_native)?;
+        let identity = digest(&(&input, &original_endpoint))?;
         let operation_ref = format!("factory-unit-decision:{request_ref}");
-        let identity = digest(&(&input, &endpoint))?;
-        let previous = view.attempts[&attempt_ref]
+        if view.attempts[&attempt_ref]
             .observations
             .iter()
-            .filter(|receipt| {
-                receipt.contract == QUESTION_CALL && receipt.operation_ref == operation_ref
+            .any(|receipt| {
+                receipt.contract == QUESTION_CALL
+                    && receipt.operation_ref == operation_ref
+                    && receipt.payload["requestDigest"] != identity
             })
-            .collect::<Vec<_>>();
-        if previous
-            .iter()
-            .any(|receipt| receipt.payload["requestDigest"] != identity)
         {
             return Err(
-                "native question identity reused with a changed submission or host endpoint".into(),
+                "native question identity reused with changed original input or endpoint".into(),
             );
         }
-        if let Some(response) = previous
-            .iter()
-            .rev()
-            .filter(|receipt| receipt.phase == OwnerOperationPhase::Observed)
-            .find_map(|receipt| receipt.payload.get("centralResponse").cloned())
-        {
-            // Submission replay reads retained delivery facts. It grants no
-            // authority to answer; Resolve always reads the live owner again.
-            response
+        let intent = OwnerOperationReceipt {
+            owner_ref: "factory".into(),
+            contract: QUESTION_CALL.into(),
+            operation_ref,
+            receipt_ref: format!("factory-unit-decision-intent:{identity}"),
+            source_revision: format!("factory-state:{}", view.revision),
+            phase: OwnerOperationPhase::Dispatching,
+            evidence_refs: BTreeSet::new(),
+            partial_effect_refs: BTreeSet::new(),
+            payload: json!({"requestDigest":identity,"nativeRequest":input,"hostEndpoint":original_endpoint}),
+        };
+        let mut retention = request.clone();
+        retention.operation = FactoryAttemptOperation::RecordObservation {
+            attempt_ref: attempt_ref.clone(),
+            receipt: intent,
+        };
+        retention.projection_ref = format!("{}:native-intent", request.projection_ref);
+        let claim = ReceivingIntentClaim::new(&original_endpoint, &input, None)
+            .map_err(CliError::from_native)?;
+        let admission = NativeReceivingObservationAdmission::new(&retention, Some(claim))
+            .map_err(CliError::from_native)?;
+        let mut store =
+            FileAttemptStore::open_run(&path, run.clone()).map_err(CliError::from_native)?;
+        let claimed = store
+            .apply_native_receiving_observation(retention, admission)
+            .map_err(CliError::from_native)?;
+        let intent = claimed
+            .receiving_intent
+            .ok_or("question claim omitted original native intent")?;
+        intent_context = Some((intent.clone(), identity.clone()));
+        let qualified = if claimed.inserted {
+            crate::attempt_receiving::lookup_endpoint(
+                &original_endpoint,
+                None,
+                &intent.payload["ownerClaim"],
+            )
         } else {
-            let intent = previous.iter()
-                .find(|receipt| receipt.phase == OwnerOperationPhase::Dispatching)
-                .map(|receipt| (**receipt).clone())
-                .unwrap_or_else(|| OwnerOperationReceipt {
-                owner_ref: "factory".into(),
-                contract: QUESTION_CALL.into(),
-                operation_ref: operation_ref.clone(),
-                receipt_ref: format!("factory-unit-decision-intent:{identity}"),
-                source_revision: format!("factory-state:{}", view.revision),
-                phase: OwnerOperationPhase::Dispatching,
-                evidence_refs: BTreeSet::new(),
-                partial_effect_refs: BTreeSet::new(),
-                payload: json!({"requestDigest":identity,"nativeRequest":input,"hostEndpoint":endpoint}),
-                });
-            // Retain the immutable intent before the call. A lost response
-            // resumes this same Central producer key after process replacement.
-            if !previous
-                .iter()
-                .any(|receipt| receipt.receipt_ref == intent.receipt_ref)
-            {
-                retain_question_observation(&path, request, &attempt_ref, intent.clone())?;
+            crate::attempt_receiving::host_client_for_original(
+                &original_endpoint,
+                &endpoint,
+                &intent.payload["ownerClaim"],
+            )
+        };
+        let called = match qualified {
+            Ok(client) => {
+                let called = if claimed.inserted {
+                    client.call("central.receiving.submit", &input)
+                } else {
+                    crate::attempt_receiving::lookup_observed(&client, &input)
+                };
+                qualified_client = Some(client);
+                called
             }
-            match crate::attempt_receiving::call(&endpoint, "central.receiving.submit", &input) {
-                Ok(response) => response,
-                Err(failure) => {
-                    let mut uncertain = intent;
-                    uncertain.phase = OwnerOperationPhase::Uncertain;
-                    uncertain.receipt_ref = format!(
-                        "factory-unit-decision-uncertain:{}",
-                        digest(&(&identity, &failure))?
+            Err(failure) => Err(failure),
+        };
+        match called {
+            Ok(response) => response,
+            Err(failure) => {
+                let mut uncertain = intent;
+                uncertain.phase = OwnerOperationPhase::Uncertain;
+                uncertain.payload["failure"] = json!(failure.message);
+                uncertain.payload["nativeCapture"] = failure.observation.clone();
+                uncertain.receipt_ref = format!(
+                    "factory-unit-decision-uncertain:{}",
+                    digest(&uncertain.payload)?
+                );
+                let retained =
+                    retain_question_observation(&path, request, &attempt_ref, uncertain.clone())
+                        .err();
+                let unresolved = json!({"contract":DECISION_READING,"runRef":run,"humanRequestRef":request_ref,"nativeRequest":input,
+                    "centralResponse":failure.observation.get("centralResponse"),"decisionResponse":null,"unresolved":failure.message,
+                    "transportObservation":uncertain,"needsReconciliation":true,"retentionError":retained.as_ref().map(|error|error.to_string())});
+                if let Some(error) = retained {
+                    return Err(
+                        crate::attempt_receiving::NativeReceivingRetentionFailure::into_cli(
+                            failure, error, unresolved,
+                        ),
                     );
-                    uncertain.payload["failure"] = json!(failure);
-                    let retained =
-                        retain_question_observation(&path, request, &attempt_ref, uncertain).err();
-                    let message = format!("native question outcome is unresolved; retry the same producer key: {failure}; retention: {:?}", retained.as_ref().map(|error|error.to_string()));
-                    return Err(match retained {
-                        Some(error) => error.with_message(message),
-                        None => CliError::new(message),
-                    });
                 }
+                return serde_json::to_string_pretty(&unresolved).map_err(CliError::from_native);
             }
         }
     } else {
-        read(&endpoint, args[4])?
+        let client = qualified_intent(&view, &attempt_ref, &input, QUESTION_CALL, &endpoint)
+            .map_err(CliError::from_native)?;
+        let response = read(&client, &endpoint, args[4]).map_err(CliError::from_native)?;
+        qualified_client = Some(client);
+        response
     };
-    let reference = text(&response["data"], "return_ref")?;
-    validate_question(&response, &input, reference, &view.attempts[&attempt_ref])?;
+    // Retain the actual response on validation failure; no fabricated native
+    // publication error and no unobserved success from cached caller JSON.
+    let validated = (|| -> Result<String, String> {
+        qualified_client
+            .as_ref()
+            .ok_or("native question client qualification is unavailable")?
+            .recheck()?;
+        let reference = text(&response["data"], "return_ref")?.to_owned();
+        validate_question(&response, &input, &reference, &view.attempts[&attempt_ref])?;
+        Ok(reference)
+    })();
+    if let Err(failure) = validated.as_ref() {
+        if let (Some(request), Some((mut intent, _))) =
+            (&submission_request, intent_context.clone())
+        {
+            intent.phase = OwnerOperationPhase::Uncertain;
+            intent.payload["centralResponse"] = response.clone();
+            intent.payload["failure"] = json!(failure);
+            intent.payload["physicalQualification"] = qualified_client
+                .as_ref()
+                .map(|client| client.evidence())
+                .unwrap_or(Value::Null);
+            intent.receipt_ref = format!(
+                "factory-unit-decision-uncertain:{}",
+                digest(&intent.payload)?
+            );
+            let retained =
+                retain_question_observation(&path, request, &attempt_ref, intent.clone()).err();
+            let unresolved = json!({"contract":DECISION_READING,"runRef":run,"humanRequestRef":request_ref,"nativeRequest":input,
+                "centralResponse":response,"decisionResponse":null,"unresolved":failure,"transportObservation":intent,"needsReconciliation":true,
+                "retentionError":retained.as_ref().map(|error|error.to_string())});
+            if let Some(error) = retained {
+                let message =
+                    format!("native question validation refused: {failure}; retention: {error}");
+                return Err(error.with_message(message).with_native_result(unresolved));
+            }
+            return serde_json::to_string_pretty(&unresolved).map_err(CliError::from_native);
+        }
+        return Err(failure.clone().into());
+    }
+    let reference = validated.expect("validated above");
     let decision = pending(&native, &view, &request_ref)?;
     let basis = decision
         .unit_decision_basis
@@ -713,24 +874,18 @@ pub fn execute_cli(args: &[String], stdin: Option<&str>) -> Result<String, CliEr
     let reviewed = reviewed_response(&response, &basis.resolver_ref, basis.controlled);
     let native_result = json!({"contract":DECISION_READING,"runRef":run,"humanRequestRef":request_ref,
         "nativeRequest":input,"centralResponse":response,"decisionResponse":reviewed.as_ref().ok(),"unresolved":reviewed.err()});
-    if let Some(request) = submission_request {
-        let identity = digest(&(&input, &endpoint))?;
-        retain_question_observation(
-            &path,
-            &request,
-            &attempt_ref,
-            OwnerOperationReceipt {
-                owner_ref: "factory".into(),
-                contract: QUESTION_CALL.into(),
-                operation_ref: format!("factory-unit-decision:{request_ref}"),
-                receipt_ref: format!("factory-unit-decision-call:{}", digest(&response)?),
-                source_revision: text(&response["data"], "revision")?.into(),
-                phase: OwnerOperationPhase::Observed,
-                evidence_refs: BTreeSet::from([reference.into()]),
-                partial_effect_refs: BTreeSet::new(),
-                payload: json!({"requestDigest":identity,"nativeRequest":input,"centralResponse":response,"hostEndpoint":endpoint}),
-            },
-        ).map_err(|error| error.with_native_result(native_result.clone()))?;
+    if let (Some(request), Some((mut intent, _))) = (&submission_request, intent_context) {
+        intent.phase = OwnerOperationPhase::Observed;
+        intent.receipt_ref = format!("factory-unit-decision-call:{}", digest(&response)?);
+        intent.source_revision = text(&response["data"], "revision")?.into();
+        intent.evidence_refs = BTreeSet::from([reference]);
+        intent.payload["centralResponse"] = response;
+        intent.payload["physicalQualification"] = qualified_client
+            .as_ref()
+            .map(|client| client.evidence())
+            .unwrap_or(Value::Null);
+        retain_question_observation(&path, request, &attempt_ref, intent)
+            .map_err(|error| error.with_native_result(native_result.clone()))?;
     }
     serde_json::to_string_pretty(&native_result).map_err(CliError::from_native)
 }
@@ -772,5 +927,92 @@ mod publication_tests {
             error.native_publication_failure().unwrap()["error"]["details"]["published"],
             true
         );
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod actual_capture_retention_tests {
+    use super::*;
+    use crate::attempt_learning::publication_tests::{
+        change_actual_published_privacy, native_observation, native_retention_source,
+    };
+    use std::error::Error;
+    #[test]
+    fn actual_transport_and_native_publisher_failures_keep_original_and_secondary_causes() {
+        let (root, store, base) = native_retention_source();
+        let before = store.reading().unwrap().revision;
+        let endpoint = CentralReceivingEndpoint {
+            binary: root.path().join("missing-real-client"),
+            root: root.path().to_owned(),
+            project: None,
+            contract_revision: CENTRAL_CONTRACT_REVISION.into(),
+        };
+        let invocation = crate::attempt_receiving::call_observed_bounded(
+            &endpoint,
+            "central.receiving.read",
+            &json!({}),
+            std::time::Duration::from_secs(2),
+        )
+        .unwrap_err();
+        assert_eq!(
+            crate::native_process::capture_failure(
+                invocation
+                    .source()
+                    .unwrap()
+                    .downcast_ref::<std::io::Error>()
+                    .unwrap()
+            )
+            .unwrap()
+            .cause()
+            .kind(),
+            std::io::ErrorKind::NotFound
+        );
+        let mut observation = native_observation(&store);
+        observation.payload["nativeCapture"] = invocation.observation().clone();
+        let request = FactoryAttemptActionRequest {
+            contract: crate::attempt_runtime::FACTORY_ATTEMPT_ACTION.into(),
+            projection_ref: base.projection_ref,
+            caller: base.caller,
+            run_ref: base.run_ref,
+            expected_revision: before,
+            authority: base.authority,
+            operation: FactoryAttemptOperation::RecordObservation {
+                attempt_ref: base.attempt_ref.clone(),
+                receipt: observation.clone(),
+            },
+        };
+        change_actual_published_privacy();
+        let retention = retain_question_observation(
+            &root.path().join("state.json"),
+            &request,
+            &base.attempt_ref,
+            observation,
+        )
+        .unwrap_err();
+        assert!(crate::native_publication_uncertainty(&retention).is_some());
+        let error = crate::attempt_receiving::NativeReceivingRetentionFailure::into_cli(
+            invocation,
+            retention,
+            json!({"actualTransportUncertain":true}),
+        );
+        assert!(crate::native_publication_uncertainty(&error).is_some());
+        let both = error
+            .source()
+            .unwrap()
+            .downcast_ref::<crate::attempt_receiving::NativeReceivingRetentionFailure>()
+            .unwrap();
+        assert!(both
+            .invocation()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .is_some());
+        assert!(crate::native_publication_uncertainty(both.retention()).is_some());
+        assert_eq!(
+            store.reading().unwrap().revision,
+            before + 1,
+            "actual published uncertainty must never trigger a third retention write"
+        );
+        assert!(!format!("{error:?}").contains("retainedPrefix"));
     }
 }
