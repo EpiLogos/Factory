@@ -1,0 +1,109 @@
+{
+  "schema": "factory.native-evidence-case-sets/v1",
+  "groups": {
+    "capture": [
+      "native_process::tests::zero_timeout_does_not_start_a_process",
+      "native_process::tests::drains_both_pipes_and_preserves_exit_status",
+      "native_process::tests::inherited_pipe_does_not_turn_timeout_into_an_unbounded_wait",
+      "native_process::tests::oversized_output_is_refused_not_truncated_into_valid_evidence",
+      "native_process::capture_adversity::missing_executable_retains_native_pre_spawn_kind_and_cause",
+      "native_process::capture_adversity::actual_partial_timeout_retains_bytes_and_owned_client_cleanup",
+      "native_process::capture_adversity::actual_failure_debug_display_and_io_wrapper_do_not_export_prefixes",
+      "native_process::capture_adversity::real_overflow_retains_bounded_prefix_without_valid_response",
+      "native_process::capture_adversity::actual_zero_exit_with_open_writer_retains_status_but_cannot_complete",
+      "native_process::capture_adversity::real_escaped_writer_after_timeout_observes_closed_capture_pipe",
+      "native_process::capture_adversity::actual_external_reap_refuses_signal_and_retains_echild",
+      "native_process::capture_adversity::actual_default_group_and_explicit_caller_group_are_preserved"
+    ],
+    "receiving": [
+      "native_human_review_is_required_and_the_exact_reply_resumes_once",
+      "public_human_strings_and_foreign_request_bindings_never_authenticate_a_reply",
+      "an_actual_native_reply_cannot_resume_a_changed_subject_candidate",
+      "actual_native_final_receiving_can_close_and_foreign_identity_cannot",
+      "a_native_human_rejection_of_final_receiving_prevents_closure",
+      "an_actual_native_reply_does_not_follow_a_replaced_affected_execution",
+      "opaque_receiving_labels_cannot_close_real_native_returned_units",
+      "abort_then_archive_preserves_returns_without_manufacturing_verified_completion",
+      "genuine_failed_return_retries_and_latest_current_assessment_preserves_its_basis",
+      "native_receiving_guarded_recovery_preserves_actual_owner_bytes_and_rejects_changed_input",
+      "native_receiving_owner_replacement_uses_new_binary_only_for_original_lookup",
+      "native_receiving_lost_ack_recovers_without_a_second_native_submit",
+      "native_receiving_aliases_have_one_canonical_submit_winner_across_restart",
+      "native_receiving_reserved_call_json_is_refused_without_owner_effects",
+      "native_receiving_intent_before_failed_launch_never_submits_during_recovery",
+      "native_receiving_client_replacement_after_actual_descriptor_refuses_before_read",
+      "native_receiving_same_original_root_locator_cannot_claim_a_replacement_owner",
+      "native_receiving_abrupt_death_after_durable_intent_never_resubmits",
+      "native_receiving_byref_same_visible_result_refuses_changed_original_digest",
+      "native_receiving_original_alias_can_finish_through_same_physical_host_and_new_client",
+      "native_question_original_alias_replays_reads_and_resolves_through_same_physical_host",
+      "native_receiving_capture_deadline_never_admits_a_json_shaped_prefix_and_restart_only_looks_up",
+      "native_receiving_capture_keeps_invalid_bytes_and_complete_status_without_debug_disclosure",
+      "native_receiving_capture_overflow_retains_bounded_actual_prefix_and_guarded_original",
+      "native_receiving_complete_nonok_retains_exact_original_code_details_and_status",
+      "native_finished_prefetch_capture_failure_preserves_state_and_never_admits_partial_reply",
+      "native_resolve_prefetch_capture_failure_preserves_original_question_and_provider",
+      "native_gateway_capture_acknowledgement_survives_actual_store_restart_and_complete_nonzero",
+      "native_gateway_after_capture_publication_failure_keeps_both_causes_and_no_false_ack",
+      "actual_late_return_before_termination_retains_current_stop_across_restart",
+      "actual_termination_before_late_return_replays_original_stop_without_reissue",
+      "actual_retry_late_material_cannot_borrow_predecessor_cancellation"
+    ],
+    "consumer-os": [
+      "attempt_receiving::capture_consumer_os_tests::actual_missing_client_keeps_original_capture_io_and_safe_debug",
+      "attempt_receiving::capture_consumer_os_tests::actual_os_invalid_prefix_and_timeout_never_become_owner_reply_or_broad_debug",
+      "attempt_native_receiving::actual_capture_retention_tests::actual_transport_and_native_publisher_failures_keep_original_and_secondary_causes"
+    ],
+    "preparation": [
+      "central_cases::native_central_preparation_reaches_owner_and_the_actual_dispatch_path",
+      "central_cases::native_central_cwd_is_anchored_without_granting_the_repository_root_as_a_write",
+      "central_cases::native_central_rejects_redirected_or_replaced_cwd_before_worker_transport",
+      "central_cases::native_central_exact_replay_retains_bytes_and_does_not_reallocate",
+      "central_cases::native_central_stale_policy_and_wrong_cwd_stop_before_worker_transport",
+      "central_cases::native_central_changed_now_or_destination_anchor_stops_dispatch",
+      "central_cases::native_central_rejected_root_scratch_keeps_actual_allocation_for_corrected_retry",
+      "central_cases::native_central_required_worker_enforcement_cannot_be_bypassed_by_preparation"
+    ],
+    "owner-dispatch": [
+      "attempt_owner_dispatch::native_failure_tests::actual_timeout_incomplete_pipes_retain_original_private_capture",
+      "attempt_owner_dispatch::native_failure_tests::actual_missing_executable_is_typed_failure_with_single_intent_and_no_resend",
+      "attempt_owner_dispatch::native_failure_tests::actual_capture_and_post_publish_uncertainty_remain_distinct_without_compensation",
+      "attempt_owner_dispatch::native_failure_tests::actual_source_receipt_projection_and_historical_replay_keep_public_schema",
+      "attempt_owner_dispatch::publication_tests::actual_fallback_publication_retains_primary_refusal_and_secondary_native_cause",
+      "attempt_owner_dispatch::publication_tests::actual_owner_retention_keeps_apply_cause_when_followup_native_read_fails"
+    ],
+    "paired": [
+      "attempt_receiving::paired_inclusion_native_tests::actual_central_post_document_and_secondary_receiving_failures_reach_same_factory_transport"
+    ],
+    "cancellation-guard": [
+      "orchestration::native_cancellation_guard_tests::actual_native_snapshot_new_request_cannot_borrow_prior_acceptance"
+    ]
+  },
+  "integration_child_definition": "native_capture_gateway_actual_child",
+  "required_actual_child_executions_via_parents": 3,
+  "required_pending_qualification": {
+    "standing": "HOSTED_PAIRED_WIRING_SOURCE_IMPLEMENTED_NATIVE_UNRUN",
+    "owner": "Central native post-document inclusion/secondary Receiving publication owner",
+    "reason": "Existing actual cfg(test) child and paired Factory parent are selected by the hosted workflow on Linux/Mac; real dual-failure aperture remains test-only. One exact parent executes both actual native modes.",
+    "requiredEvidence": "paired actual Central owner document effect + original/secondary cause envelope and actual Factory transport retention; complete ordinary native refusal FCI05 does not substitute",
+    "compositeQualificationComplete": false,
+    "missingArmNegativeDependency": "Separate12c9e9f1 Source successor is not composed or selected here; its type and native qualification remain open."
+  },
+  "full_native_composite_qualified": false,
+  "Original_Run_credit": false,
+  "preparation_source_basis": {
+    "path": "factory/tests/support/attempt_central_cases.rs",
+    "sha256": "1659813fb28f7c134e71ad74cbbbfef89a576e5631530b094327fdf63b4ad489",
+    "observed_definitions": 8,
+    "prior_workflow_count": 9,
+    "basis": "eight actual exact public Source definitions; old nine-count does not match current Source; compiled discovery remains mandatory",
+    "no_removed_actual_definition": true
+  },
+  "cancellation_snapshot_contract": {
+    "schema": "factory.native-cancellation-engine-basis/v1",
+    "producer_case": "actual_late_return_before_termination_retains_current_stop_across_restart",
+    "selector": "Actual retained original non-moved manifest under same admitted fixture root; complete producer libtest log and held measured SHA. No manufactured path/state or synthetic fallback.",
+    "consumer": "cancellation-guard",
+    "native_execution": "UNRUN"
+  }
+}

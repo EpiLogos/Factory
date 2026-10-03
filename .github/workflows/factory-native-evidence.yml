@@ -7,6 +7,8 @@ on:
       - 'contracts/factory/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'scripts/native_evidence*'
+      - 'scripts/tests/test_ci_workflows.py'
       - '.github/workflows/factory-native-evidence.yml'
   push:
     branches: [main]
@@ -15,6 +17,8 @@ on:
       - 'contracts/factory/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
+      - 'scripts/native_evidence*'
+      - 'scripts/tests/test_ci_workflows.py'
       - '.github/workflows/factory-native-evidence.yml'
   workflow_dispatch:
 
@@ -30,8 +34,15 @@ concurrency:
 
 jobs:
   native-attempt-evidence:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -40,13 +51,35 @@ jobs:
           set -euo pipefail
           mkdir -p native-evidence "$RUNNER_TEMP/factory-central-owner"
           git rev-parse HEAD > native-evidence/source-sha.txt
+          git rev-parse 'HEAD^{tree}' > native-evidence/source-tree.txt
+          git ls-tree -r HEAD > native-evidence/source-manifest.txt
           git archive HEAD | gzip > native-evidence/source.tar.gz
+          cp Cargo.toml Cargo.lock native-evidence/
+          rustc -Vv > native-evidence/rustc.txt
+          cargo -V > native-evidence/cargo.txt
           git -C "$RUNNER_TEMP/factory-central-owner" init
           git -C "$RUNNER_TEMP/factory-central-owner" remote add origin https://github.com/EpiLogos/Central.git
-          git -C "$RUNNER_TEMP/factory-central-owner" fetch --depth=1 origin 2a604574774c41921003ed99a2eed73b4c9f4266
+          git -C "$RUNNER_TEMP/factory-central-owner" fetch --depth=1 origin b841b1d549de241102a1132f73f438bb0149e3b3
           git -C "$RUNNER_TEMP/factory-central-owner" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/factory-central-owner" rev-parse HEAD > native-evidence/central-source-sha.txt
-          test "$(cat native-evidence/central-source-sha.txt)" = 2a604574774c41921003ed99a2eed73b4c9f4266
+          test "$(cat native-evidence/central-source-sha.txt)" = b841b1d549de241102a1132f73f438bb0149e3b3
+          git -C "$RUNNER_TEMP/factory-central-owner" rev-parse 'HEAD^{tree}' > native-evidence/central-owner-tree.txt
+          git -C "$RUNNER_TEMP/factory-central-owner" ls-tree -r HEAD > native-evidence/central-owner-manifest.txt
+          git -C "$RUNNER_TEMP/factory-central-owner" archive HEAD | gzip > native-evidence/central-owner-source.tar.gz
+          cp "$RUNNER_TEMP/factory-central-owner/Cargo.lock" native-evidence/central-owner-Cargo.lock
+      - name: Prepare exact previous Central owner for replacement regressions
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/factory-central-previous"
+          git -C "$RUNNER_TEMP/factory-central-previous" remote add origin https://github.com/EpiLogos/Central.git
+          git -C "$RUNNER_TEMP/factory-central-previous" fetch --depth=1 origin 2a604574774c41921003ed99a2eed73b4c9f4266
+          git -C "$RUNNER_TEMP/factory-central-previous" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/factory-central-previous" rev-parse HEAD > native-evidence/central-previous-source-sha.txt
+          test "$(cat native-evidence/central-previous-source-sha.txt)" = 2a604574774c41921003ed99a2eed73b4c9f4266
+          git -C "$RUNNER_TEMP/factory-central-previous" rev-parse 'HEAD^{tree}' > native-evidence/central-previous-tree.txt
+          git -C "$RUNNER_TEMP/factory-central-previous" ls-tree -r HEAD > native-evidence/central-previous-manifest.txt
+          git -C "$RUNNER_TEMP/factory-central-previous" archive HEAD | gzip > native-evidence/central-previous-source.tar.gz
+          cp "$RUNNER_TEMP/factory-central-previous/Cargo.lock" native-evidence/central-previous-Cargo.lock
       - name: Prepare exact Actuation authority owner for sensing integration
         run: |
           set -euo pipefail
@@ -55,6 +88,35 @@ jobs:
           git -C "$RUNNER_TEMP/factory-actuation-owner" fetch --depth=1 origin 8ad34cb3df3cb9112c57f2db385e2d0bdd57a786
           git -C "$RUNNER_TEMP/factory-actuation-owner" checkout --detach FETCH_HEAD
           git -C "$RUNNER_TEMP/factory-actuation-owner" rev-parse HEAD > native-evidence/actuation-source-sha.txt
+          test "$(cat native-evidence/actuation-source-sha.txt)" = 8ad34cb3df3cb9112c57f2db385e2d0bdd57a786
+          git -C "$RUNNER_TEMP/factory-actuation-owner" rev-parse 'HEAD^{tree}' > native-evidence/actuation-owner-tree.txt
+          git -C "$RUNNER_TEMP/factory-actuation-owner" ls-tree -r HEAD > native-evidence/actuation-owner-manifest.txt
+          git -C "$RUNNER_TEMP/factory-actuation-owner" archive HEAD | gzip > native-evidence/actuation-owner-source.tar.gz
+          cp "$RUNNER_TEMP/factory-actuation-owner/Cargo.lock" native-evidence/actuation-owner-Cargo.lock
+      - name: Prepare published Central Source for the paired FCI06 gate
+        run: |
+          set -euo pipefail
+          git init "$RUNNER_TEMP/factory-central-paired"
+          git -C "$RUNNER_TEMP/factory-central-paired" remote add origin https://github.com/EpiLogos/Central.git
+          git -C "$RUNNER_TEMP/factory-central-paired" fetch --depth=1 origin 01af4e53d3d8a53f86b6d6e37f0fa365c501bdad
+          git -C "$RUNNER_TEMP/factory-central-paired" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/factory-central-paired" rev-parse HEAD > native-evidence/fci06-central-source-sha.txt
+          git -C "$RUNNER_TEMP/factory-central-paired" rev-parse 'HEAD^{tree}' > native-evidence/fci06-central-source-tree.txt
+          test "$(cat native-evidence/fci06-central-source-sha.txt)" = 01af4e53d3d8a53f86b6d6e37f0fa365c501bdad
+          test "$(cat native-evidence/fci06-central-source-tree.txt)" = f23381d08812a593bc136cf8ae9b520611ebec40
+          git -C "$RUNNER_TEMP/factory-central-paired" ls-tree -r HEAD > native-evidence/fci06-central-source-manifest.txt
+          git -C "$RUNNER_TEMP/factory-central-paired" archive HEAD | gzip > native-evidence/fci06-central-source.tar.gz
+          python3 - <<'PYCODE'
+          import hashlib, json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])/'factory-central-paired'
+          expected = {'ctrl/Cargo.toml': '210b8efd1393dd300dd03d429a00922e2a1b9d3027edbf3f51065add35596a33', 'ctrl/tests/native_receiving_incomplete_child.rs': '712aa2ea8095b74b843c15fe9ee09c61b0346af452c0da8c029793964d7cab96', 'ctrl/src/continuous_work/mod.rs': 'caddb42fdb03f25fa321d037d9be834f2d3c375bddc46c1eb69d43ab22cd2238', 'ctrl/src/continuous_work/receiving.rs': 'da301ccb39cb8feb82fbe4bc41b471a6e79ed053a320981df2951d09653c8067'}
+          actual = {member: hashlib.sha256((root/member).read_bytes()).hexdigest() for member in expected}
+          if actual != expected:
+              raise SystemExit('paired Central Source member differs from the published native interface')
+          witness = {'schema': 'factory.fci06-compiler-source/v1', 'head': Path('native-evidence/fci06-central-source-sha.txt').read_text().strip(), 'tree': Path('native-evidence/fci06-central-source-tree.txt').read_text().strip(), 'required_members_sha256': actual, 'retained_files_sha256': {name: hashlib.sha256(Path('native-evidence', name).read_bytes()).hexdigest() for name in ['fci06-central-source-manifest.txt', 'fci06-central-source.tar.gz']}, 'paired_native_execution': 'UNRUN'}
+          Path('native-evidence/fci06-compiler-source.json').write_text(json.dumps(witness, indent=2)+'\n')
+          PYCODE
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: factory-native-attempt-integration
@@ -62,15 +124,176 @@ jobs:
           workspaces: |
             . -> target
             ${{ runner.temp }}/factory-central-owner -> target
+            ${{ runner.temp }}/factory-central-previous -> target
             ${{ runner.temp }}/factory-actuation-owner -> target
+            ${{ runner.temp }}/factory-central-paired -> default-target
+            ${{ runner.temp }}/factory-central-paired -> child-target
       # Format, Clippy and all-target/doctests remain in required factory-rust.
       # This lane supplies native integration cases, including authenticated
       # decision and closure admission through the real Central owner.
       - name: Build exact native binaries
+        id: build
         run: |
-          cargo build --locked --package epilogos-factory --bin factory
-          cargo build --manifest-path "$RUNNER_TEMP/factory-central-owner/Cargo.toml" -p ctrl --locked
-          cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-cli --bin actuation --locked
+          set -euo pipefail
+          cargo build --locked --package epilogos-factory --bin factory --message-format=json 2> native-evidence/factory-compiler.stderr | tee native-evidence/factory-compiler.jsonl
+          cargo build --manifest-path "$RUNNER_TEMP/factory-central-owner/Cargo.toml" -p ctrl --locked --message-format=json 2> native-evidence/ctrl-compiler.stderr | tee native-evidence/ctrl-compiler.jsonl
+          cargo build --manifest-path "$RUNNER_TEMP/factory-central-previous/Cargo.toml" -p ctrl --locked --message-format=json 2> native-evidence/ctrl-previous-compiler.stderr | tee native-evidence/ctrl-previous-compiler.jsonl
+          cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-cli --bin actuation --locked --message-format=json 2> native-evidence/actuation-compiler.stderr | tee native-evidence/actuation-compiler.jsonl
+          cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-gateway --bin actuation-gateway --locked --message-format=json 2> native-evidence/actuation-gateway-compiler.stderr | tee native-evidence/actuation-gateway-compiler.jsonl
+          python3 - <<'PY'
+          import hashlib, os
+          from pathlib import Path
+          paths = {"FACTORY_TEST_CTRL": Path(os.environ["RUNNER_TEMP"])/"factory-central-owner/target/debug/ctrl", "FACTORY_TEST_CTRL_PRE_LOOKUP": Path(os.environ["RUNNER_TEMP"])/"factory-central-previous/target/debug/ctrl", "FACTORY_TEST_ACTUATION_GATEWAY": Path(os.environ["RUNNER_TEMP"])/"factory-actuation-owner/target/debug/actuation-gateway"}
+          with open(os.environ["GITHUB_ENV"], "a") as env, open("native-evidence/native-inputs.sha256", "w") as evidence:
+              for key, path in paths.items():
+                  digest = hashlib.sha256(path.read_bytes()).hexdigest()
+                  env.write(f"{key}={path}\n{key}_SHA256={digest}\n")
+                  evidence.write(f"{digest}  {path}\n")
+          PY
+          python3 scripts/native_evidence_inputs.py compiler --role factory --log native-evidence/factory-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role ctrl --log native-evidence/ctrl-compiler.jsonl --root "$RUNNER_TEMP/factory-central-owner" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role ctrl-previous --log native-evidence/ctrl-previous-compiler.jsonl --root "$RUNNER_TEMP/factory-central-previous" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role actuation --log native-evidence/actuation-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-cli/Cargo.toml --entry crates/actuation-cli/src/main.rs --target actuation --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role actuation-gateway --log native-evidence/actuation-gateway-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-gateway/Cargo.toml --entry crates/actuation-gateway/src/main.rs --target actuation-gateway --kind bin
+      - name: Build and identify the same Source ordinary reader and opt-in native FCI06 child
+        id: paired_build
+        run: |
+          set -euo pipefail
+          rustc -Vv > native-evidence/fci06-rustc.txt
+          cargo -V > native-evidence/fci06-cargo.txt
+          cargo build --locked --manifest-path "$RUNNER_TEMP/factory-central-paired/Cargo.toml" -p ctrl --bin ctrl --target-dir "$RUNNER_TEMP/factory-central-paired/default-target" --message-format=json 2> native-evidence/fci06-default-build.stderr | tee native-evidence/fci06-default-build.jsonl
+          cargo test --locked --manifest-path "$RUNNER_TEMP/factory-central-paired/Cargo.toml" -p ctrl --features native-receiving-incomplete-child --test native_receiving_incomplete_child --target-dir "$RUNNER_TEMP/factory-central-paired/child-target" --no-run --message-format=json 2> native-evidence/fci06-child-build.stderr | tee native-evidence/fci06-child-build.jsonl
+          test -z "$(git -C "$RUNNER_TEMP/factory-central-paired" status --porcelain --untracked-files=no)"
+          python3 - <<'PYCODE'
+          import hashlib, json, os, stat
+          from pathlib import Path
+          root = (Path(os.environ['RUNNER_TEMP'])/'factory-central-paired').resolve(strict=True)
+          source = Path('native-evidence/fci06-compiler-source.json')
+          source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+          selected = {}
+          for role, target, kind, features, test_profile, target_dir in [('ctrl', 'ctrl', 'bin', [], False, 'default-target'), ('child', 'native_receiving_incomplete_child', 'test', ['native-receiving-incomplete-child'], True, 'child-target')]:
+              log = Path('native-evidence/fci06-'+('default' if role == 'ctrl' else 'child')+'-build.jsonl')
+              if log.stat().st_size > 16*1024*1024:
+                  raise SystemExit('actual compiler artifact log exceeds the qualification bound')
+              messages = [json.loads(line) for line in log.read_text().splitlines() if line]
+              finishes = [m for m in messages if m.get('reason') == 'build-finished']
+              candidates = [m for m in messages if m.get('reason') == 'compiler-artifact' and m.get('target', {}).get('name') == target and m.get('target', {}).get('kind') == [kind] and m.get('executable')]
+              if len(finishes) != 1 or finishes[0].get('success') is not True or len(candidates) != 1:
+                  raise SystemExit('missing, ambiguous or incomplete actual compiler executable')
+              receipt = candidates[0]
+              if sorted(receipt.get('features', [])) != features or receipt.get('profile', {}).get('test') is not test_profile:
+                  raise SystemExit('actual compiler features/profile differ from the selected native role')
+              manifest = (root/'ctrl/Cargo.toml').resolve(strict=True)
+              member = 'ctrl/src/main.rs' if role == 'ctrl' else 'ctrl/tests/native_receiving_incomplete_child.rs'
+              if Path(receipt.get('manifest_path', '')).resolve(strict=True) != manifest or Path(receipt.get('target', {}).get('src_path', '')).resolve(strict=True) != root/member:
+                  raise SystemExit('compiler manifest or entry Source differs from the exact selected checkout')
+              if hashlib.sha256(manifest.read_bytes()).hexdigest() != json.loads(source.read_text())['required_members_sha256']['ctrl/Cargo.toml']:
+                  raise SystemExit('compiler manifest changed from the retained Source witness')
+              path = Path(receipt['executable'])
+              if path != path.resolve(strict=True):
+                  raise SystemExit('compiler executable locator is not its exact canonical target')
+              path.relative_to(root/target_dir)
+              def identity(info):
+                  return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink, info.st_uid, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+              flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
+              with os.fdopen(os.open(path, flags), 'rb') as stream:
+                  info = os.fstat(stream.fileno())
+                  if not stat.S_ISREG(info.st_mode) or info.st_nlink < 1 or info.st_uid != os.geteuid() or not info.st_mode & 0o111 or info.st_size <= 0 or info.st_size > 128*1024*1024 or identity(info) != identity(path.stat(follow_symlinks=False)):
+                      raise SystemExit('compiler executable is not one bounded held regular native file')
+                  data = stream.read(128*1024*1024+1)
+                  if len(data) != info.st_size or not data.startswith((b'\x7fELF', b'\xcf\xfa\xed\xfe', b'\xfe\xed\xfa\xcf', b'\xca\xfe\xba\xbe')):
+                      raise SystemExit('actual compiler executable bytes are incomplete or not ELF/Mach-O')
+                  digest = hashlib.sha256(data).hexdigest()
+                  copied = Path('native-evidence/fci06-'+role)
+                  copy_flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+                  with os.fdopen(os.open(copied, copy_flags, 0o600), 'w+b') as retained:
+                      retained.write(data)
+                      retained.flush()
+                      os.fchmod(retained.fileno(), 0o700)
+                      os.fsync(retained.fileno())
+                      private = os.fstat(retained.fileno())
+                      if not stat.S_ISREG(private.st_mode) or private.st_nlink != 1 or private.st_uid != os.geteuid() or stat.S_IMODE(private.st_mode) != 0o700 or identity(private) != identity(copied.stat(follow_symlinks=False)):
+                          raise SystemExit('retained compiler copy is not the held private single-link file')
+                      retained.seek(0)
+                      if hashlib.sha256(retained.read(128*1024*1024+1)).hexdigest() != digest or identity(private) != identity(os.fstat(retained.fileno())) or identity(private) != identity(copied.stat(follow_symlinks=False)):
+                          raise SystemExit('retained private executable copy changed during qualification')
+                  stream.seek(0)
+                  if hashlib.sha256(stream.read(128*1024*1024+1)).hexdigest() != digest or identity(info) != identity(os.fstat(stream.fileno())) or identity(info) != identity(path.stat(follow_symlinks=False)):
+                      raise SystemExit('original compiler artifact changed during held capture/copy')
+              selected[role] = {'executable': str(path), 'sha256': digest, 'bytes': len(data), 'device': info.st_dev, 'inode': info.st_ino, 'link_count': info.st_nlink, 'compiler_artifact': receipt, 'compiler_log_sha256': hashlib.sha256(log.read_bytes()).hexdigest(), 'retained_copy': str(copied), 'retained_copy_link_count': private.st_nlink, 'source_manifest_sha256': source_hash, 'custody': 'Finite held/named metadata and hash observations; original compiler hardlinks permitted, retained private copy single-link. No atomic fd-exec or universal ACL claim.'}
+          Path('native-evidence/fci06-build-receipts.json').write_text(json.dumps(selected, indent=2)+'\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key, role in [('FACTORY_FCI06_CTRL', 'ctrl'), ('FACTORY_FCI06_CHILD', 'child')]:
+                  env.write(f"{key}={selected[role]['executable']}\n{key}_SHA256={selected[role]['sha256']}\n")
+              env.write(f'FACTORY_FCI06_CENTRAL_SOURCE_MANIFEST_SHA256={source_hash}\n')
+          PYCODE
+      - name: Admit the same native fixture and tool inputs before receiving
+        id: input_admission
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, re, stat, sys
+          from pathlib import Path
+          product = Path.cwd().resolve(strict=True)
+          label = '-'.join(os.environ[key] for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'RUNNER_OS'))
+          if re.fullmatch(r'[A-Za-z0-9-]+', label) is None:
+              raise ValueError('ambiguous owned fixture name')
+          flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+          held = [os.open(product, flags)]
+          path = product
+          try:
+              for name in ('ProjectCentral', 'now', 'tmp', 'owner-dispatch-' + label):
+                  parent = held[-1]
+                  path = path / name
+                  try:
+                      os.mkdir(name, 0o700, dir_fd=parent)
+                  except FileExistsError:
+                      if name.startswith('owner-dispatch-'):
+                          raise
+                  fd = os.open(name, flags, dir_fd=parent)
+                  held.append(fd)
+                  actual = os.fstat(fd)
+                  named = path.stat(follow_symlinks=False)
+                  if not stat.S_ISDIR(actual.st_mode) or (actual.st_dev, actual.st_ino) != (named.st_dev, named.st_ino) or path.resolve(strict=True) != path:
+                      raise ValueError('fixture ancestry no longer names the held product directory')
+              root = os.fstat(held[-1])
+              if root.st_uid != os.geteuid() or stat.S_IMODE(root.st_mode) != 0o700:
+                  raise ValueError('owned fixture POSIX privacy observation refused')
+              python = Path(sys.executable).resolve(strict=True)
+              if not python.is_file() or any(char.isspace() for char in str(python)):
+                  raise ValueError('actual native Python path is not an unambiguous interpreter')
+              digest = hashlib.sha256()
+              with python.open('rb') as stream:
+                  while chunk := stream.read(65536):
+                      digest.update(chunk)
+              receipt = {'schema': 'factory.owner-dispatch-fixture-observation/v1', 'source': Path('native-evidence/source-sha.txt').read_text().strip(), 'root': str(path), 'root_device': root.st_dev, 'root_inode': root.st_ino, 'root_uid': root.st_uid, 'root_mode': oct(stat.S_IMODE(root.st_mode)), 'python': str(python), 'python_sha256': digest.hexdigest(), 'python_version': sys.version, 'standing': 'Controlled public Source fixture and filesystem/tool observation; no NOW, Agency, model, ACL or process-quiescence authority', 'Original_Run_credit': False}
+              Path('native-evidence/owner-dispatch-admission.json').write_text(json.dumps(receipt, indent=2)+'\n')
+          finally:
+              for fd in reversed(held):
+                  os.close(fd)
+          PY
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          prior = json.loads(Path('native-evidence/owner-dispatch-admission.json').read_text())
+          values = {'FACTORY_NATIVE_EVIDENCE_DIR': prior['root'], 'TMPDIR': prior['root'], 'FACTORY_NATIVE_PYTHON_BIN': prior['python'], 'FACTORY_NATIVE_PYTHON_SHA256': prior['python_sha256'], 'FACTORY_NATIVE_EVIDENCE_SOURCE_CUT': Path('native-evidence/source-sha.txt').read_text().strip()}
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key, value in values.items():
+                  if '\n' in value or '\r' in value:
+                      raise ValueError('ambiguous actual native environment value')
+                  env.write(f'{key}={value}\n')
+          PY
+      - name: Exact native capture bodies on this real platform
+        id: capture
+        run: |
+          set -euo pipefail
+          cargo test --locked -p epilogos-factory --lib native_process:: -- --list > native-evidence/capture-cases.txt
+          python3 scripts/native_evidence_census.py list capture --input native-evidence/capture-cases.txt
+          python3 scripts/native_evidence_census.py names capture > native-evidence/capture-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/capture-$case.log"
+            python3 scripts/native_evidence_census.py run capture --case "$case" --input "native-evidence/capture-$case.log"
+          done < native-evidence/capture-required.txt
       - name: Real native Central to Factory preparation and dispatch gates
         id: integration
         env:
@@ -80,55 +303,220 @@ jobs:
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
           cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
-          test "$(grep -c '^central_cases::.*native_central_.*: test$' native-evidence/native-central-cases.txt)" = 9
-          cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-central.log
-      - name: Real Central human decision and receiving closure admission
+          python3 scripts/native_evidence_census.py list preparation --input native-evidence/native-central-cases.txt
+          python3 scripts/native_evidence_census.py names preparation > native-evidence/preparation-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --test attempt_owner_delivery "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/preparation-$case.log"
+            python3 scripts/native_evidence_census.py run preparation --case "$case" --input "native-evidence/preparation-$case.log"
+          done < native-evidence/preparation-required.txt
+      - name: Every actual receiving and capture-consumer parent, child bodies only through parents
+        id: receiving
         env:
           FACTORY_REQUIRE_NATIVE_CTRL: '1'
         run: |
           set -euo pipefail
-          export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
-          test -x "$FACTORY_TEST_CTRL"
-          cargo test --locked --manifest-path factory/Cargo.toml --test native_lifecycle_receiving -- --list > native-evidence/native-lifecycle-cases.txt
-          test "$(grep -c ': test$' native-evidence/native-lifecycle-cases.txt)" = 9
-          cargo test --locked --manifest-path factory/Cargo.toml --test native_lifecycle_receiving -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-lifecycle-receiving.log
+          cargo test --locked -p epilogos-factory --test native_lifecycle_receiving --no-run --message-format=json 2> native-evidence/receiving-compiler.stderr | tee native-evidence/receiving-compiler.jsonl
+          python3 scripts/native_evidence_inputs.py compiler --role receiving --log native-evidence/receiving-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/native_lifecycle_receiving.rs --target native_lifecycle_receiving --kind test --test-profile
+          python3 scripts/native_evidence_inputs.py compiler --role factory-receiving --log native-evidence/receiving-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
+          cargo test --locked -p epilogos-factory --test native_lifecycle_receiving -- --list > native-evidence/native-lifecycle-cases.txt
+          python3 scripts/native_evidence_census.py list receiving --input native-evidence/native-lifecycle-cases.txt
+          python3 scripts/native_evidence_census.py names receiving > native-evidence/receiving-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --test native_lifecycle_receiving "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/receiving-$case.log"
+            python3 scripts/native_evidence_census.py run receiving --case "$case" --input "native-evidence/receiving-$case.log"
+          done < native-evidence/receiving-required.txt
+      - name: Select the actual original native producer snapshot independently
+        id: snapshot_selection
+        run: |
+          set -euo pipefail
+          python3 scripts/native_evidence_inputs.py snapshot
+      - name: Execute the exact independently selected native cancellation library guard
+        id: cancellation_guard
+        run: |
+          set -euo pipefail
+          cargo test --locked -p epilogos-factory --lib --no-run --message-format=json 2> native-evidence/cancellation-guard-compiler.stderr | tee native-evidence/cancellation-guard-compiler.jsonl
+          python3 scripts/native_evidence_inputs.py compiler --role cancellation-guard --log native-evidence/cancellation-guard-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/lib.rs --target epilogos_factory --kind lib --test-profile
+          cargo test --locked -p epilogos-factory --lib orchestration::native_cancellation_guard_tests:: -- --list > native-evidence/cancellation-guard-cases.txt
+          python3 scripts/native_evidence_census.py list cancellation-guard --input native-evidence/cancellation-guard-cases.txt
+          python3 scripts/native_evidence_census.py names cancellation-guard > native-evidence/cancellation-guard-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/cancellation-guard-$case.log"
+            python3 scripts/native_evidence_census.py run cancellation-guard --case "$case" --input "native-evidence/cancellation-guard-$case.log"
+          done < native-evidence/cancellation-guard-required.txt
+      - name: Actual OS capture and native publication failure consumers
+        id: consumer_os
+        run: |
+          set -euo pipefail
+          cargo test --locked -p epilogos-factory --lib -- --list > native-evidence/library-cases.txt
+          python3 scripts/native_evidence_census.py list consumer-os --input native-evidence/library-cases.txt
+          python3 scripts/native_evidence_census.py names consumer-os > native-evidence/consumer-os-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "native-evidence/consumer-os-$case.log"
+            python3 scripts/native_evidence_census.py run consumer-os --case "$case" --input "native-evidence/consumer-os-$case.log"
+          done < native-evidence/consumer-os-required.txt
+      - name: Every actual owner-dispatch failure and publication consumer
+        id: owner_dispatch
+        run: |
+          set -euo pipefail
+          cargo test --locked -p epilogos-factory --lib attempt_owner_dispatch:: -- --list > native-evidence/owner-dispatch-cases.txt
+          python3 scripts/native_evidence_census.py list owner-dispatch --input native-evidence/owner-dispatch-cases.txt
+          python3 scripts/native_evidence_census.py names owner-dispatch > native-evidence/owner-dispatch-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --lib "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "native-evidence/owner-dispatch-$case.log"
+            python3 scripts/native_evidence_census.py run owner-dispatch --case "$case" --input "native-evidence/owner-dispatch-$case.log"
+          done < native-evidence/owner-dispatch-required.txt
+          python3 - <<'PY'
+          import hashlib, json, os, stat
+          from pathlib import Path
+          prior = json.loads(Path('native-evidence/owner-dispatch-admission.json').read_text())
+          digest = hashlib.sha256()
+          with Path(prior['python']).open('rb') as stream:
+              while chunk := stream.read(65536):
+                  digest.update(chunk)
+          root = Path(prior['root'])
+          actual = root.stat(follow_symlinks=False)
+          if digest.hexdigest() != prior['python_sha256'] or not stat.S_ISDIR(actual.st_mode) or root.resolve(strict=True) != root or (actual.st_dev, actual.st_ino, actual.st_uid, stat.S_IMODE(actual.st_mode)) != (prior['root_device'], prior['root_inode'], prior['root_uid'], 0o700):
+              raise ValueError('actual native tool or fixture root changed during qualification')
+          Path('native-evidence/owner-dispatch-inputs-after.json').write_text(json.dumps({'python': prior['python'], 'python_sha256': digest.hexdigest(), 'root': str(root), 'root_device': actual.st_dev, 'root_inode': actual.st_ino, 'Original_Run_credit': False}, indent=2)+'\n')
+          PY
       - name: Real per-Run Flow association and changed-source gates
+        id: flow
         env:
           FACTORY_REQUIRE_NATIVE_CTRL: '1'
         run: |
           set -euo pipefail
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
-          export FACTORY_TEST_CTRL_SHA256="$(sha256sum "$FACTORY_TEST_CTRL" | cut -d ' ' -f 1)"
+          test -n "$FACTORY_TEST_CTRL_SHA256"
           export FACTORY_TEST_FLOW_TEMPLATE="$PWD/native-evidence/ql-flow.html"
           export FACTORY_TEST_FLOW_TEMPLATE_SHA256=2ccaa5f1e71a565ac0432216717c7d9ceda51c67beabb8c805d997fa1caf5478
           curl --fail --show-error --silent --location --proto '=https' --tlsv1.2 \
             https://raw.githubusercontent.com/EpiLogos/O-I/7dced5502f5057f951d58c3a6b199df26b4e6681/desktop/cradle/documents/ql-flow.html \
             --output "$FACTORY_TEST_FLOW_TEMPLATE"
-          printf '%s  %s\n' "$FACTORY_TEST_FLOW_TEMPLATE_SHA256" "$FACTORY_TEST_FLOW_TEMPLATE" | sha256sum --check --strict
+          printf '%s  %s\n' "$FACTORY_TEST_FLOW_TEMPLATE_SHA256" "$FACTORY_TEST_FLOW_TEMPLATE" | shasum -a 256 --check
           printf '%s\n' 7dced5502f5057f951d58c3a6b199df26b4e6681 > native-evidence/flow-template-source-sha.txt
-          sha256sum "$FACTORY_TEST_CTRL" "$FACTORY_TEST_FLOW_TEMPLATE" > native-evidence/flow-native-inputs.sha256
+          shasum -a 256 "$FACTORY_TEST_CTRL" "$FACTORY_TEST_FLOW_TEMPLATE" > native-evidence/flow-native-inputs.sha256
           mkdir -m 700 native-evidence/flow-captures
           export FACTORY_NATIVE_FLOW_EVIDENCE_DIR="$(pwd -P)/native-evidence/flow-captures"
           cargo test --locked -p epilogos-factory --test native_flow_association -- --list > native-evidence/native-flow-cases.txt
           test "$(grep -c ': test$' native-evidence/native-flow-cases.txt)" = 7
           cargo test --locked -p epilogos-factory --test native_flow_association -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-flow.log
       - name: Real Actuation authority and Factory sensing integration
+        id: sensing
         run: |
           set -euo pipefail
           export PATH="$RUNNER_TEMP/factory-actuation-owner/target/debug:$PATH"
           test -x "$RUNNER_TEMP/factory-actuation-owner/target/debug/actuation"
           cargo test --locked -p epilogos-factory --test sensing_public -- --nocapture 2>&1 | tee native-evidence/sensing-public.log
+      - name: Real paired FCI06 document and secondary Receiving failures through Factory capture
+        id: paired
+        env:
+          CENTRAL_NATIVE_TOKEN: factory-fci06-controlled-human-fixture-not-personal
+        run: |
+          set -euo pipefail
+          export FACTORY_TEST_CTRL="$FACTORY_FCI06_CTRL"
+          export FACTORY_TEST_CTRL_SHA256="$FACTORY_FCI06_CTRL_SHA256"
+          test -x "$FACTORY_TEST_CTRL"
+          test -x "$FACTORY_FCI06_CHILD"
+          umask 077
+          mkdir -m 700 native-evidence/fci06-captures
+          export FACTORY_FCI06_ARTIFACT_DIR="$(pwd -P)/native-evidence/fci06-captures"
+          cargo test --locked -p epilogos-factory --lib attempt_receiving::paired_inclusion_native_tests:: -- --list > native-evidence/fci06-cases.txt
+          python3 scripts/native_evidence_census.py list paired --input native-evidence/fci06-cases.txt
+          python3 scripts/native_evidence_census.py names paired > native-evidence/fci06-required.txt
+          while IFS= read -r case; do
+            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "native-evidence/fci06-$case.log"
+            python3 scripts/native_evidence_census.py run paired --case "$case" --input "native-evidence/fci06-$case.log"
+          done < native-evidence/fci06-required.txt
+      - name: Reobserve actual receiving compiler inputs and unchanged Source after native gates
+        id: input_reobservation
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$(cat native-evidence/source-sha.txt)"
+          test "$(git rev-parse 'HEAD^{tree}')" = "$(cat native-evidence/source-tree.txt)"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          for source_owner in factory-central-owner factory-central-previous factory-actuation-owner factory-central-paired; do
+            test -z "$(git -C "$RUNNER_TEMP/$source_owner" status --porcelain --untracked-files=no)"
+          done
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          from scripts.native_evidence_inputs import held_bytes, identity, MAX_IMAGE, MAX_MANIFEST, write_json
+          from scripts.native_evidence_inputs import admitted_root, validate_root
+          import os
+          actual = {}
+          for role in ('factory-receiving', 'receiving', 'cancellation-guard', 'ctrl', 'ctrl-previous', 'actuation', 'actuation-gateway'):
+              receipt_bytes, _ = held_bytes(Path('native-evidence')/('compiler-image-'+role+'.json'), MAX_MANIFEST)
+              receipt = json.loads(receipt_bytes)
+              body, info = held_bytes(receipt['actual_executable'], MAX_IMAGE, single_link=False)
+              copied, _ = held_bytes(receipt['retained_copy'], MAX_IMAGE)
+              if hashlib.sha256(body).hexdigest() != receipt['sha256'] or copied != body or identity(info) != tuple(receipt['identity']):
+                  raise ValueError('actual selected compiler image changed before acknowledgement')
+              actual[role] = {'sha256': receipt['sha256'], 'identity': identity(info), 'receipt_sha256': hashlib.sha256(receipt_bytes).hexdigest()}
+          root, fd, admission = admitted_root()
+          try:
+              validate_root(root, fd, admission)
+          finally:
+              os.close(fd)
+          write_json(Path('native-evidence/input-reobservation.json'), {'schema':'factory.native-input-reobservation/v1','images':actual,'Source_unchanged':True,'Original_Run_credit':False,'atomic_execution_claim':False})
+          PY
       - name: Preserve integration-tested native binary
-        if: ${{ !cancelled() && steps.integration.outcome == 'success' }}
+        if: ${{ success() && steps.capture.outcome == 'success' && steps.integration.outcome == 'success' && steps.receiving.outcome == 'success' && steps.consumer_os.outcome == 'success' && steps.owner_dispatch.outcome == 'success' && steps.flow.outcome == 'success' && steps.sensing.outcome == 'success' && steps.paired_build.outcome == 'success' && steps.paired.outcome == 'success' && steps.input_admission.outcome == 'success' && steps.snapshot_selection.outcome == 'success' && steps.cancellation_guard.outcome == 'success' && steps.input_reobservation.outcome == 'success' }}
         run: |
           target=$(cargo metadata --locked --manifest-path factory/Cargo.toml --format-version 1 --no-deps | python3 -c 'import sys,json; print(json.load(sys.stdin)["target_directory"])')
           cp "$target/debug/factory" native-evidence/factory
-          sha256sum native-evidence/factory > native-evidence/factory.sha256
+          shasum -a 256 native-evidence/factory > native-evidence/factory.sha256
+      - name: Retain the owned dispatch fixture after success or failure without inferring quiescence
+        if: ${{ always() }}
+        run: |
+          mkdir -p native-evidence
+          python3 - <<'PY'
+          import itertools, json, os, stat
+          from pathlib import Path
+          evidence = Path('native-evidence')
+          admission = evidence / 'owner-dispatch-admission.json'
+          result = {'schema': 'factory.owner-dispatch-fixture-retention/v1', 'admission_observed': admission.is_file(), 'process_quiescence_claim': False, 'Original_Run_credit': False, 'cleanup': 'No signal or recursive deletion; test failure/unknown cleanup and owned fixture bytes remain for the authorized qualification owner'}
+          if admission.is_file():
+              prior = json.loads(admission.read_text())
+              root = Path(prior['root'])
+              result['original'] = prior
+              try:
+                  actual = root.stat(follow_symlinks=False)
+                  affiliated = stat.S_ISDIR(actual.st_mode) and root.resolve(strict=True) == root and (actual.st_dev, actual.st_ino) == (prior['root_device'], prior['root_inode'])
+                  result['current'] = {'device': actual.st_dev, 'inode': actual.st_ino, 'uid': actual.st_uid, 'mode': oct(stat.S_IMODE(actual.st_mode)), 'original_affiliation_observed': affiliated}
+                  if affiliated:
+                      entries = list(itertools.islice(root.iterdir(), 1025))
+                      result['entries'] = sorted(path.name for path in entries[:1024])
+                      result['entry_census_complete'] = len(entries) <= 1024
+              except OSError as cause:
+                  result['observation_failure'] = {'type': type(cause).__name__, 'errno': cause.errno}
+          (evidence / 'owner-dispatch-fixture-retention.json').write_text(json.dumps(result, indent=2)+'\n')
+          PY
+      - name: Retain bounded ordinary fixture snapshots and nonregular metadata only
+        if: ${{ always() }}
+        run: |
+          python3 scripts/native_evidence_inputs.py fixtures
+      - name: Retain actual step outcomes, including cancellation and missing required legs
+        if: ${{ always() }}
+        env:
+          NATIVE_STEP_OUTCOMES: ${{ toJSON(steps) }}
+        run: |
+          mkdir -p native-evidence
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          steps = json.loads(os.environ['NATIVE_STEP_OUTCOMES'])
+          components = ['input_admission', 'input_reobservation', 'capture', 'integration', 'receiving', 'snapshot_selection', 'cancellation_guard', 'consumer_os', 'owner_dispatch', 'flow', 'sensing']
+          required = components + ['paired_build', 'paired']
+          outcomes = {key: steps.get(key, {}).get('outcome', 'missing') for key in required}
+          result = {'schema': 'factory.native-evidence-qualification/v1', 'source': os.environ['GITHUB_SHA'], 'platform': os.environ['RUNNER_OS'], 'required_leg_outcomes': outcomes, 'component_gates_passed': all(outcomes[key] == 'success' for key in components), 'required_paired_FCI06': outcomes['paired'], 'paired_source_and_body_passed': all(outcomes[key] == 'success' for key in ['paired_build', 'paired']), 'missing_arm_negative_dependency': 'SEPARATE_SOURCE_SUCCESSOR_NOT_COMPOSED_OR_QUALIFIED', 'full_native_composite_qualified': False, 'Original_Run_credit': False}
+          Path('native-evidence/qualification.json').write_text(json.dumps(result, indent=2)+'\n')
+          PY
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
+        if: ${{ always() }}
         with:
-          name: factory-native-${{ github.run_id }}
-          path: native-evidence/
+          name: factory-native-${{ runner.os }}-${{ github.run_id }}
+          path: |
+            native-evidence/
           if-no-files-found: error
           retention-days: 14

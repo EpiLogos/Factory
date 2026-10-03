@@ -1014,6 +1014,12 @@ mod unix {
         tests::set_publication_observer(Box::new(observer));
     }
 
+    // Arm the existing real pre-byte checkpoint, never an injected IO result.
+    #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+    pub(crate) fn observe_next_privacy_copy(observer: impl FnOnce(&Path) + 'static) {
+        tests::set_privacy_copy_observer(Box::new(observer));
+    }
+
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
     mod tests {
         use super::*;
@@ -1028,6 +1034,13 @@ mod unix {
                 const { std::cell::RefCell::new(None) };
             static AFTER_PUBLICATION: std::cell::RefCell<Option<PublicationObserver>> =
                 const { std::cell::RefCell::new(None) };
+        }
+        pub(super) fn set_privacy_copy_observer(observer: PublicationObserver) {
+            AFTER_PRIVACY_COPIED.with(|slot| {
+                let mut slot = slot.borrow_mut();
+                assert!(slot.is_none(), "an unconsumed native privacy observer exists");
+                *slot = Some(observer);
+            });
         }
         pub(super) fn set_publication_observer(observer: PublicationObserver) {
             AFTER_PUBLICATION.with(|slot| {
@@ -1698,7 +1711,7 @@ impl NativeFileTransaction {
     }
 }
 #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
-pub(crate) use unix::observe_next_publication;
+pub(crate) use unix::{observe_next_privacy_copy, observe_next_publication};
 
 #[cfg(not(unix))]
 pub(crate) fn lock_name(_: &Path) -> io::Result<std::ffi::OsString> {

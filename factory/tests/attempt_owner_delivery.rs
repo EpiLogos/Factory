@@ -318,6 +318,12 @@ fn success(output: Output) -> Value {
     );
     serde_json::from_slice(&output.stdout).unwrap()
 }
+// Inherited protocol-double coverage only. A failed invocation must be a real
+// failed CLI status while its original uncertain public receipt remains depth.
+fn failed_receipt(output: Output) -> Value {
+    assert!(!output.status.success(), "failed transport was certified successful");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
 fn wait_for(path: &Path) {
     let start = Instant::now();
     while !path.exists() {
@@ -390,7 +396,7 @@ fn lost_response_recovers_original_intent_without_replaying_task() {
     world.start(false);
     world.mode("lost");
     let request = world.request("send:lost", "send");
-    assert_eq!(success(world.owner(&request))["needsReconciliation"], true);
+    assert_eq!(failed_receipt(world.owner(&request))["needsReconciliation"], true);
     assert_eq!(success(world.owner(&request))["replayed"], true);
     assert_eq!(world.calls().len(), 1);
     assert!(!world
@@ -473,7 +479,7 @@ fn foreign_session_result_is_uncertain_and_cannot_bind_an_execution() {
     let world = World::new();
     world.start(false);
     world.mode("wrong-session");
-    let receipt = success(world.owner(&world.request("send:foreign", "send")));
+    let receipt = failed_receipt(world.owner(&world.request("send:foreign", "send")));
     assert_eq!(receipt["needsReconciliation"], true);
     assert!(world.reading().attempts[0].execution_ref.is_none());
     assert!(world.reading().attempts[0].readable_return.is_none());
