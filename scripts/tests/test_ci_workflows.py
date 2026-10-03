@@ -1,7 +1,6 @@
 """Regression checks for the consolidated native CI coverage (not product proof)."""
 from pathlib import Path
 import unittest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / '.github/workflows'
@@ -9,6 +8,7 @@ WORKFLOWS = ROOT / '.github/workflows'
 
 class NativeWorkflowTests(unittest.TestCase):
     def setUp(self):
+        import yaml
         self.workflow = yaml.load((WORKFLOWS / 'factory-rust.yml').read_text(), Loader=yaml.BaseLoader)
         self.steps = self.workflow['jobs']['factory-rust']['steps']
         self.commands = '\n'.join(step.get('run', '') for step in self.steps)
@@ -63,6 +63,7 @@ class NativeWorkflowTests(unittest.TestCase):
 
 class NativeEvidenceWorkflowTests(unittest.TestCase):
     def setUp(self):
+        import yaml
         self.workflow = yaml.load((WORKFLOWS / 'factory-native-evidence.yml').read_text(), Loader=yaml.BaseLoader)
         self.job = self.workflow['jobs']['native-attempt-evidence']
         self.steps = self.job['steps']
@@ -339,6 +340,215 @@ class NativeEvidencePathTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.census.validate_upload_tree(self.directory)
         self.assertEqual(b'original', ordinary.read_bytes())
+
+
+@unittest.skipUnless(__import__('os').name == 'posix', 'held Unix compiler-image mechanism')
+class NativeCompilerImageTests(unittest.TestCase):
+    """Real executable bytes and filesystem controls; not fabricated CompilerArtifacts."""
+    def setUp(self):
+        import shutil
+        import sys
+        import tempfile
+        from scripts import native_evidence_inputs
+        self.inputs = native_evidence_inputs
+        scratch = ROOT / 'ProjectCentral/now/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.owned = tempfile.TemporaryDirectory(prefix='native-compiler-image-', dir=scratch)
+        self.addCleanup(self.owned.cleanup)
+        self.directory = Path(self.owned.name)
+        self.original = self.directory / 'actual-native-image'
+        shutil.copyfile(Path(sys.executable).resolve(strict=True), self.original)
+        self.original.chmod(0o700)
+        self.copy = self.directory / 'retained-copy'
+
+    def descriptor_count(self):
+        import os
+        import sys
+        directory = Path('/proc/self/fd' if sys.platform.startswith('linux') else '/dev/fd')
+        self.assertTrue(directory.is_dir(), 'actual descriptor census prerequisite unavailable')
+        # os.listdir closes its own directory descriptor on each observation.
+        return len(os.listdir(directory))
+
+    def capture(self):
+        observation = {'checkpoints': []}
+        result = self.inputs.capture_compiler_image(self.original, self.copy, observation)
+        return result, observation
+
+    def test_actual_executable_copy_and_current_reobservation_preserve_all_bytes(self):
+        import hashlib
+        import stat
+        descriptors = self.descriptor_count()
+        result, observation = self.capture()
+        def digest(path):
+            value = hashlib.sha256()
+            with path.open('rb') as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    value.update(block)
+            return value.hexdigest()
+        self.assertEqual(digest(self.original), result['sha256'])
+        self.assertEqual(digest(self.copy), result['sha256'])
+        self.assertEqual(self.original.stat().st_size, result['bytes'])
+        self.assertEqual(0o700, stat.S_IMODE(self.copy.stat().st_mode))
+        self.assertEqual(1, self.copy.stat().st_nlink)
+        self.assertTrue(observation['same_original_and_retained_digest'])
+        current = self.inputs.observe_compiler_image(self.original, {}, result['identity'], result['sha256'])
+        retained = self.inputs.observe_compiler_image(self.copy, {}, result['retained_identity'], result['sha256'], private=True)
+        self.assertEqual(current['sha256'], retained['sha256'])
+        self.assertEqual(result['bytes'], current['bytes'])
+        self.assertEqual(descriptors, self.descriptor_count())
+
+    def test_stable_original_hardlink_is_admitted_but_copy_collision_never_overwrites(self):
+        import os
+        os.link(self.original, self.directory / 'actual-native-hardlink')
+        self.assertEqual(2, self.original.stat().st_nlink)
+        result, _ = self.capture()
+        self.assertEqual(2, result['identity'][3])
+        self.assertEqual(1, self.copy.stat().st_nlink)
+        before = self.inputs.observe_compiler_image(self.copy, {}, private=True)
+        descriptors = self.descriptor_count()
+        with self.assertRaises(FileExistsError):
+            self.capture()
+        self.assertEqual(before, self.inputs.observe_compiler_image(self.copy, {}, private=True))
+        self.assertEqual(descriptors, self.descriptor_count())
+
+    def test_actual_oversize_fifo_directory_and_symlink_refuse_before_body_or_copy(self):
+        import os
+        observation = {}
+        descriptors = self.descriptor_count()
+        oversized = self.directory / 'oversized'
+        with oversized.open('wb') as stream:
+            stream.truncate(self.inputs.MAX_COMPILER_IMAGE + 1)
+        oversized.chmod(0o700)
+        with self.assertRaises(ValueError):
+            self.inputs.capture_compiler_image(oversized, self.copy, observation)
+        predicates = observation['checkpoints'][0]['predicates']
+        self.assertTrue(predicates['regular'])
+        self.assertFalse(predicates['finite_image_capacity'])
+        self.assertNotIn('observed_bytes', observation)
+        self.assertFalse(self.copy.exists())
+        fifo = self.directory / 'fifo'
+        os.mkfifo(fifo, 0o700)
+        for path in (fifo, self.directory):
+            for operation in ('capture', 'observe'):
+                for _ in range(3):
+                    actual = {}
+                    with self.subTest(path=path.name, operation=operation), self.assertRaises(ValueError):
+                        if operation == 'capture':
+                            self.inputs.capture_compiler_image(path, self.copy, actual)
+                        else:
+                            self.inputs.observe_compiler_image(path, actual)
+                    self.assertFalse(actual['checkpoints'][0]['predicates']['regular'])
+                    self.assertNotIn('observed_bytes', actual)
+                    self.assertFalse(self.copy.exists())
+                    self.assertEqual(descriptors, self.descriptor_count())
+        alias = self.directory / 'alias'
+        alias.symlink_to(self.original.name)
+        actual = {}
+        with self.assertRaises(OSError) as error:
+            self.inputs.capture_compiler_image(alias, self.copy, actual)
+        import errno
+        self.assertEqual(errno.ELOOP, error.exception.errno)
+        self.assertEqual('open_original', actual['stage'])
+        self.assertIn('named_before_open', actual)
+        self.assertFalse(self.copy.exists())
+        self.assertEqual(descriptors, self.descriptor_count())
+
+    def test_actual_named_replacement_and_growth_are_refused_on_same_held_descriptor(self):
+        import os
+        import shutil
+        descriptors = self.descriptor_count()
+        for change in ('replace', 'grow'):
+            with self.subTest(change=change):
+                path = self.directory / change
+                shutil.copyfile(self.original, path)
+                path.chmod(0o700)
+                observation = {}
+                with self.inputs.compiler_image_stream(path, observation, 'actual_open') as held:
+                    before = self.inputs.image_checkpoint(held, path, observation, 'actual_before')
+                    if change == 'replace':
+                        replacement = self.directory / 'replacement'
+                        shutil.copyfile(self.original, replacement)
+                        replacement.chmod(0o700)
+                        os.replace(replacement, path)
+                    else:
+                        with path.open('ab') as writer:
+                            writer.write(b'actual appended bytes')
+                            writer.flush()
+                            os.fsync(writer.fileno())
+                    with self.assertRaises(ValueError):
+                        self.inputs.image_digest(held, path, before, observation, 'actual_after_change')
+                if change == 'replace':
+                    self.assertFalse(observation['checkpoints'][-1]['predicates']['held_named_identity'])
+                else:
+                    self.assertFalse(observation['read_predicates']['exact_observed_size'])
+                self.assertEqual(descriptors, self.descriptor_count())
+
+    def test_actual_retained_mutation_and_wrong_native_form_keep_failure_facts(self):
+        import os
+        descriptors = self.descriptor_count()
+        result, _ = self.capture()
+        with self.copy.open('r+b') as writer:
+            writer.seek(4)
+            previous = writer.read(1)
+            writer.seek(4)
+            writer.write(bytes([previous[0] ^ 1]))
+            writer.flush()
+            os.fsync(writer.fileno())
+        actual = {}
+        with self.assertRaises(ValueError):
+            self.inputs.observe_compiler_image(self.copy, actual, result['retained_identity'], result['sha256'], private=True)
+        self.assertFalse(actual['expected_identity_matches'])
+        non_native = self.directory / 'non-native'
+        non_native.write_bytes(b'actual text, not an executable image')
+        non_native.chmod(0o700)
+        actual = {}
+        destination = self.directory / 'non-native-copy'
+        with self.assertRaises(ValueError):
+            self.inputs.capture_compiler_image(non_native, destination, actual)
+        self.assertFalse(actual['native_magic'])
+        self.assertEqual(0, destination.stat().st_size)
+        self.assertEqual(b'actual text, not an executable image', non_native.read_bytes())
+        self.assertEqual(descriptors, self.descriptor_count())
+
+
+def current_compiler_artifact_conformance(receipt_path):
+    """Called only AFTER the real native build, never an availability/skip proof."""
+    import json
+    from types import SimpleNamespace
+    from scripts import native_evidence_inputs as inputs
+    receipt_bytes, _ = inputs.held_bytes(receipt_path, inputs.MAX_MANIFEST)
+    receipt = json.loads(receipt_bytes)
+    if (receipt['role'] != 'factory' or receipt['compiler_artifact']['target']['name'] != 'factory'
+            or receipt['compiler_artifact']['target']['kind'] != ['bin']
+            or receipt['compiler_artifact']['profile']['test'] is not False):
+        raise ValueError('wrong actual compiled Factory image for conformance')
+    current = inputs.reobserve_compiler_image(receipt)
+    if current['sha256'] != receipt['sha256']:
+        raise ValueError('current actual CompilerArtifact image changed')
+    root = Path(receipt['source_root'])
+    args = SimpleNamespace(role='factory-wrong-profile', log=Path(receipt['compiler_log']), root=root,
+                           manifest='factory/Cargo.toml', entry='factory/src/bin/factory.rs',
+                           target='factory', kind='bin', test_profile=True)
+    try:
+        inputs.compiler(args)
+    except ValueError:
+        refused_bytes, _ = inputs.held_bytes(inputs.EVIDENCE / 'compiler-image-factory-wrong-profile.refusal.json', inputs.MAX_MANIFEST)
+        refused = json.loads(refused_bytes)
+        predicates = refused['compiler_predicates']
+        if (refused['stage'] != 'compiler_association' or refused['admitted'] is not False
+                or refused['actual_test_profile'] is not False or refused['requested_test_profile'] is not True
+                or predicates['one_selected_artifact'] is not True or predicates['successful_finish'] is not True
+                or predicates['selected_profile'] is not False
+                or (inputs.EVIDENCE / 'compiler-image-factory-wrong-profile').exists()):
+            raise ValueError('native wrong-profile refusal lacks actual owning facts')
+    else:
+        raise ValueError('actual wrong-profile CompilerArtifact was incorrectly admitted')
+    inputs.write_json(inputs.EVIDENCE / 'compiler-image-conformance.json', {
+        'schema': 'factory.native-compiler-conformance/v1', 'actual_receipt': str(receipt_path),
+        'receipt_sha256': __import__('hashlib').sha256(receipt_bytes).hexdigest(),
+        'current_original_sha256': current['sha256'], 'actual_wrong_profile_refused': True,
+        'physical_cases': 5, 'native_64_case_credit': False, 'Original_Run_credit': False,
+    })
 
 
 if __name__ == '__main__':

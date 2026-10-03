@@ -155,6 +155,17 @@ jobs:
           python3 scripts/native_evidence_inputs.py compiler --role ctrl-previous --log native-evidence/ctrl-previous-compiler.jsonl --root "$RUNNER_TEMP/factory-central-previous" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
           python3 scripts/native_evidence_inputs.py compiler --role actuation --log native-evidence/actuation-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-cli/Cargo.toml --entry crates/actuation-cli/src/main.rs --target actuation --kind bin
           python3 scripts/native_evidence_inputs.py compiler --role actuation-gateway --log native-evidence/actuation-gateway-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-gateway/Cargo.toml --entry crates/actuation-gateway/src/main.rs --target actuation-gateway --kind bin
+          python3 - <<'PY_NATIVE_IMAGE' > native-evidence/compiler-image-tests.log 2>&1
+          import os, unittest
+          from pathlib import Path
+          from scripts.tests.test_ci_workflows import NativeCompilerImageTests, current_compiler_artifact_conformance
+          if os.name != 'posix':
+              raise SystemExit('native compiler-image qualification requires the selected Unix host')
+          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(NativeCompilerImageTests))
+          if not result.wasSuccessful() or result.testsRun != 5 or result.skipped:
+              raise SystemExit('all five actual compiler-image filesystem cases are required')
+          current_compiler_artifact_conformance(Path('native-evidence/compiler-image-factory.json'))
+          PY_NATIVE_IMAGE
       - name: Build and identify the same Source ordinary reader and opt-in native FCI06 child
         id: paired_build
         run: |
@@ -448,18 +459,15 @@ jobs:
           python3 - <<'PY'
           import hashlib, json
           from pathlib import Path
-          from scripts.native_evidence_inputs import held_bytes, identity, MAX_IMAGE, MAX_MANIFEST, write_json
+          from scripts.native_evidence_inputs import held_bytes, MAX_MANIFEST, write_json, reobserve_compiler_image
           from scripts.native_evidence_inputs import admitted_root, validate_root
           import os
           actual = {}
           for role in ('factory-receiving', 'receiving', 'cancellation-guard', 'ctrl', 'ctrl-previous', 'actuation', 'actuation-gateway'):
               receipt_bytes, _ = held_bytes(Path('native-evidence')/('compiler-image-'+role+'.json'), MAX_MANIFEST)
               receipt = json.loads(receipt_bytes)
-              body, info = held_bytes(receipt['actual_executable'], MAX_IMAGE, single_link=False)
-              copied, _ = held_bytes(receipt['retained_copy'], MAX_IMAGE)
-              if hashlib.sha256(body).hexdigest() != receipt['sha256'] or copied != body or identity(info) != tuple(receipt['identity']):
-                  raise ValueError('actual selected compiler image changed before acknowledgement')
-              actual[role] = {'sha256': receipt['sha256'], 'identity': identity(info), 'receipt_sha256': hashlib.sha256(receipt_bytes).hexdigest()}
+              current = reobserve_compiler_image(receipt)
+              actual[role] = dict(current, receipt_sha256=hashlib.sha256(receipt_bytes).hexdigest())
           root, fd, admission = admitted_root()
           try:
               validate_root(root, fd, admission)

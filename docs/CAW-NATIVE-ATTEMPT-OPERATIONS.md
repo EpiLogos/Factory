@@ -544,12 +544,16 @@ PeekNamedPipe absolute-bound qualification remains open.
 ### Failed native owner dispatch is a failed live API operation
 
 An actual failed `factory.attempt-owner-action/v1` invocation returns a typed
-`AttemptOwnerError` from the live API. The CLI exits nonzero while its existing
-`native_result` depth exposes the same public uncertain `OwnerOperationReceipt`
-JSON. A failed transport is no longer a successful CLI delivery. Successful
-owner-action JSON/text and the serialized uncertain receipt fields are
-unchanged. The receipt is an observation of uncertainty, not worker delivery
-or an assertion that no remote effect occurred.
+`AttemptOwnerError` from the live API. Its existing `native_result` accessor,
+and `CliError::native_owner_failure_result`, retain the same uncertain receipt
+for the authorised caller. An ordinary failed-owner CLI call exits nonzero,
+with empty stdout and a body-free summary on stderr; the same native attempt
+read exposes its retained uncertain operation observation. A typed publication
+failure separately retains its existing `--json` failure document on stdout.
+A failed transport is not a successful CLI delivery. Successful owner-action
+JSON/text and serialized uncertain receipt fields are unchanged. The receipt
+is an observation of uncertainty, not worker delivery or an assertion that no
+remote effect occurred.
 
 The live error privately retains the original `NativeOwnerError`, its actual
 bounded capture and the existing receipt. A distinct later native publication

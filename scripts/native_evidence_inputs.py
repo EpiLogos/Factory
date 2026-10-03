@@ -1,9 +1,11 @@
 """Finite native qualification inputs; observations never grant owner authority."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import itertools
 import os
+import sys
 from pathlib import Path
 import stat
 
@@ -11,6 +13,8 @@ EVIDENCE = Path("native-evidence")
 REGULAR_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 DIRECTORY_FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 MAX_IMAGE = 128 * 1024 * 1024
+MAX_COMPILER_IMAGE = 256 * 1024 * 1024
+IMAGE_BUFFER = 1024 * 1024
 MAX_LOG = 16 * 1024 * 1024
 MAX_SNAPSHOT = 16 * 1024 * 1024
 MAX_MANIFEST = 64 * 1024
@@ -64,7 +68,193 @@ def write_json(path, value):
     private_copy(path, (json.dumps(value, indent=2) + "\n").encode())
 
 
+def image_checkpoint_fd(fd, path, observation, stage, private=False):
+    """Record every actual material predicate before wrapping or reading the fd."""
+    observation["stage"] = stage
+    held = os.fstat(fd)
+    checkpoint = {"stage": stage, "held_identity": identity(held), "named_identity": None,
+                  "current_euid": os.geteuid(), "image_capacity": MAX_COMPILER_IMAGE, "private_copy": private}
+    observation.setdefault("checkpoints", []).append(checkpoint)
+    predicates = {
+        "regular": stat.S_ISREG(held.st_mode),
+        "positive_links": held.st_nlink >= 1,
+        "current_uid": held.st_uid == os.geteuid(),
+        "finite_image_capacity": 0 <= held.st_size <= MAX_COMPILER_IMAGE,
+        "held_named_identity": None,
+        "executable_mode": bool(held.st_mode & 0o111),
+    }
+    if private:
+        predicates.update(single_link=held.st_nlink == 1,
+                          private_mode=stat.S_IMODE(held.st_mode) == 0o700)
+    checkpoint["predicates"] = predicates
+    named = Path(path).stat(follow_symlinks=False)
+    checkpoint["named_identity"] = identity(named)
+    predicates["held_named_identity"] = identity(held) == identity(named)
+    if not all(predicates.values()):
+        raise ValueError("actual compiler image material predicate refused")
+    return held
+
+
+def image_checkpoint(stream, path, observation, stage, private=False):
+    return image_checkpoint_fd(stream.fileno(), path, observation, stage, private)
+
+
+@contextmanager
+def compiler_image_stream(path, observation, stage, private=False, create=False):
+    """One raw-fd owner; the stream borrows it only after actual form admission."""
+    observation["stage"] = stage
+    flags = REGULAR_FLAGS
+    if create:
+        flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    primary = None
+    fd = os.open(path, flags, 0o700) if create else os.open(path, flags)
+    try:
+        if create:
+            # Qualify the SAME newly created private inode before its wrapper.
+            os.fchmod(fd, 0o700)
+        image_checkpoint_fd(fd, path, observation, stage + "_held", private or create)
+        mode = "w+b" if create else "rb"
+        with os.fdopen(fd, mode, buffering=0, closefd=False) as stream:
+            yield stream
+    except BaseException as cause:
+        primary = cause
+        raise
+    finally:
+        try:
+            os.close(fd)
+        except OSError as close_cause:
+            observation.setdefault("descriptor_close_failures", []).append({
+                "stage": stage, "exception_type": type(close_cause).__name__,
+                "errno": close_cause.errno, "primary_preserved": primary is not None,
+            })
+            if primary is None:
+                raise
+            note = ("Compiler image descriptor close also failed: "
+                    + type(close_cause).__name__ + "; errno=" + str(close_cause.errno))
+            if hasattr(primary, "add_note"):
+                primary.add_note(note)
+            else:
+                print(note, file=sys.stderr)
+
+
+def image_digest(stream, path, before, observation, stage, private=False, copy_stream=None):
+    """One finite pass; no image-sized allocation and no reconstructed IO cause."""
+    observation["stage"] = stage
+    stream.seek(0)
+    digest = hashlib.sha256()
+    count = 0
+    native_magic = False
+    while True:
+        block = stream.read(min(IMAGE_BUFFER, MAX_COMPILER_IMAGE + 1 - count))
+        if not block:
+            break
+        if count == 0:
+            native_magic = block.startswith((b"\x7fELF", b"\xcf\xfa\xed\xfe",
+                                            b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"))
+            observation["native_magic"] = native_magic
+            if not native_magic:
+                raise ValueError("actual compiler image is not native ELF/Mach-O")
+        count += len(block)
+        observation["observed_bytes"] = count
+        if count > MAX_COMPILER_IMAGE:
+            raise ValueError("actual compiler image exceeded finite observation")
+        digest.update(block)
+        if copy_stream is not None:
+            remaining = memoryview(block)
+            while remaining:
+                written = copy_stream.write(remaining)
+                if written is None or written <= 0:
+                    raise ValueError("actual retained compiler copy made no write progress")
+                remaining = remaining[written:]
+            del remaining
+        del block
+    predicates = {"native_magic": native_magic, "exact_observed_size": count == before.st_size,
+                  "finite_image_capacity": count <= MAX_COMPILER_IMAGE}
+    observation["read_predicates"] = predicates
+    if not all(predicates.values()):
+        raise ValueError("actual compiler image changed or has incomplete native bytes")
+    after = image_checkpoint(stream, path, observation, stage + "_after", private)
+    observation["unchanged_held_identity"] = identity(before) == identity(after)
+    if identity(before) != identity(after):
+        raise ValueError("actual compiler image changed during held observation")
+    return digest.hexdigest(), count
+
+
+def observe_image_stream(stream, path, observation, expected_identity=None, expected_sha256=None, private=False):
+    before = image_checkpoint(stream, path, observation, "current_before", private)
+    if expected_identity is not None:
+        observation["expected_identity_matches"] = identity(before) == tuple(expected_identity)
+        if not observation["expected_identity_matches"]:
+            raise ValueError("actual selected compiler image identity changed")
+    first, size = image_digest(stream, path, before, observation, "current_first", private)
+    second, _ = image_digest(stream, path, before, observation, "current_second", private)
+    observation["pass_digests_match"] = first == second
+    observation["expected_digest_matches"] = expected_sha256 is None or first == expected_sha256
+    if not observation["pass_digests_match"] or not observation["expected_digest_matches"]:
+        raise ValueError("actual selected compiler image digest changed")
+    return {"sha256": first, "bytes": size, "identity": identity(before)}
+
+
+def observe_compiler_image(path, observation, expected_identity=None, expected_sha256=None, private=False):
+    observation["stage"] = "open_retained" if private else "open_original"
+    observation["named_before_open"] = identity(Path(path).stat(follow_symlinks=False))
+    with compiler_image_stream(path, observation, observation["stage"], private) as stream:
+        return observe_image_stream(stream, path, observation, expected_identity, expected_sha256, private)
+
+
+def capture_compiler_image(path, retained, observation):
+    observation["stage"] = "open_original"
+    observation["named_before_open"] = identity(Path(path).stat(follow_symlinks=False))
+    with compiler_image_stream(path, observation, "open_original") as original:
+        before = image_checkpoint(original, path, observation, "original_before")
+        observation["stage"] = "create_exclusive_copy"
+        with compiler_image_stream(retained, observation, "create_exclusive_copy", private=True, create=True) as copied:
+            first, size = image_digest(original, path, before, observation, "original_copy", copy_stream=copied)
+            observation["stage"] = "copy_fsync"
+            os.fchmod(copied.fileno(), 0o700)
+            os.fsync(copied.fileno())
+            second, _ = image_digest(original, path, before, observation, "original_after_copy")
+            private = image_checkpoint(copied, retained, observation, "retained_before", private=True)
+            retained_digest, retained_size = image_digest(copied, retained, private, observation,
+                                                         "retained_readback", private=True)
+            observation["same_original_and_retained_digest"] = first == second == retained_digest
+            observation["same_original_and_retained_size"] = size == retained_size
+            if not observation["same_original_and_retained_digest"] or not observation["same_original_and_retained_size"]:
+                raise ValueError("retained native copy differs from current held original")
+            final = image_checkpoint(original, path, observation, "original_final")
+            observation["original_pre_post_identity"] = identity(final) == identity(before)
+            if not observation["original_pre_post_identity"]:
+                raise ValueError("original compiler image changed across retained copy")
+    return {"sha256": first, "bytes": size, "identity": identity(before),
+            "retained_identity": identity(private)}
+
+
+def retain_compiler_refusal(role, observation, cause, suffix="refusal"):
+    observation.update(schema="factory.native-compiler-refusal/v1", role=role,
+                       admitted=False, exception_type=type(cause).__name__,
+                       errno=getattr(cause, "errno", None), Original_Run_credit=False)
+    try:
+        write_json(EVIDENCE / ("compiler-image-" + role + "." + suffix + ".json"), observation)
+    except (OSError, ValueError) as retention:
+        # Keep the actual primary exception and errno; no replacement error or retry.
+        note = ("Compiler refusal evidence retention also failed: " + type(retention).__name__
+                + "; errno=" + str(getattr(retention, "errno", None)))
+        if hasattr(cause, "add_note"):
+            cause.add_note(note)
+        else:
+            print(note, file=sys.stderr)
+
+
 def compiler(args):
+    observation = {"stage": "compiler_log", "checkpoints": []}
+    try:
+        _compiler(args, observation)
+    except (OSError, ValueError, UnicodeError) as cause:
+        retain_compiler_refusal(args.role, observation, cause)
+        raise
+
+
+def _compiler(args, observation):
     log_data, _ = held_bytes(args.log, MAX_LOG)
     messages = [json.loads(line) for line in log_data.decode("utf-8").splitlines() if line]
     finishes = [m for m in messages if m.get("reason") == "build-finished"]
@@ -72,50 +262,112 @@ def compiler(args):
                  and m.get("target", {}).get("name") == args.target
                  and m.get("target", {}).get("kind") == [args.kind]
                  and m.get("executable")]
-    if len(finishes) != 1 or finishes[0].get("success") is not True or len(artifacts) != 1:
+    observation["stage"] = "compiler_association"
+    association = {"one_finish": len(finishes) == 1,
+                   "successful_finish": len(finishes) == 1 and finishes[0].get("success") is True,
+                   "one_selected_artifact": len(artifacts) == 1}
+    observation["compiler_predicates"] = association
+    if not all(association.values()):
         raise ValueError("no unique complete actual CompilerArtifact")
     artifact = artifacts[0]
-    if artifact.get("profile", {}).get("test") is not args.test_profile:
+    association["selected_profile"] = artifact.get("profile", {}).get("test") is args.test_profile
+    observation["actual_target"] = artifact.get("target", {}).get("name")
+    observation["actual_kind"] = artifact.get("target", {}).get("kind")
+    observation["actual_test_profile"] = artifact.get("profile", {}).get("test")
+    observation["requested_test_profile"] = args.test_profile
+    if not association["selected_profile"]:
         raise ValueError("actual compiler profile differs from the selected native role")
     root = args.root.resolve(strict=True)
     manifest = root / args.manifest
     entry = root / args.entry
-    if (Path(artifact.get("manifest_path", "")).resolve(strict=True) != manifest
-            or Path(artifact.get("target", {}).get("src_path", "")).resolve(strict=True) != entry):
+    association["selected_manifest"] = Path(artifact.get("manifest_path", "")).resolve(strict=True) == manifest
+    association["selected_entry"] = Path(artifact.get("target", {}).get("src_path", "")).resolve(strict=True) == entry
+    if not association["selected_manifest"] or not association["selected_entry"]:
         raise ValueError("actual compiler manifest or entry Source differs from selected checkout")
     executable = Path(artifact["executable"])
-    if not executable.is_absolute() or executable.resolve(strict=True) != executable:
+    association["absolute_locator"] = executable.is_absolute()
+    association["canonical_locator"] = executable.resolve(strict=True) == executable
+    if not association["absolute_locator"] or not association["canonical_locator"]:
         raise ValueError("compiler image is not its actual canonical locator")
-    executable.relative_to(root)
-    image, info = held_bytes(executable, MAX_IMAGE, single_link=False)
-    if (not image or not info.st_mode & 0o111
-            or not image.startswith((b"\x7fELF", b"\xcf\xfa\xed\xfe",
-                                     b"\xfe\xed\xfa\xcf", b"\xca\xfe\xba\xbe"))):
-        raise ValueError("actual compiler image is not bounded native ELF/Mach-O")
+    association["inside_selected_root"] = executable.is_relative_to(root)
+    if not association["inside_selected_root"]:
+        raise ValueError("compiler image is outside selected Source root")
     retained = EVIDENCE / ("compiler-image-" + args.role)
-    private_copy(retained, image, 0o700)
-    actual_after, after = held_bytes(executable, MAX_IMAGE, single_link=False)
-    if actual_after != image or identity(after) != identity(info):
-        raise ValueError("original compiler image changed across retained copy")
+    image = capture_compiler_image(executable, retained, observation)
+    observation["stage"] = "source_association"
     manifest_data, _ = held_bytes(manifest, MAX_LOG, single_link=False)
     entry_data, _ = held_bytes(entry, MAX_LOG, single_link=False)
     source_files = {name: hashlib.sha256(held_bytes(EVIDENCE / name, MAX_IMAGE)[0]).hexdigest()
                     for name in ("source-sha.txt", "source-tree.txt", "source-manifest.txt",
                                  "source.tar.gz", "Cargo.toml", "Cargo.lock")
                     if (EVIDENCE / name).exists()}
-    if len(source_files) != 6:
+    observation["complete_source_files"] = len(source_files) == 6
+    if not observation["complete_source_files"]:
         raise ValueError("Factory Source/lock/archive evidence incomplete")
+    observation["stage"] = "image_receipt"
     write_json(EVIDENCE / ("compiler-image-" + args.role + ".json"), {
         "schema": "factory.native-compiler-image/v1", "role": args.role,
         "compiler_artifact": artifact, "compiler_log_sha256": hashlib.sha256(log_data).hexdigest(),
-        "actual_executable": str(executable), "identity": identity(info),
-        "bytes": len(image), "sha256": hashlib.sha256(image).hexdigest(),
-        "retained_copy": str(retained), "manifest_sha256": hashlib.sha256(manifest_data).hexdigest(),
+        "compiler_log": str(args.log), "source_root": str(root),
+        "actual_executable": str(executable), "identity": image["identity"],
+        "bytes": image["bytes"], "sha256": image["sha256"],
+        "retained_copy": str(retained), "retained_identity": image["retained_identity"],
+        "manifest_sha256": hashlib.sha256(manifest_data).hexdigest(),
         "entry_source_sha256": hashlib.sha256(entry_data).hexdigest(),
         "factory_source_files_sha256": source_files, "original_Run_credit": False,
         "standing": "Actual compiler/image observation; not execution or installed baseline",
         "limits": "Held/named pre/post observations; no atomic fd-exec, universal ACL or concurrent-writer exclusion",
     })
+
+
+def reobserve_compiler_image(receipt):
+    observation = {"stage": "current_source_association", "checkpoints": []}
+    role = receipt["role"]
+    try:
+        root = Path(receipt["source_root"])
+        artifact = receipt["compiler_artifact"]
+        manifest = Path(artifact["manifest_path"])
+        entry = Path(artifact["target"]["src_path"])
+        executable = Path(receipt["actual_executable"])
+        predicates = {"canonical_root": root.resolve(strict=True) == root,
+                      "canonical_manifest": manifest.resolve(strict=True) == manifest,
+                      "canonical_entry": entry.resolve(strict=True) == entry,
+                      "canonical_executable": executable.resolve(strict=True) == executable,
+                      "source_members": manifest.is_relative_to(root) and entry.is_relative_to(root),
+                      "image_member": executable.is_relative_to(root)}
+        observation["source_predicates"] = predicates
+        if not all(predicates.values()):
+            raise ValueError("current compiler Source association changed")
+        for path, expected in ((manifest, receipt["manifest_sha256"]),
+                               (entry, receipt["entry_source_sha256"]),
+                               (Path(receipt["compiler_log"]), receipt["compiler_log_sha256"])):
+            body, _ = held_bytes(path, MAX_LOG, single_link=False)
+            observation["current_source_digest_matches"] = hashlib.sha256(body).hexdigest() == expected
+            if not observation["current_source_digest_matches"]:
+                raise ValueError("current compiler Source/log digest changed")
+        for name, expected in receipt["factory_source_files_sha256"].items():
+            body, _ = held_bytes(EVIDENCE / name, MAX_IMAGE)
+            observation["current_factory_source_digest_matches"] = hashlib.sha256(body).hexdigest() == expected
+            if not observation["current_factory_source_digest_matches"]:
+                raise ValueError("current Factory Source evidence digest changed")
+        observation["stage"] = "open_current_original"
+        observation["named_before_open"] = identity(executable.stat(follow_symlinks=False))
+        with compiler_image_stream(executable, observation, "open_current_original") as held:
+            original = observe_image_stream(held, executable, observation, receipt["identity"], receipt["sha256"])
+            retained = observe_compiler_image(receipt["retained_copy"], observation,
+                                              receipt["retained_identity"], receipt["sha256"], private=True)
+            observation["same_current_image_and_copy"] = original["sha256"] == retained["sha256"] and original["bytes"] == retained["bytes"]
+            if not observation["same_current_image_and_copy"]:
+                raise ValueError("current compiler image differs from strict private retained copy")
+            final = image_checkpoint(held, executable, observation, "current_original_after_retained")
+            observation["current_original_pre_post_identity"] = identity(final) == tuple(receipt["identity"])
+            if not observation["current_original_pre_post_identity"]:
+                raise ValueError("current compiler image changed across retained reobservation")
+        return {"sha256": original["sha256"], "identity": original["identity"],
+                "retained_identity": retained["identity"], "bytes": original["bytes"]}
+    except (OSError, ValueError, UnicodeError) as cause:
+        retain_compiler_refusal(role, observation, cause, "reobservation-refusal")
+        raise
 
 
 def admitted_root():
