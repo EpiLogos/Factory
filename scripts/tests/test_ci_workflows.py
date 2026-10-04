@@ -158,7 +158,7 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertIn('list owner-dispatch', dispatch['run'])
         self.assertIn('names owner-dispatch', dispatch['run'])
         self.assertIn('run owner-dispatch --case "$case"', dispatch['run'])
-        self.assertIn('--lib attempt_owner_dispatch:: -- --list', dispatch['run'])
+        self.assertIn('"$FACTORY_NATIVE_LIBRARY_IMAGE" attempt_owner_dispatch:: --list', dispatch['run'])
         self.assertIn('--include-ignored --exact --test-threads=1', dispatch['run'])
         self.assertNotIn('--nocapture', dispatch['run'])
         self.assertNotIn('attempt_owner_delivery', dispatch['run'])
@@ -192,8 +192,12 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         guard = next(step for step in self.steps if step.get('id') == 'cancellation_guard')
         self.assertLess(self.steps.index(receiving), self.steps.index(selection))
         self.assertLess(self.steps.index(selection), self.steps.index(guard))
-        self.assertIn('--no-run --message-format=json', receiving['run'])
-        self.assertIn('compiler --role receiving', receiving['run'])
+        build = next(step for step in self.steps if step.get('id') == 'build')
+        admitted = next(step for step in self.steps if step.get('id') == 'paired_build')
+        self.assertIn('--no-run --message-format=json', build['run'])
+        self.assertIn('compiler --role receiving', admitted['run'])
+        self.assertLess(self.steps.index(admitted), self.steps.index(receiving))
+        self.assertIn('"$FACTORY_NATIVE_RECEIVING_IMAGE" --list', receiving['run'])
         self.assertIn('native_evidence_inputs.py snapshot', selection['run'])
         self.assertIn('names cancellation-guard', guard['run'])
         self.assertIn('--exact --ignored --test-threads=1', guard['run'])
@@ -214,7 +218,7 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
             command = next(step for step in self.steps if step.get('id') == step_id)['run']
             declaration = 'log-path ' + group + ' --case "$case" --input native-evidence'
             self.assertIn(declaration, command)
-            self.assertLess(command.index(declaration), command.index('"$case" -- --'))
+            self.assertLess(command.index(declaration), command.index('"$case" --'))
             self.assertIn('tee "$log"', command)
             self.assertIn('run ' + group + ' --case "$case" --input "$log"', command)
             self.assertNotIn('-$case.log', command)
@@ -226,6 +230,57 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertIn('upload-paths --input native-evidence', gate['run'])
         upload = next(step for step in self.steps if step.get('uses') == 'actions/upload-artifact@v4')
         self.assertLess(self.steps.index(gate), self.steps.index(upload))
+
+
+    def test_all_builds_finish_before_pin_and_body_dispatch_uses_admitted_original_images(self):
+        # This is workflow Source conformance, not an executed native receipt.
+        build = next(step for step in self.steps if step.get('id') == 'build')
+        pins = next(step for step in self.steps if step.get('id') == 'paired_build')
+        consolidated = 'cargo test --locked -p epilogos-factory --lib --test attempt_owner_delivery --test native_lifecycle_receiving --test native_flow_association --test sensing_public --no-run --message-format=json'
+        self.assertIn(consolidated, build['run'])
+        first_pin = None
+        commands = []
+        for step_index, step in enumerate(self.steps):
+            for line_index, line in enumerate(step.get('run', '').splitlines()):
+                text = line.strip()
+                if text.startswith(('cargo build ', 'cargo test ')):
+                    commands.append((step_index, line_index))
+                if ('with os.fdopen(os.open(path, flags)' in text
+                        or text.startswith('python3 scripts/native_evidence_inputs.py compiler ')):
+                    point = (step_index, line_index)
+                    first_pin = point if first_pin is None else min(first_pin, point)
+        self.assertIsNotNone(first_pin)
+        self.assertEqual(8, len(commands))
+        for point in commands:
+            self.assertLess(point, first_pin, 'a later compiler must not replace an admitted image')
+        roles = (
+            ('preparation', 'factory/tests/attempt_owner_delivery.rs', 'attempt_owner_delivery'),
+            ('flow', 'factory/tests/native_flow_association.rs', 'native_flow_association'),
+            ('sensing', 'factory/tests/sensing_public.rs', 'sensing_public'),
+        )
+        for role, entry, target in roles:
+            selected = ('compiler --role ' + role
+                        + ' --log native-evidence/factory-native-test-compiler.jsonl'
+                        + ' --root "$PWD" --manifest factory/Cargo.toml --entry ' + entry
+                        + ' --target ' + target + ' --kind test --test-profile')
+            self.assertIn(selected, pins['run'])
+        self.assertIn('reobserve_compiler_image(receipt)', pins['run'])
+        self.assertIn("executable = receipt['actual_executable']", pins['run'])
+        self.assertIn("native-evidence/compiled-body-images-before.json", pins['run'])
+        for step_id, image in (('capture', 'LIBRARY'), ('integration', 'PREPARATION'),
+                               ('receiving', 'RECEIVING'), ('cancellation_guard', 'LIBRARY'),
+                               ('consumer_os', 'LIBRARY'), ('owner_dispatch', 'LIBRARY'),
+                               ('paired', 'LIBRARY'), ('flow', 'FLOW'), ('sensing', 'SENSING')):
+            step = next(step for step in self.steps if step.get('id') == step_id)
+            self.assertIn('"$FACTORY_NATIVE_' + image + '_IMAGE"', step['run'])
+            self.assertNotIn('cargo test ', step['run'])
+        flow = next(step for step in self.steps if step.get('id') == 'flow')
+        sensing = next(step for step in self.steps if step.get('id') == 'sensing')
+        self.assertIn('native-flow-cases.txt)" = 7', flow['run'])
+        self.assertIn('sensing-public-cases.txt)" = 6', sensing['run'])
+        reobserve = next(step for step in self.steps if step.get('id') == 'input_reobservation')
+        for role, _, _ in roles:
+            self.assertIn("'" + role + "'", reobserve['run'])
 
 
 

@@ -140,6 +140,9 @@ jobs:
           cargo build --manifest-path "$RUNNER_TEMP/factory-central-previous/Cargo.toml" -p ctrl --locked --message-format=json 2> native-evidence/ctrl-previous-compiler.stderr | tee native-evidence/ctrl-previous-compiler.jsonl
           cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-cli --bin actuation --locked --message-format=json 2> native-evidence/actuation-compiler.stderr | tee native-evidence/actuation-compiler.jsonl
           cargo build --manifest-path "$RUNNER_TEMP/factory-actuation-owner/Cargo.toml" -p actuation-gateway --bin actuation-gateway --locked --message-format=json 2> native-evidence/actuation-gateway-compiler.stderr | tee native-evidence/actuation-gateway-compiler.jsonl
+          # Complete every Factory native test build before any image is pinned.
+          # Later body steps execute these exact CompilerArtifacts without Cargo.
+          cargo test --locked -p epilogos-factory --lib --test attempt_owner_delivery --test native_lifecycle_receiving --test native_flow_association --test sensing_public --no-run --message-format=json 2> native-evidence/factory-native-test-compiler.stderr | tee native-evidence/factory-native-test-compiler.jsonl
           python3 - <<'PY'
           import hashlib, os
           from pathlib import Path
@@ -150,22 +153,6 @@ jobs:
                   env.write(f"{key}={path}\n{key}_SHA256={digest}\n")
                   evidence.write(f"{digest}  {path}\n")
           PY
-          python3 scripts/native_evidence_inputs.py compiler --role factory --log native-evidence/factory-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
-          python3 scripts/native_evidence_inputs.py compiler --role ctrl --log native-evidence/ctrl-compiler.jsonl --root "$RUNNER_TEMP/factory-central-owner" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
-          python3 scripts/native_evidence_inputs.py compiler --role ctrl-previous --log native-evidence/ctrl-previous-compiler.jsonl --root "$RUNNER_TEMP/factory-central-previous" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
-          python3 scripts/native_evidence_inputs.py compiler --role actuation --log native-evidence/actuation-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-cli/Cargo.toml --entry crates/actuation-cli/src/main.rs --target actuation --kind bin
-          python3 scripts/native_evidence_inputs.py compiler --role actuation-gateway --log native-evidence/actuation-gateway-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-gateway/Cargo.toml --entry crates/actuation-gateway/src/main.rs --target actuation-gateway --kind bin
-          python3 - <<'PY_NATIVE_IMAGE' > native-evidence/compiler-image-tests.log 2>&1
-          import os, unittest
-          from pathlib import Path
-          from scripts.tests.test_ci_workflows import NativeCompilerImageTests, current_compiler_artifact_conformance
-          if os.name != 'posix':
-              raise SystemExit('native compiler-image qualification requires the selected Unix host')
-          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(NativeCompilerImageTests))
-          if not result.wasSuccessful() or result.testsRun != 5 or result.skipped:
-              raise SystemExit('all five actual compiler-image filesystem cases are required')
-          current_compiler_artifact_conformance(Path('native-evidence/compiler-image-factory.json'))
-          PY_NATIVE_IMAGE
       - name: Build and identify the same Source ordinary reader and opt-in native FCI06 child
         id: paired_build
         run: |
@@ -238,6 +225,48 @@ jobs:
                   env.write(f"{key}={selected[role]['executable']}\n{key}_SHA256={selected[role]['sha256']}\n")
               env.write(f'FACTORY_FCI06_CENTRAL_SOURCE_MANIFEST_SHA256={source_hash}\n')
           PYCODE
+          python3 scripts/native_evidence_inputs.py compiler --role factory --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role ctrl --log native-evidence/ctrl-compiler.jsonl --root "$RUNNER_TEMP/factory-central-owner" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role ctrl-previous --log native-evidence/ctrl-previous-compiler.jsonl --root "$RUNNER_TEMP/factory-central-previous" --manifest ctrl/Cargo.toml --entry ctrl/src/main.rs --target ctrl --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role actuation --log native-evidence/actuation-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-cli/Cargo.toml --entry crates/actuation-cli/src/main.rs --target actuation --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role actuation-gateway --log native-evidence/actuation-gateway-compiler.jsonl --root "$RUNNER_TEMP/factory-actuation-owner" --manifest crates/actuation-gateway/Cargo.toml --entry crates/actuation-gateway/src/main.rs --target actuation-gateway --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role receiving --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/native_lifecycle_receiving.rs --target native_lifecycle_receiving --kind test --test-profile
+          python3 scripts/native_evidence_inputs.py compiler --role factory-receiving --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
+          python3 scripts/native_evidence_inputs.py compiler --role cancellation-guard --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/lib.rs --target epilogos_factory --kind lib --test-profile
+          python3 scripts/native_evidence_inputs.py compiler --role preparation --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/attempt_owner_delivery.rs --target attempt_owner_delivery --kind test --test-profile
+          python3 scripts/native_evidence_inputs.py compiler --role flow --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/native_flow_association.rs --target native_flow_association --kind test --test-profile
+          python3 scripts/native_evidence_inputs.py compiler --role sensing --log native-evidence/factory-native-test-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/sensing_public.rs --target sensing_public --kind test --test-profile
+          python3 - <<'PY_NATIVE_IMAGE' > native-evidence/compiler-image-tests.log 2>&1
+          import os, unittest
+          from pathlib import Path
+          from scripts.tests.test_ci_workflows import NativeCompilerImageTests, current_compiler_artifact_conformance
+          if os.name != 'posix':
+              raise SystemExit('native compiler-image qualification requires the selected Unix host')
+          result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(NativeCompilerImageTests))
+          if not result.wasSuccessful() or result.testsRun != 5 or result.skipped:
+              raise SystemExit('all five actual compiler-image filesystem cases are required')
+          current_compiler_artifact_conformance(Path('native-evidence/compiler-image-factory.json'))
+          PY_NATIVE_IMAGE
+          python3 - <<'PY_EXECUTABLES'
+          import json, os
+          from pathlib import Path
+          from scripts.native_evidence_inputs import held_bytes, MAX_MANIFEST, reobserve_compiler_image, write_json
+          selected = {}
+          for key, role in [('FACTORY_NATIVE_LIBRARY_IMAGE', 'cancellation-guard'), ('FACTORY_NATIVE_PREPARATION_IMAGE', 'preparation'), ('FACTORY_NATIVE_RECEIVING_IMAGE', 'receiving'), ('FACTORY_NATIVE_FLOW_IMAGE', 'flow'), ('FACTORY_NATIVE_SENSING_IMAGE', 'sensing')]:
+              raw, _ = held_bytes(Path('native-evidence')/('compiler-image-'+role+'.json'), MAX_MANIFEST)
+              receipt = json.loads(raw)
+              if receipt['role'] != role:
+                  raise ValueError('actual compiler receipt role differs from selected body image')
+              current = reobserve_compiler_image(receipt)
+              executable = receipt['actual_executable']
+              if not isinstance(executable, str) or not executable or '\n' in executable or '\r' in executable:
+                  raise ValueError('actual compiled image locator is ambiguous')
+              selected[key] = {'role': role, 'actual_executable': executable, 'current': current}
+          write_json(Path('native-evidence/compiled-body-images-before.json'), selected)
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              for key, fact in selected.items():
+                  env.write(f"{key}={fact['actual_executable']}\n")
+          PY_EXECUTABLES
       - name: Admit the same native fixture and tool inputs before receiving
         id: input_admission
         run: |
@@ -298,12 +327,12 @@ jobs:
         id: capture
         run: |
           set -euo pipefail
-          cargo test --locked -p epilogos-factory --lib native_process:: -- --list > native-evidence/capture-cases.txt
+          "$FACTORY_NATIVE_LIBRARY_IMAGE" native_process:: --list > native-evidence/capture-cases.txt
           python3 scripts/native_evidence_census.py list capture --input native-evidence/capture-cases.txt
           python3 scripts/native_evidence_census.py names capture > native-evidence/capture-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path capture --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_LIBRARY_IMAGE" "$case" --exact --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run capture --case "$case" --input "$log"
           done < native-evidence/capture-required.txt
       - name: Real native Central to Factory preparation and dispatch gates
@@ -314,12 +343,12 @@ jobs:
           set -euo pipefail
           export FACTORY_TEST_CTRL="$RUNNER_TEMP/factory-central-owner/target/debug/ctrl"
           test -x "$FACTORY_TEST_CTRL"
-          cargo test --locked --manifest-path factory/Cargo.toml --test attempt_owner_delivery native_central_ -- --list > native-evidence/native-central-cases.txt
+          "$FACTORY_NATIVE_PREPARATION_IMAGE" native_central_ --list > native-evidence/native-central-cases.txt
           python3 scripts/native_evidence_census.py list preparation --input native-evidence/native-central-cases.txt
           python3 scripts/native_evidence_census.py names preparation > native-evidence/preparation-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path preparation --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --test attempt_owner_delivery "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_PREPARATION_IMAGE" "$case" --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run preparation --case "$case" --input "$log"
           done < native-evidence/preparation-required.txt
       - name: Every actual receiving and capture-consumer parent, child bodies only through parents
@@ -328,15 +357,12 @@ jobs:
           FACTORY_REQUIRE_NATIVE_CTRL: '1'
         run: |
           set -euo pipefail
-          cargo test --locked -p epilogos-factory --test native_lifecycle_receiving --no-run --message-format=json 2> native-evidence/receiving-compiler.stderr | tee native-evidence/receiving-compiler.jsonl
-          python3 scripts/native_evidence_inputs.py compiler --role receiving --log native-evidence/receiving-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/tests/native_lifecycle_receiving.rs --target native_lifecycle_receiving --kind test --test-profile
-          python3 scripts/native_evidence_inputs.py compiler --role factory-receiving --log native-evidence/receiving-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/bin/factory.rs --target factory --kind bin
-          cargo test --locked -p epilogos-factory --test native_lifecycle_receiving -- --list > native-evidence/native-lifecycle-cases.txt
+          "$FACTORY_NATIVE_RECEIVING_IMAGE" --list > native-evidence/native-lifecycle-cases.txt
           python3 scripts/native_evidence_census.py list receiving --input native-evidence/native-lifecycle-cases.txt
           python3 scripts/native_evidence_census.py names receiving > native-evidence/receiving-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path receiving --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --test native_lifecycle_receiving "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_RECEIVING_IMAGE" "$case" --exact --ignored --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run receiving --case "$case" --input "$log"
           done < native-evidence/receiving-required.txt
       - name: Select the actual original native producer snapshot independently
@@ -348,38 +374,36 @@ jobs:
         id: cancellation_guard
         run: |
           set -euo pipefail
-          cargo test --locked -p epilogos-factory --lib --no-run --message-format=json 2> native-evidence/cancellation-guard-compiler.stderr | tee native-evidence/cancellation-guard-compiler.jsonl
-          python3 scripts/native_evidence_inputs.py compiler --role cancellation-guard --log native-evidence/cancellation-guard-compiler.jsonl --root "$PWD" --manifest factory/Cargo.toml --entry factory/src/lib.rs --target epilogos_factory --kind lib --test-profile
-          cargo test --locked -p epilogos-factory --lib orchestration::native_cancellation_guard_tests:: -- --list > native-evidence/cancellation-guard-cases.txt
+          "$FACTORY_NATIVE_LIBRARY_IMAGE" orchestration::native_cancellation_guard_tests:: --list > native-evidence/cancellation-guard-cases.txt
           python3 scripts/native_evidence_census.py list cancellation-guard --input native-evidence/cancellation-guard-cases.txt
           python3 scripts/native_evidence_census.py names cancellation-guard > native-evidence/cancellation-guard-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path cancellation-guard --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_LIBRARY_IMAGE" "$case" --exact --ignored --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run cancellation-guard --case "$case" --input "$log"
           done < native-evidence/cancellation-guard-required.txt
       - name: Actual OS capture and native publication failure consumers
         id: consumer_os
         run: |
           set -euo pipefail
-          cargo test --locked -p epilogos-factory --lib -- --list > native-evidence/library-cases.txt
+          "$FACTORY_NATIVE_LIBRARY_IMAGE" --list > native-evidence/library-cases.txt
           python3 scripts/native_evidence_census.py list consumer-os --input native-evidence/library-cases.txt
           python3 scripts/native_evidence_census.py names consumer-os > native-evidence/consumer-os-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path consumer-os --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_LIBRARY_IMAGE" "$case" --exact --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run consumer-os --case "$case" --input "$log"
           done < native-evidence/consumer-os-required.txt
       - name: Every actual owner-dispatch failure and publication consumer
         id: owner_dispatch
         run: |
           set -euo pipefail
-          cargo test --locked -p epilogos-factory --lib attempt_owner_dispatch:: -- --list > native-evidence/owner-dispatch-cases.txt
+          "$FACTORY_NATIVE_LIBRARY_IMAGE" attempt_owner_dispatch:: --list > native-evidence/owner-dispatch-cases.txt
           python3 scripts/native_evidence_census.py list owner-dispatch --input native-evidence/owner-dispatch-cases.txt
           python3 scripts/native_evidence_census.py names owner-dispatch > native-evidence/owner-dispatch-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path owner-dispatch --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --lib "$case" -- --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_LIBRARY_IMAGE" "$case" --include-ignored --exact --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run owner-dispatch --case "$case" --input "$log"
           done < native-evidence/owner-dispatch-required.txt
           python3 - <<'PY'
@@ -415,16 +439,18 @@ jobs:
           shasum -a 256 "$FACTORY_TEST_CTRL" "$FACTORY_TEST_FLOW_TEMPLATE" > native-evidence/flow-native-inputs.sha256
           mkdir -m 700 native-evidence/flow-captures
           export FACTORY_NATIVE_FLOW_EVIDENCE_DIR="$(pwd -P)/native-evidence/flow-captures"
-          cargo test --locked -p epilogos-factory --test native_flow_association -- --list > native-evidence/native-flow-cases.txt
+          "$FACTORY_NATIVE_FLOW_IMAGE" --list > native-evidence/native-flow-cases.txt
           test "$(grep -c ': test$' native-evidence/native-flow-cases.txt)" = 7
-          cargo test --locked -p epilogos-factory --test native_flow_association -- --include-ignored --nocapture 2>&1 | tee native-evidence/native-flow.log
+          "$FACTORY_NATIVE_FLOW_IMAGE" --include-ignored --nocapture 2>&1 | tee native-evidence/native-flow.log
       - name: Real Actuation authority and Factory sensing integration
         id: sensing
         run: |
           set -euo pipefail
           export PATH="$RUNNER_TEMP/factory-actuation-owner/target/debug:$PATH"
           test -x "$RUNNER_TEMP/factory-actuation-owner/target/debug/actuation"
-          cargo test --locked -p epilogos-factory --test sensing_public -- --nocapture 2>&1 | tee native-evidence/sensing-public.log
+          "$FACTORY_NATIVE_SENSING_IMAGE" --list > native-evidence/sensing-public-cases.txt
+          test "$(grep -c ': test$' native-evidence/sensing-public-cases.txt)" = 6
+          "$FACTORY_NATIVE_SENSING_IMAGE" --nocapture 2>&1 | tee native-evidence/sensing-public.log
       - name: Real paired FCI06 document and secondary Receiving failures through Factory capture
         id: paired
         env:
@@ -438,12 +464,12 @@ jobs:
           umask 077
           mkdir -m 700 native-evidence/fci06-captures
           export FACTORY_FCI06_ARTIFACT_DIR="$(pwd -P)/native-evidence/fci06-captures"
-          cargo test --locked -p epilogos-factory --lib attempt_receiving::paired_inclusion_native_tests:: -- --list > native-evidence/fci06-cases.txt
+          "$FACTORY_NATIVE_LIBRARY_IMAGE" attempt_receiving::paired_inclusion_native_tests:: --list > native-evidence/fci06-cases.txt
           python3 scripts/native_evidence_census.py list paired --input native-evidence/fci06-cases.txt
           python3 scripts/native_evidence_census.py names paired > native-evidence/fci06-required.txt
           while IFS= read -r case; do
             log=$(python3 scripts/native_evidence_census.py log-path paired --case "$case" --input native-evidence)
-            cargo test --locked -p epilogos-factory --lib "$case" -- --exact --ignored --test-threads=1 2>&1 | tee "$log"
+            "$FACTORY_NATIVE_LIBRARY_IMAGE" "$case" --exact --ignored --test-threads=1 2>&1 | tee "$log"
             python3 scripts/native_evidence_census.py run paired --case "$case" --input "$log"
           done < native-evidence/fci06-required.txt
       - name: Reobserve actual receiving compiler inputs and unchanged Source after native gates
@@ -506,7 +532,7 @@ jobs:
           from scripts.native_evidence_inputs import admitted_root, validate_root
           import os
           actual = {}
-          for role in ('factory-receiving', 'receiving', 'cancellation-guard', 'ctrl', 'ctrl-previous', 'actuation', 'actuation-gateway'):
+          for role in ('factory', 'factory-receiving', 'receiving', 'cancellation-guard', 'preparation', 'flow', 'sensing', 'ctrl', 'ctrl-previous', 'actuation', 'actuation-gateway'):
               receipt_bytes, _ = held_bytes(Path('native-evidence')/('compiler-image-'+role+'.json'), MAX_MANIFEST)
               receipt = json.loads(receipt_bytes)
               current = reobserve_compiler_image(receipt)
