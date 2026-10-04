@@ -20,3 +20,8 @@ vendor/
 
 # SDK local installs stay local; CI installs them fresh
 node_modules/
+
+# Generated Python interpreter caches are never production Source.
+__pycache__/
+*.pyc
+*.pyo

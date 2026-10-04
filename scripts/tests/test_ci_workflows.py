@@ -44,6 +44,11 @@ class NativeWorkflowTests(unittest.TestCase):
         body = '\n'.join(step.get('run', '') for step in job['steps'])
         self.assertIn('source-commit.txt', body)
         self.assertIn('Cargo.toml Cargo.lock README.md', body)
+        import subprocess
+        tracked = subprocess.check_output(['git', '-C', str(ROOT), 'ls-files', '-z']).split(b'\0')
+        runtime_caches = [name for name in tracked
+                          if b'__pycache__' in name.split(b'/') or name.endswith((b'.pyc', b'.pyo'))]
+        self.assertEqual([], runtime_caches, 'Generated Python runtime caches must not be tracked Source')
 
     def test_main_trigger_covers_union_of_retired_lanes(self):
         paths = set(self.workflow['on']['push']['paths'])
