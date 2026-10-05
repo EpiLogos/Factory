@@ -263,11 +263,67 @@ argv or Factory state. Factory validates the returned native producer, opaque
 receiving identity, source, proposal and correlations before attachment. A
 foreign-producer response remains unresolved evidence, not an accepted link.
 
-Ordinary Factory replay does not call Central. Explicit recovery reads an
-already-known receiving receipt, or retries the exact original producer-key
-submission after a lost acknowledgement. It never replaces the original
-proposal with a newly generated Return. Later owner inclusion observations are
-new evidence; the original receiving basis is not rewritten.
+Ordinary exact replay does not call Central and exposes prior public JSON only
+as unverified retained history requiring reconciliation. A canonical native
+intent claim binds the original root/project, opaque producer key, endpoint and
+exact input inside the existing Factory transaction. Only the insertion winner
+submits. Equal aliases, retries and coordinator replacements perform guarded
+`central.receiving.read` with the original producer key and original request;
+a missing or unavailable receipt remains unresolved and never permits resend.
+The original Return Action supplies proposal bytes before later correlations.
+
+Optional `lookupEndpoint` selects a replacement native client for lookup only.
+It is excluded from original request identity and may change only the binary,
+never the original root/project/contract or input. Factory holds one bounded
+regular client and checks its actual metadata and full SHA256 before and after
+its read-only descriptor and guarded lookup. It checks the same held client
+again before admitting the reply. First submission is qualified after its durable
+intent, so an unavailable client leaves a recoverable unknown intent.
+
+New native intents also retain the original Central root's canonical path and
+held directory device/inode. The original locator and canonical path must still
+name that held directory before and after calls. Commands use the original
+qualified canonical root. A retargeted original locator is refused rather than
+being treated as an unclaimed producer; independently declared distinct roots
+remain distinct owners. Host-configured question/closure admission may use a
+physically identical canonical root spelling: the current root must match the
+retained original canonical path and device/inode. Only the client binary may
+change. The original raw locator is held and rechecked, and the actual client
+argv retains its qualified original canonical root. A retargeted original alias
+is refused even when the host still names the old canonical root. Initial
+question claims retain the absolute host root locator instead of discarding its
+alias ancestry. Explicit public `lookupEndpoint` recovery still requires its
+original raw root text, project and contract; this host bridge does not broaden
+that request. Missing legacy physical identity stays unknown and is
+never silently backfilled from the current filesystem or host environment.
+
+Native by-reference decision/closure admission uses the original intent and held
+physical owner, even when a currently configured client replaces the old client.
+The opaque admission holds these objects through the existing Factory transaction
+and rechecks them without calling Central while Factory is locked. The actual
+native request digest still must match; matching visible proposal fields is
+insufficient. Existing exact Finished replay retains its historical admitted
+receipt and does not assert a new current native observation.
+
+These are finite filesystem observations, not atomic fd-exec, a filesystem
+sandbox or a lock on another product's source/grant/Project namespace. Directory
+identity checks do not certify current native authentication or disclosure; those
+remain required from the actual Central owner. A changed or unavailable client
+or root with a prior reply retains that actual response and qualification cause.
+No cleanup deletes client/root material and no qualification failure permits
+resubmission. Missing lookup capability refuses without fallback. Legacy intents with no endpoint require the
+original caller request digest; Factory never infers or backfills an endpoint.
+Question retries retain their original endpoint/input and use the explicit
+current host binary only for compatible same-owner lookup. Known-ref live human
+and closure reads retain their existing contract. Later native observations are
+new evidence; original receiving basis and owner receipt bytes are not rewritten.
+
+Reserved native CALL/QUESTION observations require a private native admission;
+public JSON cannot manufacture delivery proof. Lookup must affirm authenticated
+producer selection and exact original request verification, and Factory checks
+the actual response digest, schema, status, action, reference and correlations.
+Post-call validation and publication failures retain the actual response and
+separate causes as uncertain; no caller JSON or transport exit creates success.
 
 This adapter never invokes document mutation, review or inclusion. Pending and
 needs-review contributions remain proposals. Inclusion and human Recognition
@@ -415,3 +471,199 @@ cross-Day/late Return with real services, independent Agent verification, human
 receiving/inclusion and a genuine second placement. The later two-Guardian
 Factory #201 campaign remains open. No local adoption or installed-world
 acceptance occurred in this continuation.
+
+
+## Native original-owner regression qualification
+
+The `native_lifecycle_receiving` Source defines 19 explicitly ignored process
+cases on required Linux/macOS. Qualification must run `--include-ignored` and
+require exactly 19 successes with independently qualified current and previous
+Ctrl binaries; a zero-test or ordinary ignored-only run is insufficient. Nine
+existing decision/closure cases and six original-claim cases remain. Four further
+cases use the actual filesystem/Factory/Central/OS: descriptor followed by regular
+client replacement; the original root locator changed between two genuine roots;
+actual abrupt coordinator death after durable intent and before native Ctrl exec;
+and by-reference read of a genuine receipt with matching visible fields but a
+different full original request digest. The death case explicitly does not prove
+the earlier pre-spawn boundary, and refuses incomplete owned-group retirement.
+All 19 definitions in this proposal are UNRUN; they are not installed acceptance,
+model worker activity, physical human response or whole commissioned completion.
+
+The required native receiving census for this host-bridge candidate is 21 on
+macOS/Linux (19 preserved cases plus two actual original-alias controls). The
+new controls exercise genuine old/current client images, original alias
+retarget refusal, authenticated controlled human review/Resolve, final native
+receiving/Finished, and unchanged owner bytes. Native crash-fixture cleanup
+checks the exact owned Child before any signal and treats observed exit or wait
+authority loss as non-passing uncertainty. All definitions are Source-only until
+actual qualified execution; no Original Run, model worker or personal H credit
+is supplied by these isolated cases.
+
+
+### Bounded native capture at receiving and local-tool boundaries
+
+A native capture failure retains the actual owned I/O cause, optional observed
+exit status, captured stdout/stderr prefixes and their hashes, EOF/truncation,
+deadline, wait-custody, stop and reap observations. Captured byte length is not
+the total native output length. PID, birth identity, remote effect cancellation
+and descendant quiescence are not inferred from these fields. A failed prefix
+is never parsed as an ActionResult, even when it contains complete-looking JSON.
+Complete nonzero Output keeps its actual status and native ActionResult.
+
+The existing reserved CALL/QUESTION observation retains these private facts as
+Uncertain through the existing internal admission path. Native by-ref Finished
+and Resolve reads preserve the typed cause before the canonical provider lock;
+failed reads do not mint an admission or change the provider. Canonical producer
+claims, their original endpoint/input, guarded lookup and no-resubmit semantics
+are unchanged. When a later observation publication also fails, both actual
+causes survive: the original invocation is an explicit opaque accessor and the
+native publisher remains discoverable through Error::source. No synthetic
+publication uncertainty is created to transport capture evidence.
+
+A local Actuation tool can submit capture facts in the existing tool-result
+metadata under its actual granted stream. These facts are durable only when the
+real Gateway acknowledges that event. If a later Gateway call fails, the opaque
+error retains the original local capture, the actual Gateway error and only the
+prior acknowledged receipts; it does not invent a result/evidence/Return or
+retry. Complete nonzero local execution still produces its existing Failed
+receipt. General Debug/Display omit private prefixes and receipt payloads;
+explicit authorized evidence reads and JSON retention preserve their bytes.
+
+The source-only consumer qualification census is retained with the proposal.
+Its native integration parents require hash-pinned real Ctrl and, for Gateway
+cases, hash-pinned real Actuation binaries in isolated roots. The dedicated
+ignored child test is selected by the two Gateway parents exactly (three actual
+child executions including the complete-nonzero control); a blanket selection
+must not run that child without its required parent fixture. All definitions
+are UNRUN until qualification. The additional post-document Central
+`central.receiving.inclusion_incomplete` dual-failure case requires paired actual
+Central owner qualification; it is not implemented or discharged by a Factory
+JSON fixture, ordinary refusal, or a consumer-created ActionResult. Windows
+PeekNamedPipe absolute-bound qualification remains open.
+
+### Failed native owner dispatch is a failed live API operation
+
+An actual failed `factory.attempt-owner-action/v1` invocation returns a typed
+`AttemptOwnerError` from the live API. Its existing `native_result` accessor,
+and `CliError::native_owner_failure_result`, retain the same uncertain receipt
+for the authorised caller. An ordinary failed-owner CLI call exits nonzero,
+with empty stdout and a body-free summary on stderr; the same native attempt
+read exposes its retained uncertain operation observation. A typed publication
+failure separately retains its existing `--json` failure document on stdout.
+A failed transport is not a successful CLI delivery. Successful owner-action
+JSON/text and serialized uncertain receipt fields are unchanged. The receipt
+is an observation of uncertainty, not worker delivery or an assertion that no
+remote effect occurred.
+
+The live error privately retains the original `NativeOwnerError`, its actual
+bounded capture and the existing receipt. A distinct later native publication
+failure remains discoverable through `Error::source`; explicit opaque accessors
+retain the original invocation cause and separate retention/readback causes.
+General `Debug`/`Display` and public receipt JSON do not export private prefixes
+or argv. A typed `PublicationUncertain` does not trigger another same-store
+settlement, compensation or resend.
+
+Exact historical replay remains a read-only observation of the retained receipt.
+It does not invoke the owner again, reconstruct a live typed I/O error from
+serialized strings, or turn an uncertain receipt into current success. The
+original native delivery lookup remains a separate owner operation. Private
+capture/cause retention through the live API and CLI lasts only while that
+process holds the error: these changes add no durable private destination,
+carrier, registry or restart reconstruction of captured bytes. That partial-byte
+and restart-evidence lifetime remains an explicit limitation.
+
+The required Linux/macOS owner-dispatch group selects these six definitions
+individually:
+
+1. `attempt_owner_dispatch::native_failure_tests::actual_timeout_incomplete_pipes_retain_original_private_capture`
+2. `attempt_owner_dispatch::native_failure_tests::actual_missing_executable_is_typed_failure_with_single_intent_and_no_resend`
+3. `attempt_owner_dispatch::native_failure_tests::actual_capture_and_post_publish_uncertainty_remain_distinct_without_compensation`
+4. `attempt_owner_dispatch::native_failure_tests::actual_source_receipt_projection_and_historical_replay_keep_public_schema`
+5. `attempt_owner_dispatch::publication_tests::actual_fallback_publication_retains_primary_refusal_and_secondary_native_cause`
+6. `attempt_owner_dispatch::publication_tests::actual_owner_retention_keeps_apply_cause_when_followup_native_read_fails`
+
+The four new opt-in definitions use actual OS pipes/process failure, real
+filesystem publication adversity and the actual Factory source/store/CLI
+projection; they do not supply a successful AIKit response. The fifth is the
+existing real publication case. The sixth runs an actual pre-byte stage privacy
+fault and a distinct subsequent no-follow source-read failure. It preserves the
+original held owner inode/bytes, restores only its owned replaced leaf, and
+requires both actual typed IO causes without retry or receipt publication.
+The same body also exercises actual owned-file corruption through the native
+store JSON decoder and restores the original bytes. Actual native Io/Json
+causes remain privately owned while the previous public InvalidOperation text
+stays unchanged. All six are UNRUN in this Source candidate.
+The inherited portable owner-delivery protocol doubles remain separate coverage.
+No default green result or ignored-only run substitutes for these native bodies.
+
+The existing native evidence workflow adds `owner_dispatch` as its seventh
+required component outcome. Its compiled-list census requires exactly these
+six names; each `--include-ignored --exact --test-threads=1` execution must
+retain a complete log with exactly one named passed body and zero failures or
+ignored bodies. The same bounded census rejects missing, extra, duplicate,
+zero-test and incomplete captures. The controlled fixture uses the compiled
+product's `ProjectCentral/now/tmp`, measured Python path/hash and observed
+physical directory ancestry. Its filesystem/tool metadata is not a NOW, Agency,
+ACL, model or process-quiescence grant. Failed or uncertain cleanup retains the
+owned fixture and actual failure rather than signalling guessed processes.
+
+The previous owner/source pins, groups and oracles remain required. The paired
+FCI06 hosted wiring is Source-implemented and UNRUN: it builds the pinned ordinary
+Ctrl and opt-in Central child and selects the existing c80 paired parent on
+Linux/macOS. The qualification record retains actual `paired_build` and `paired`
+outcomes. The separate 12c9 missing-arm Source successor is not composed or
+selected by that wiring. `full_native_composite_qualified` remains false. These
+isolated qualifications
+cannot establish provider inference, an Original Run attempt, native independent
+verification, Receiving/Recognition or whole commissioned completion.
+
+### Current native cancellation composition (Source, execution pending)
+
+The reviewed prior 29 receiving parents and one internal child remain intact.
+The existing native evidence job explicitly adds the three real current-request
+cancellation parents and one separately selected ignored library guard. It
+admits the same private ProjectCentral/now/tmp evidence root before receiving
+and shares that observation through the job environment; this does not grant
+NOW, Agency, model, personal authority or Original Run acceptance.
+
+The library guard receives only the actual first cancellation parent's
+non-moved, pre-termination owner snapshot. A separate finite selector validates
+the completed parent log, actual manifest and measured held snapshot bytes.
+Missing, foreign, substituted, ambiguous or changed material refuses; no
+synthetic-state fallback is used. Its existing native provider wrapper and
+engine restore remain the semantic owner. The guard does not terminate a model
+worker or publish a second Return.
+
+Current Source/lock/archive, compiler JSON, native image bytes and pre/post
+observations accompany the existing Linux/macOS gate. Compiler originals may
+have normal Cargo hardlinks; retained copies are private single-link files.
+Ordinary fixture bodies have bounded private copies, while links, FIFOs,
+sockets and devices retain only typed metadata. Original fixtures are not
+recursively deleted or directly passed to the artifact uploader. No inner
+retirement witness, universal ACL, concurrent-writer exclusion or installed
+baseline is inferred from this retention.
+
+The complete named Source census is 64 parent definitions: the original 63
+remain selected, with the existing ninth preparation followup now included.
+That followup uses an explicit controlled provider turn and actual native
+document creation, NOW allocation and successful Receiving without document
+inclusion; it does not grant
+model execution or document inclusion. Preparation selects all nine exact
+bodies, including the ignored followup, through the same complete-run census.
+Portable log filenames use the group and SHA256 of the exact case solely as
+evidence geometry. Exclusive sidecars retain each exact case-to-path mapping
+before dispatch; completed libtest bodies still prove the selected case. The
+existing cancellation snapshot reader uses that same mapping. All actual
+evidence paths, including Flow/FCI06 captures and numbered fixture copies,
+require a finite ordinary/portable path checkpoint before artifact upload;
+refusal retains the host failure and never renames a semantic identity or
+certifies missing cases. The one internal capture
+child still executes through its three existing parents, and is not another
+parent. Existing Flow and sensing targets, normal format/Clippy/workspace/doc
+gates, paired FCI06 and its uncomposed missing-arm dependency keep their prior
+meaning. All new syntax, compiler, platform and native executions are UNRUN
+until the admitted hosted replay. Root's separately retained installed Factory
+image supplies the genuine Original old baseline in its own later replay;
+this workflow neither downloads nor manufactures that image. Job cancellation,
+host death, finite capacity refusal and post-last-observation filesystem change
+remain explicit limits.

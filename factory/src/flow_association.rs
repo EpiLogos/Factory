@@ -6,7 +6,7 @@ use crate::commission::{
 };
 use crate::core::identity::{Ref, Revision};
 use crate::core::run::RunRef;
-use crate::developmental_read::FactoryDevelopmentalState;
+use crate::developmental_read::{FactoryDevelopmentalProviderError, FactoryDevelopmentalState};
 use crate::journey::JourneyRef;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -160,7 +160,7 @@ fn validate_basis(
 pub(crate) fn prepare(
     native: &FactoryDevelopmentalState,
     request: &FactoryDevelopmentalMutationRequest,
-) -> Result<Option<NativeFlowAdmission>, CommissionError> {
+) -> Result<Option<NativeFlowAdmission>, FactoryDevelopmentalProviderError> {
     if fields(request).is_none() {
         return Ok(None);
     }
@@ -172,9 +172,7 @@ pub(crate) fn prepare(
         return if existing.request == *request {
             Ok(None)
         } else {
-            Err(CommissionError::ReplayConflict(
-                request.mutation_ref.clone(),
-            ))
+            Err(CommissionError::ReplayConflict(request.mutation_ref.clone()).into())
         };
     }
     validate_basis(native, request, true)?;
@@ -184,14 +182,16 @@ pub(crate) fn prepare(
     if endpoint.root.to_str() != Some(association.flow.location.root.as_str()) {
         return Err(CommissionError::Conflict(
             "Flow location belongs to another configured Central root".into(),
-        ));
+        )
+        .into());
     }
-    let response = crate::attempt_receiving::call(
+    let (response, _) = crate::attempt_receiving::call_observed_bounded(
         &endpoint,
         "central.flow.read",
         &json!({"location":association.flow.location,"max_entries":1}),
+        std::time::Duration::from_secs(30),
     )
-    .map_err(CommissionError::Conflict)?;
+    .map_err(FactoryDevelopmentalProviderError::NativeFlowRead)?;
     check_reading(&response, &association.flow)?;
     Ok(Some(NativeFlowAdmission {
         request: request.clone(),

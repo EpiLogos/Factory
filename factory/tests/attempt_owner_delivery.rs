@@ -318,6 +318,37 @@ fn success(output: Output) -> Value {
     );
     serde_json::from_slice(&output.stdout).unwrap()
 }
+// Inherited protocol-double coverage only. Ordinary failed-owner output is a
+// nonzero CLI status and body-free summary; read its retained uncertainty from
+// the same native attempt instead of exporting private failure evidence.
+fn failed_owner_call(world: &World, request_ref: &str, output: Output) {
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        output.stdout.is_empty(),
+        "ordinary failure exported a result"
+    );
+    let diagnostic = std::str::from_utf8(&output.stderr).unwrap();
+    let expected = format!(
+        "factory: factory.attempt-owner-receipt/v1\nRun: {RUN}\nAttempt: {ATTEMPT}\nRequest: {request_ref}\nReplayed: false\nNeeds reconciliation: true\nOwner phase: Uncertain\n"
+    );
+    assert!(diagnostic == expected, "failed owner summary changed");
+    let reading = world.reading();
+    let attempt = &reading.attempts[0];
+    assert_eq!(attempt.attempt_ref, ATTEMPT);
+    let operation_ref = format!("factory-attempt-owner-call:{request_ref}");
+    let retained = attempt
+        .observations
+        .iter()
+        .rev()
+        .find(|receipt| receipt.operation_ref == operation_ref)
+        .expect("failed owner call lost its native retained observation");
+    assert_eq!(retained.owner_ref, "factory");
+    assert_eq!(retained.contract, "factory.attempt-owner-transport/v1");
+    assert_eq!(retained.phase, OwnerOperationPhase::Uncertain);
+    assert_eq!(retained.payload["agentSession"], SESSION);
+    assert_eq!(retained.payload["deliveryRef"], "delivery:test");
+    assert_eq!(retained.payload["executionRef"], EXECUTION);
+}
 fn wait_for(path: &Path) {
     let start = Instant::now();
     while !path.exists() {
@@ -390,7 +421,7 @@ fn lost_response_recovers_original_intent_without_replaying_task() {
     world.start(false);
     world.mode("lost");
     let request = world.request("send:lost", "send");
-    assert_eq!(success(world.owner(&request))["needsReconciliation"], true);
+    failed_owner_call(&world, "send:lost", world.owner(&request));
     assert_eq!(success(world.owner(&request))["replayed"], true);
     assert_eq!(world.calls().len(), 1);
     assert!(!world
@@ -473,8 +504,11 @@ fn foreign_session_result_is_uncertain_and_cannot_bind_an_execution() {
     let world = World::new();
     world.start(false);
     world.mode("wrong-session");
-    let receipt = success(world.owner(&world.request("send:foreign", "send")));
-    assert_eq!(receipt["needsReconciliation"], true);
+    failed_owner_call(
+        &world,
+        "send:foreign",
+        world.owner(&world.request("send:foreign", "send")),
+    );
     assert!(world.reading().attempts[0].execution_ref.is_none());
     assert!(world.reading().attempts[0].readable_return.is_none());
 }

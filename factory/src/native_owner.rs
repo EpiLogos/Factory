@@ -533,6 +533,100 @@ struct ActuationGatewayCall<'a> {
 
 /// A gateway transport failure keeps its stage and its io kind; the caller
 /// must be able to tell a connect refusal from a mid-round-trip deadline.
+/// Captured-only byte facts. Total native output may exceed the captured
+/// prefix on failure; a prefix is never a reply, body or completion witness.
+pub(crate) fn native_capture_prefix(bytes: &[u8]) -> Value {
+    use sha2::{Digest, Sha256};
+    let kept = &bytes[..bytes.len().min(16 * 1024)];
+    serde_json::json!({"byteLength":bytes.len(),"sha256":format!("{:x}",Sha256::digest(bytes)),
+        "retainedPrefix":kept,"retainedPrefixComplete":kept.len()==bytes.len(),"byteStanding":"captured bytes only"})
+}
+pub(crate) fn native_capture_observation(error: &io::Error) -> Value {
+    match crate::native_process::capture_failure(error) {
+        Some(failure) => {
+            serde_json::json!({"stage":"nativeTransport","processStarted":failure.process_started(),
+            "exitCode":failure.status().and_then(|status|status.code()),"exitStatus":failure.status().map(|status|status.to_string()),
+            "stdout":native_capture_prefix(failure.stdout()),"stderr":native_capture_prefix(failure.stderr()),
+            "stdoutEof":failure.stdout_eof(),"stderrEof":failure.stderr_eof(),
+            "stdoutTruncated":failure.stdout_truncated(),"stderrTruncated":failure.stderr_truncated(),
+            "timedOut":failure.timed_out(),"ownershipLost":failure.ownership_lost(),"clientReaped":failure.client_reaped(),
+            "stopAttempted":failure.stop_attempted(),"stopRequested":failure.stop_requested(),
+            "errorKind":format!("{:?}",failure.cause().kind()),"rawOsError":failure.cause().raw_os_error(),
+            "failure":failure.cause().to_string(),"cleanupCauses":failure.cleanup_errors().iter().map(|cause|
+                serde_json::json!({"kind":format!("{:?}",cause.kind()),"rawOsError":cause.raw_os_error(),"failure":cause.to_string()})).collect::<Vec<_>>(),
+            "nativeTotalByteLength":null,"centralResponse":null,"effectsStanding":"unknown; transport lifetime is not remote effect quiescence"})
+        }
+        None => {
+            serde_json::json!({"stage":"nativeTransport","errorKind":format!("{:?}",error.kind()),"rawOsError":error.raw_os_error(),
+            "failure":error.to_string(),"processStarted":null,"exitStatus":null,"stdoutEof":null,"stderrEof":null,
+            "clientReaped":null,"centralResponse":null,"effectsStanding":"capture API did not disclose lifetime; effect outcome unknown"})
+        }
+    }
+}
+/// An explicit evidence accessor for an invocation whose later Gateway write
+/// failed. No event or durable observation is invented without a native ACK.
+pub struct NativeToolObservationFailure {
+    primary: Option<io::Error>,
+    secondary: crate::native_gateway::GatewayError,
+    stage: &'static str,
+    observation: Value,
+    acknowledged: Value,
+}
+impl NativeToolObservationFailure {
+    pub fn observation(&self) -> &Value {
+        &self.observation
+    }
+    pub fn acknowledged_receipts(&self) -> &Value {
+        &self.acknowledged
+    }
+    pub fn primary_capture_cause(&self) -> Option<&io::Error> {
+        self.primary.as_ref()
+    }
+    pub fn gateway_cause(&self) -> &crate::native_gateway::GatewayError {
+        &self.secondary
+    }
+}
+impl std::fmt::Debug for NativeToolObservationFailure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeToolObservationFailure")
+            .field("stage", &self.stage)
+            .field("has_primary_capture_cause", &self.primary.is_some())
+            .field(
+                "private_evidence",
+                &"withheld; explicit evidence accessor only",
+            )
+            .finish()
+    }
+}
+impl Display for NativeToolObservationFailure {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f,"actuation gateway {} failed; actual local capture and acknowledged receipts retained; delivery outcome requires reconciliation",self.stage)
+    }
+}
+impl Error for NativeToolObservationFailure {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match &self.primary {
+            Some(cause) => Some(cause),
+            None => Some(&self.secondary),
+        }
+    }
+}
+fn local_gateway_error(
+    stage: &'static str,
+    error: crate::native_gateway::GatewayError,
+    primary: &mut Option<io::Error>,
+    observation: &Value,
+    acknowledged: &Value,
+) -> NativeOwnerError {
+    NativeOwnerError::ToolObservation(Box::new(NativeToolObservationFailure {
+        primary: primary.take(),
+        secondary: error,
+        stage,
+        observation: observation.clone(),
+        acknowledged: acknowledged.clone(),
+    }))
+}
+
 fn gateway_error(stage: &str, error: crate::native_gateway::GatewayError) -> NativeOwnerError {
     match error {
         crate::native_gateway::GatewayError::Io(io) => NativeOwnerError::Io(io::Error::new(
@@ -711,6 +805,8 @@ fn invoke_actuation_gateway(
         None
     };
     let mut evidence_refs = BTreeSet::new();
+    let mut local_capture_cause = None;
+    let mut local_capture_observation = Value::Null;
     let (tool_content, exit_code, phase) = match execution {
         None => (
             external_content.unwrap_or_default(),
@@ -744,24 +840,28 @@ fn invoke_actuation_gateway(
             };
             (text, exit, phase)
         }
-        Some(Err(error))
-            if matches!(
-                error.kind(),
-                io::ErrorKind::TimedOut | io::ErrorKind::InvalidData
-            ) =>
-        {
-            (
-                format!("tool transport outcome uncertain: {error}"),
-                None,
-                OwnerOperationPhase::Uncertain,
-            )
+        Some(Err(error)) => {
+            local_capture_observation = native_capture_observation(&error);
+            let uncertain = crate::native_process::capture_failure(&error)
+                .map(|failure| failure.process_started())
+                .unwrap_or(true);
+            // Capture prefixes are private metadata, never tool reply text.
+            let phase = if uncertain {
+                OwnerOperationPhase::Uncertain
+            } else {
+                OwnerOperationPhase::Failed
+            };
+            let message = if uncertain {
+                "tool transport outcome uncertain; actual capture retained"
+            } else {
+                "tool client did not start; actual capture retained"
+            };
+            local_capture_cause = Some(error);
+            (message.to_owned(), None, phase)
         }
-        Some(Err(error)) => (
-            format!("tool could not be started: {error}"),
-            None,
-            OwnerOperationPhase::Failed,
-        ),
     };
+    let mut acknowledged =
+        serde_json::json!({"hello":hello,"attach":attach,"tool_request_receipt":tool_request});
     let tool_result = connection
         .call(
             &serde_json::json!({
@@ -774,13 +874,30 @@ fn invoke_actuation_gateway(
                     "factory_subject": call.subject,
                     "self_executed": self_executed,
                     "exit_code": exit_code,
+                    "native_capture": local_capture_observation,
                 },
             }),
             deadline,
         )
-        .map_err(|error| gateway_error("post tool-result", error))?;
-    demand_ok(&tool_result, "post tool-result")
-        .map_err(|error| gateway_error("post tool-result", error))?;
+        .map_err(|error| {
+            local_gateway_error(
+                "post tool-result",
+                error,
+                &mut local_capture_cause,
+                &local_capture_observation,
+                &acknowledged,
+            )
+        })?;
+    demand_ok(&tool_result, "post tool-result").map_err(|error| {
+        local_gateway_error(
+            "post tool-result",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
+    acknowledged["tool_result_receipt"] = tool_result.clone();
     if !self_executed {
         evidence_refs.extend(external_evidence.iter().cloned());
     }
@@ -812,9 +929,26 @@ fn invoke_actuation_gateway(
             }),
             deadline,
         )
-        .map_err(|error| gateway_error("post evidence", error))?;
-    demand_ok(&evidence, "post evidence").map_err(|error| gateway_error("post evidence", error))?;
+        .map_err(|error| {
+            local_gateway_error(
+                "post evidence",
+                error,
+                &mut local_capture_cause,
+                &local_capture_observation,
+                &acknowledged,
+            )
+        })?;
+    demand_ok(&evidence, "post evidence").map_err(|error| {
+        local_gateway_error(
+            "post evidence",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
 
+    acknowledged["evidence_receipt"] = evidence.clone();
     let return_reply = connection
         .call(
             &serde_json::json!({
@@ -836,15 +970,31 @@ fn invoke_actuation_gateway(
                     "factory_subject": call.subject,
                     "self_executed": self_executed,
                     "exit_code": exit_code,
+                    "native_capture": local_capture_observation,
                 },
             }),
             deadline,
         )
-        .map_err(|error| gateway_error("post return", error))?;
-    demand_ok(&return_reply, "post return").map_err(|error| gateway_error("post return", error))?;
+        .map_err(|error| local_gateway_error("post return", error, &mut local_capture_cause, &local_capture_observation, &acknowledged))?;
+    demand_ok(&return_reply, "post return").map_err(|error| {
+        local_gateway_error(
+            "post return",
+            error,
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
+        )
+    })?;
+    acknowledged["return_reply"] = return_reply.clone();
     if event_kind(receipt_event(&return_reply)) != Some("return") {
-        return Err(NativeOwnerError::InvalidResponse(
-            "gateway receipt for the return did not retain a durable return event".into(),
+        return Err(local_gateway_error(
+            "validate return receipt",
+            crate::native_gateway::GatewayError::Frame(
+                "gateway receipt for the return did not retain a durable return event".into(),
+            ),
+            &mut local_capture_cause,
+            &local_capture_observation,
+            &acknowledged,
         ));
     }
     for receipt in [&evidence, &return_reply] {
@@ -872,6 +1022,7 @@ fn invoke_actuation_gateway(
         "return_receipt": return_reply,
         "self_executed": self_executed,
         "exit_code": exit_code,
+        "native_capture": local_capture_observation,
     });
     Ok(OwnerOperationReceipt {
         owner_ref: "actuation-gateway".into(),
@@ -1080,6 +1231,7 @@ fn read_input(path: &str, stdin_override: Option<&str>) -> Result<String, Native
 
 #[derive(Debug)]
 pub enum NativeOwnerError {
+    ToolObservation(Box<NativeToolObservationFailure>),
     Io(io::Error),
     Json(serde_json::Error),
     InvalidInvocation(String),
@@ -1106,6 +1258,7 @@ pub enum NativeOwnerError {
 impl Display for NativeOwnerError {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::ToolObservation(error) => Display::fmt(error, formatter),
             Self::Io(error) => write!(formatter, "I/O failure: {error}"),
             Self::Json(error) => write!(formatter, "JSON failure: {error}"),
             Self::InvalidInvocation(message) => write!(formatter, "invalid invocation: {message}"),
@@ -1116,7 +1269,17 @@ impl Display for NativeOwnerError {
         }
     }
 }
-impl Error for NativeOwnerError {}
+impl Error for NativeOwnerError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::ToolObservation(cause) => Some(cause.as_ref()),
+            Self::Io(cause) => Some(cause),
+            Self::Spawn { error, .. } => Some(error),
+            Self::Json(cause) => Some(cause),
+            _ => None,
+        }
+    }
+}
 impl From<io::Error> for NativeOwnerError {
     fn from(error: io::Error) -> Self {
         Self::Io(error)

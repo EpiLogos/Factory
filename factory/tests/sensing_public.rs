@@ -183,7 +183,14 @@ fn public_collect_preserves_coverage_and_reads_do_not_mutate_native_state() {
         "a replay must not append a second collection"
     );
 
-    let field = success(run(&["telemetry", "field", state_s, "--json"]));
+    let field = success(run(&[
+        "telemetry",
+        "field",
+        state_s,
+        "--policy",
+        policy_s,
+        "--json",
+    ]));
     assert_eq!(field["schema"], "factory.telemetry-field/v1");
     assert_eq!(field["counts"]["signals"], 1);
     assert_eq!(field["signals"][0]["classification"], "needs-evidence");
@@ -191,6 +198,8 @@ fn public_collect_preserves_coverage_and_reads_do_not_mutate_native_state() {
         "telemetry",
         "day",
         state_s,
+        "--policy",
+        policy_s,
         "--since",
         &since,
         "--until",
@@ -200,7 +209,14 @@ fn public_collect_preserves_coverage_and_reads_do_not_mutate_native_state() {
     assert_eq!(day["read_only"], true);
     assert_eq!(day["counts"]["records"], 1);
     assert_eq!(day["source_coverage_complete"], false);
-    let digest = success(run(&["telemetry", "digest", state_s, "--json"]));
+    let digest = success(run(&[
+        "telemetry",
+        "digest",
+        state_s,
+        "--policy",
+        policy_s,
+        "--json",
+    ]));
     assert_eq!(digest["read_only"], true);
     assert_eq!(digest["counts"]["records"], 0);
     assert_eq!(std::fs::read(&state).unwrap(), saved);
@@ -261,7 +277,14 @@ fn public_classification_requires_native_authority_and_keeps_revision() {
     ]);
     assert!(!refused.status.success());
     assert_eq!(std::fs::read(&state).unwrap(), before);
-    let field = success(run(&["telemetry", "field", state_s, "--json"]));
+    let field = success(run(&[
+        "telemetry",
+        "field",
+        state_s,
+        "--policy",
+        policy_path.to_str().unwrap(),
+        "--json",
+    ]));
     assert_eq!(field["source_sequence"], 1);
     assert_eq!(field["signals"][0]["classification"], "needs-evidence");
 }
@@ -333,7 +356,14 @@ fn admitted_actuation_grant_classifies_once_and_stale_revision_refuses() {
     );
     assert!(!stale.status.success());
     assert_eq!(std::fs::read(&state).unwrap(), saved);
-    let digest = success(run(&["telemetry", "digest", state_s, "--json"]));
+    let digest = success(run(&[
+        "telemetry",
+        "digest",
+        state_s,
+        "--policy",
+        policy_path.to_str().unwrap(),
+        "--json",
+    ]));
     assert_eq!(digest["counts"]["records"], 1);
     assert_eq!(
         digest["signals"][0]["decision_needed"],
@@ -428,6 +458,8 @@ fn prior_observation_is_read_back_at_its_original_cut() {
         "telemetry",
         "day",
         state_s,
+        "--policy",
+        policy_s,
         "--since",
         &since,
         "--until",
@@ -476,6 +508,8 @@ fn historical_coverage_uses_queried_interval_not_collection_clock() {
         "telemetry",
         "day",
         state_s,
+        "--policy",
+        policy_path.to_str().unwrap(),
         "--since",
         &since,
         "--until",
@@ -582,10 +616,19 @@ fn admitted_return_authority_cannot_substitute_claimed_evidence_for_native_attem
         Ok(reference)
     })
     .unwrap();
+    let policy_path = temp.path().join("custody-policy.json");
+    std::fs::write(&policy_path, serde_json::to_vec(&json!({
+        "schema":"factory.sensing-policy/v1", "version":1, "project_world_ref":world,
+        "sources":[{"id":"custody","provider":"factory","scope":world,
+            "source_ref":"factory:custody:sensing-return-native","arguments":{"kind":"custody"}}],
+        "workflows":{"collect":{"enabled":true,"sources":["custody"]}}
+    })).unwrap()).unwrap();
     let before_observed = success(run(&[
         "telemetry",
         "day",
         state.to_str().unwrap(),
+        "--policy",
+        policy_path.to_str().unwrap(),
         "--since",
         &historical_since,
         "--until",
@@ -643,13 +686,6 @@ fn admitted_return_authority_cannot_substitute_claimed_evidence_for_native_attem
         String::from_utf8_lossy(&refused.stderr)
     );
     assert_eq!(std::fs::read(&state).unwrap(), before);
-    let policy_path = temp.path().join("custody-policy.json");
-    std::fs::write(&policy_path, serde_json::to_vec(&json!({
-        "schema":"factory.sensing-policy/v1", "version":1, "project_world_ref":world,
-        "sources":[{"id":"custody","provider":"factory","scope":world,
-            "source_ref":"factory:custody:sensing-return-native","arguments":{"kind":"custody"}}],
-        "workflows":{"collect":{"enabled":true,"sources":["custody"]}}
-    })).unwrap()).unwrap();
     let collected = success(run(&[
         "telemetry",
         "collect",
