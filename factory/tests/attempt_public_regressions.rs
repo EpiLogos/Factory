@@ -24,6 +24,1537 @@ use std::process::{Child, Command, Output, Stdio};
 const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
+const FINGERPRINT_B: &str = "git-tree:dddddddddddddddddddddddddddddddddddddddd";
+const FINGERPRINT_C: &str = "git-tree:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+
+fn delivery_plan(world: &World) -> epilogos_factory::attempt_delivery::DeliveryPlan {
+    use epilogos_factory::attempt_delivery::DeliveryPlan;
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    DeliveryPlan {
+        intent_ref: "intent:controlled-delivery".into(),
+        base_revision: "a".repeat(40),
+        candidate_revision: "b".repeat(40),
+        candidate_fingerprint: FINGERPRINT_B.into(),
+        subject_ref: unit.subject_ref.to_string(),
+        subject_revision: unit.basis_revision.clone(),
+        verification_plan_ref: "verification-plan:controlled".into(),
+        verification_plan_revision: "plan-r1".into(),
+        source_basis_refs: set(["source:controlled-r1"]),
+        repository: "EpiLogos/Factory".into(),
+        branch: "feat/controlled-delivery".into(),
+        pull_request: Some(280),
+        publisher_ref: "caller:controlled-test".into(),
+        expected_remote_head: Some("a".repeat(40)),
+        required_checks: set(["factory-owner-check"]),
+        cross_owner_verification: None,
+        maximum_repairs: 2,
+        maximum_environment_retries: 1,
+        timeout_ms: 60_000,
+        revalidate_repairs: true,
+    }
+}
+
+fn delivery_request(
+    world: &World,
+    request_ref: &str,
+    operation: epilogos_factory::attempt_delivery::DeliveryOperation,
+) -> epilogos_factory::attempt_delivery::DeliveryRequest {
+    use epilogos_factory::attempt_delivery::*;
+    let basis = world.request(FactoryAttemptOperation::RequestCancellation {
+        attempt_ref: "producer".into(),
+    });
+    DeliveryRequest {
+        contract: DELIVERY_ACTION.into(),
+        request_ref: request_ref.into(),
+        projection_ref: basis.projection_ref,
+        caller: basis.caller,
+        run_ref: basis.run_ref,
+        attempt_ref: "producer".into(),
+        expected_revision: basis.expected_revision,
+        authority: basis.authority,
+        operation,
+    }
+}
+
+fn delivery_invoke(
+    world: &World,
+    request: &epilogos_factory::attempt_delivery::DeliveryRequest,
+) -> Output {
+    command(
+        &[
+            "attempt",
+            "delivery",
+            world.state.to_str().unwrap(),
+            "-",
+            "--json",
+        ],
+        Some(&serde_json::to_string(request).unwrap()),
+    )
+}
+
+fn delivery_ci(conclusion: Option<&str>) -> epilogos_factory::attempt_delivery::HostedObservation {
+    use epilogos_factory::attempt_delivery::*;
+    HostedObservation {
+        candidate_revision: "b".repeat(40),
+        candidate_fingerprint: None,
+        remote_head: "b".repeat(40),
+        enumerated: true,
+        error: None,
+        evidence_refs: set(["evidence:controlled-github-enumeration"]),
+        cross_owner: None,
+        checks: vec![HostedCheck {
+            name: "factory-owner-check".into(),
+            head_revision: "b".repeat(40),
+            run_id: "controlled-run-1".into(),
+            run_attempt: 1,
+            status: if conclusion.is_some() {
+                "completed"
+            } else {
+                "in_progress"
+            }
+            .into(),
+            conclusion: conclusion.map(str::to_owned),
+            evidence_ref: "evidence:controlled-check-run-1".into(),
+        }],
+    }
+}
+
+fn delivery_world() -> World {
+    use epilogos_factory::attempt_delivery::*;
+    let world = World::new();
+    world.start("producer");
+    world.bind("producer", OwnerOperationPhase::Returned);
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "select",
+            DeliveryOperation::Select {
+                plan: delivery_plan(&world),
+            },
+        ),
+    ));
+    world
+}
+
+fn delivery_retry_resolution(world: &World, previous: &str) -> ReresolutionRecord {
+    let reading = world.reading();
+    let retained = reading
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == previous)
+        .unwrap();
+    let mut evidence_refs = retained
+        .observations
+        .iter()
+        .flat_map(|o| o.partial_effect_refs.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    evidence_refs.extend(retained.failure_evidence_refs.iter().cloned());
+    evidence_refs.insert("decision:controlled-retain-intent-review-correction".into());
+    ReresolutionRecord { resolution_ref: format!("resolution:controlled-{previous}"), reason: "Retain published effects and current source, repair exact invariant, independently review fresh selected material".into(), source_revision: retained.disposition.participant.source_revision.clone(), evidence_refs, replacement_now_ref: None, replacement_material_ref: None, replacement_harness_ref: None }
+}
+
+const CROSS_JOB: &str = "Exact development cut / repertoire, collaboration and delivery";
+fn delivery_cross_basis(
+    candidate: char,
+    run: Option<u64>,
+) -> epilogos_factory::attempt_delivery::CrossOwnerVerification {
+    use epilogos_factory::attempt_delivery::*;
+    CrossOwnerVerification {
+        repository: "EpiLogos/O-I".into(),
+        workflow_revision: "f".repeat(40),
+        run_id: run,
+        run_attempt: run.map(|_| 1),
+        required_jobs: set([CROSS_JOB]),
+        aikit: SourceCommit {
+            repository: "EpiLogos/ai-kit".into(),
+            revision: "1".repeat(40),
+            tree: "2".repeat(40),
+        },
+        factory: SourceCommit {
+            repository: "EpiLogos/Factory".into(),
+            revision: candidate.to_string().repeat(40),
+            tree: (if candidate == 'c' { "e" } else { "d" }).repeat(40),
+        },
+    }
+}
+
+/// This controlled forge exercises the real bounded reader, pagination,
+/// source-cut parser and immutable commit checks. It is not GitHub live proof.
+#[cfg(unix)]
+fn delivery_cross_reader(world: &World, provider: &std::path::Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let reader = world.dir.path().join("controlled-cross-owner-reader");
+    let script = r#"#!/usr/bin/python3
+import json,sys
+v=json.load(open(PROVIDER))
+e=sys.argv[-1]; s=v.get('candidate','b'*40); oi='f'*40
+run=v.get('run',92 if s=='c'*40 else 91); attempt=v.get('attempt',1)
+tree=('e' if s=='c'*40 else 'd')*40
+job={'id':901,'run_id':run,'head_sha':oi,'name':JOB,'status':v.get('job_status','completed'),'conclusion':v.get('job_conclusion','success')}
+cut={'schema':'oi.development-field-cut-execution/v1','oi_revision':oi,'run_id':str(run),'run_attempt':str(attempt),'provider_inference_observed':False,'physical_acceptance':False,'logs':['repertoire.log','handoff.log','team.log','delivery.log'],'owners':{}}
+for owner,revision,owner_tree in [('ai-kit','1'*40,'2'*40),('factory',s,tree)]:
+    cut['owners'][owner]={'requested_revision':revision,'observed_revision':revision,'tree':owner_tree,'lock_sha256':'3'*64,'binary_sha256':'4'*64}
+mode=v.get('mode','valid')
+if mode=='wrong-aikit':cut['owners']['ai-kit']['observed_revision']='9'*40
+if mode=='wrong-factory':cut['owners']['factory']['tree']='9'*40
+if mode=='missing-binary':cut['owners']['factory']['binary_sha256']=None
+if '/actions/jobs/901/logs' in e:
+    marker='2026-10-07T12:00:00.000Z OI_DEVELOPMENT_FIELD_CUT_JSON='+json.dumps(cut)
+    if mode=='missing-marker': print("2026-10-07T12:00:00.000Z print('OI_DEVELOPMENT_FIELD_CUT_JSON=' + json.dumps(reading))");sys.exit(0)
+    if mode=='ambiguous-marker':print(marker)
+    print("2026-10-07T12:00:00.000Z print('OI_DEVELOPMENT_FIELD_CUT_JSON=' + json.dumps(reading))")
+    if mode=='move-after-log':
+        v['head']='c'*40;json.dump(v,open(PROVIDER,'w'))
+    print(marker);sys.exit(0)
+if e.startswith('repos/EpiLogos/O-I/actions/runs/'):
+    if '/jobs?' in e:
+        jobs=[] if mode=='missing-job' else [job,job.copy()] if mode=='ambiguous-job' else [job]
+        r={'total_count':2 if mode=='incomplete' else len(jobs),'jobs':jobs}
+    else:r={'id':run,'head_sha':oi,'run_attempt':attempt,'path':'.github/workflows/other.yml' if mode=='wrong-workflow' else '.github/workflows/cross-product.yml','status':v.get('run_status','completed'),'conclusion':v.get('run_conclusion','success')}
+elif e.startswith('repos/EpiLogos/ai-kit/commits/'):
+    r={'sha':'1'*40,'commit':{'tree':{'sha':('9' if mode=='immutable-aikit' else '2')*40}}}
+elif '/git/matching-refs/' in e:r=[{'ref':'refs/heads/feat/controlled-delivery','object':{'sha':v.get('head',s)}}]
+elif '/pulls/' in e:r={'head':{'ref':'feat/controlled-delivery','sha':s}}
+elif '/commits/' in e and '/check-runs?' not in e:r={'sha':s,'commit':{'tree':{'sha':tree}}}
+elif '/check-runs?' in e:r={'total_count':1,'check_runs':[{'id':1,'name':'factory-owner-check','head_sha':s,'status':'completed','conclusion':v.get('conclusion','success'),'url':'controlled:check/1'}]}
+else:raise RuntimeError(e)
+print(json.dumps(r))
+"#;
+    fs::write(
+        &reader,
+        script
+            .replace(
+                "PROVIDER",
+                &serde_json::to_string(provider.to_str().unwrap()).unwrap(),
+            )
+            .replace("JOB", &serde_json::to_string(CROSS_JOB).unwrap()),
+    )
+    .unwrap();
+    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    reader
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_cross_owner_proves_exact_executed_cuts_and_refuses_stale_or_ambiguous_evidence() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let mut selected = delivery_plan(&world);
+    selected.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "enroll-cross",
+            DeliveryOperation::Select { plan: selected },
+        ),
+    ));
+    let provider = world.dir.path().join("cross-owner-state.json");
+    fs::write(&provider, "{}").unwrap();
+    let reader = delivery_cross_reader(&world, &provider);
+    let result: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "cross-valid",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(result["crossOwner"]["enumerated"], true, "{result}");
+    assert_eq!(result["crossOwner"]["error"], Value::Null);
+    assert_eq!(
+        result["crossOwner"]["checks"][0]["headRevision"],
+        "f".repeat(40)
+    );
+    assert_eq!(result["candidateRevision"], "b".repeat(40));
+    assert_eq!(
+        result["crossOwner"]["sourceCut"]["owners"]["factory"]["tree"],
+        "d".repeat(40)
+    );
+    let human = String::from_utf8(
+        success(command(
+            &[
+                "attempt",
+                "readiness",
+                world.state.to_str().unwrap(),
+                RUN,
+                "producer",
+            ],
+            None,
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert!(human.contains(&format!("Ready: {}", result["ready"].as_bool().unwrap())));
+    assert!(human.contains(&format!(
+        "EpiLogos/O-I @ {} (run 91, attempt 1)",
+        "f".repeat(40)
+    )));
+    assert!(human.contains(CROSS_JOB));
+    for mode in [
+        "wrong-aikit",
+        "wrong-factory",
+        "missing-binary",
+        "missing-marker",
+        "ambiguous-marker",
+        "missing-job",
+        "ambiguous-job",
+        "incomplete",
+        "immutable-aikit",
+        "wrong-workflow",
+    ] {
+        fs::write(&provider, json!({"mode":mode}).to_string()).unwrap();
+        let result: Value = serde_json::from_slice(
+            &success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    mode,
+                    DeliveryOperation::ObserveGithub {
+                        gh_binary: reader.to_str().unwrap().into(),
+                    },
+                ),
+            ))
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(result["ready"], false, "{mode}: {result}");
+        assert!(
+            result["crossOwner"]["error"].is_string(),
+            "{mode}: {result}"
+        );
+    }
+    fs::write(&provider, json!({"mode":"move-after-log"}).to_string()).unwrap();
+    let moved: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "cross-log-aperture",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(moved["ready"], false, "{moved}");
+    assert!(
+        moved["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("remote moved while reading")),
+        "{moved}"
+    );
+    for value in [
+        json!({"attempt":2}),
+        json!({"run_status":"in_progress"}),
+        json!({"job_status":"in_progress","job_conclusion":null}),
+    ] {
+        fs::write(&provider, value.to_string()).unwrap();
+        let result: Value = serde_json::from_slice(
+            &success(command(
+                &[
+                    "attempt",
+                    "readiness",
+                    world.state.to_str().unwrap(),
+                    RUN,
+                    "producer",
+                    "--json",
+                ],
+                None,
+            ))
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(result["ready"], false, "{result}");
+        assert!(
+            result["failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f.as_str().unwrap().contains("cross-owner")),
+            "{result}"
+        );
+    }
+}
+
+#[test]
+fn delivery_cross_owner_binding_is_one_way_and_repair_requires_new_run_proof() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let mut selected = delivery_plan(&world);
+    selected.cross_owner_verification = Some(delivery_cross_basis('b', None));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "cross-unbound",
+            DeliveryOperation::Select {
+                plan: selected.clone(),
+            },
+        ),
+    ));
+    selected.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "cross-bound",
+            DeliveryOperation::Select {
+                plan: selected.clone(),
+            },
+        ),
+    ));
+    let before = fs::read(&world.state).unwrap();
+    let mut changes = vec![
+        selected.clone(),
+        selected.clone(),
+        selected.clone(),
+        selected.clone(),
+    ];
+    changes[0].cross_owner_verification = None;
+    changes[1].cross_owner_verification.as_mut().unwrap().run_id = Some(92);
+    changes[2]
+        .cross_owner_verification
+        .as_mut()
+        .unwrap()
+        .aikit
+        .tree = "9".repeat(40);
+    changes[3].candidate_revision = "c".repeat(40);
+    changes[3].candidate_fingerprint = FINGERPRINT_C.into();
+    changes[3].cross_owner_verification = Some(delivery_cross_basis('c', Some(91)));
+    for (i, plan) in changes.into_iter().enumerate() {
+        assert!(!delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                &format!("cross-change-{i}"),
+                DeliveryOperation::Select { plan }
+            )
+        )
+        .status
+        .success());
+        assert_eq!(before, fs::read(&world.state).unwrap());
+    }
+    selected.candidate_revision = "c".repeat(40);
+    selected.candidate_fingerprint = FINGERPRINT_C.into();
+    selected.cross_owner_verification = Some(delivery_cross_basis('c', Some(92)));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "cross-correction",
+            DeliveryOperation::Select { plan: selected },
+        ),
+    ));
+}
+
+#[test]
+fn delivery_failed_ci_selects_bounded_repair_without_duplicate_execution_on_restart() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "ci-failure",
+            DeliveryOperation::ObserveControlled {
+                observation: delivery_ci(Some("failure")),
+            },
+        ),
+    ));
+    let operation = DeliveryOperation::RequestRepair {
+        observation_ref: "delivery:ci-failure".into(),
+        failure_class: "code".into(),
+        failure_logs: "actual controlled invariant failed".into(),
+        artifact_refs: set(["artifact:controlled-failure-log"]),
+        prior_decision_refs: set(["decision:controlled-intent"]),
+    };
+    let mut oversized = operation.clone();
+    if let DeliveryOperation::RequestRepair { failure_logs, .. } = &mut oversized {
+        *failure_logs = "x".repeat(32 * 1024 + 1);
+    }
+    let before_invalid = fs::read(&world.state).unwrap();
+    let refused = delivery_invoke(
+        &world,
+        &delivery_request(&world, "oversized-repair", oversized),
+    );
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("bounded failure logs"));
+    assert_eq!(before_invalid, fs::read(&world.state).unwrap());
+    let request = delivery_request(&world, "repair", operation.clone());
+    let first = success(delivery_invoke(&world, &request));
+    let before = fs::read(&world.state).unwrap();
+    let paused = world.reading();
+    let retained = paused
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == "producer")
+        .unwrap()
+        .observations
+        .iter()
+        .find(|r| r.receipt_ref == "delivery:repair")
+        .unwrap();
+    assert_eq!(
+        retained.payload["failureLogs"],
+        "actual controlled invariant failed"
+    );
+    assert_eq!(retained.payload["observationRef"], "delivery:ci-failure");
+    assert!(retained
+        .evidence_refs
+        .contains("artifact:controlled-failure-log"));
+    let replay = success(delivery_invoke(&world, &request));
+    assert_eq!(before, fs::read(&world.state).unwrap());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&first.stdout).unwrap()["repairs"],
+        1
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(&replay.stdout).unwrap()["repairs"],
+        1
+    );
+    let duplicate = delivery_invoke(&world, &delivery_request(&world, "repair-again", operation));
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("already has a retained repair"));
+}
+
+#[test]
+fn delivery_initial_publication_can_precede_pr_and_exact_pr_binding_is_one_way() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = World::new();
+    world.start("producer");
+    world.bind("producer", OwnerOperationPhase::Returned);
+    let mut plan = delivery_plan(&world);
+    plan.pull_request = None;
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "select-before-pr",
+            DeliveryOperation::Select { plan: plan.clone() },
+        ),
+    ));
+    let result: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "observe-before-pr",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: "/missing/controlled-reader".into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(result["ready"], false);
+    assert!(result["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f.as_str().unwrap().contains("select exact PR")));
+    plan.pull_request = Some(281);
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "bind-exact-pr",
+            DeliveryOperation::Select { plan: plan.clone() },
+        ),
+    ));
+    plan.pull_request = Some(282);
+    assert!(!delivery_invoke(
+        &world,
+        &delivery_request(&world, "replace-pr", DeliveryOperation::Select { plan })
+    )
+    .status
+    .success());
+}
+
+#[test]
+fn delivery_pending_missing_stale_and_incomplete_checks_never_establish_readiness() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    for (index, mut ci) in [
+        delivery_ci(None),
+        delivery_ci(Some("success")),
+        delivery_ci(Some("success")),
+        delivery_ci(Some("success")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        match index {
+            1 => ci.checks.clear(),
+            2 => ci.remote_head = "a".repeat(40),
+            3 => ci.enumerated = false,
+            _ => {}
+        }
+        let output = success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                &format!("ci-{index}"),
+                DeliveryOperation::ObserveControlled { observation: ci },
+            ),
+        ));
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(value["ready"], false);
+        let failures = value["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(failures.contains(
+            [
+                "required check unresolved",
+                "required check missing",
+                "differs from selected candidate",
+                "enumeration incomplete"
+            ][index]
+        ));
+    }
+}
+
+#[test]
+fn delivery_controlled_green_is_not_live_provider_evidence_and_human_json_agree() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "ci-green",
+            DeliveryOperation::ObserveControlled {
+                observation: delivery_ci(Some("success")),
+            },
+        ),
+    ));
+    let args = [
+        "attempt",
+        "readiness",
+        world.state.to_str().unwrap(),
+        RUN,
+        "producer",
+    ];
+    let human = success(command(&args, None));
+    let mut json_args = args.to_vec();
+    json_args.push("--json");
+    let structured: Value =
+        serde_json::from_slice(&success(command(&json_args, None)).stdout).unwrap();
+    assert_eq!(structured["ready"], false);
+    assert!(structured["failures"].as_array().unwrap().iter().any(|v| v
+        .as_str()
+        .unwrap()
+        .contains("actual GitHub read remains required")));
+    assert!(String::from_utf8_lossy(&human.stdout).contains("Ready: false"));
+    assert!(String::from_utf8_lossy(&human.stdout).contains(&"b".repeat(40)));
+}
+
+#[test]
+fn delivery_plan_repair_cannot_widen_authority_or_replenish_retry_budget() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let mut changed = delivery_plan(&world);
+    changed.maximum_repairs = 3;
+    let before = fs::read(&world.state).unwrap();
+    let output = delivery_invoke(
+        &world,
+        &delivery_request(&world, "widen", DeliveryOperation::Select { plan: changed }),
+    );
+    assert!(!output.status.success());
+    assert_eq!(before, fs::read(&world.state).unwrap());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot widen"));
+}
+
+#[test]
+fn delivery_enrolled_candidate_refuses_unbound_verification_and_foreign_return() {
+    let world = delivery_world();
+    world.verify("producer", VerificationOutcome::Passed);
+    assert!(world
+        .refuses(world.returned("producer"))
+        .contains("later failed/unknown verification"));
+    let plan = delivery_plan(&world);
+    world.apply(FactoryAttemptOperation::RecordVerification {
+        attempt_ref: "producer".into(),
+        verification: VerificationReceipt {
+            verification_ref: "verification:exact-controlled-candidate".into(),
+            owner_ref: "factory-verifier:controlled".into(),
+            source_revision: plan.candidate_revision,
+            outcome: VerificationOutcome::Passed,
+            obligations: world
+                .workflow
+                .unit("inspect-source")
+                .unwrap()
+                .verification_obligations
+                .clone(),
+            evidence_refs: set([
+                "candidate-fingerprint:git-tree:dddddddddddddddddddddddddddddddddddddddd",
+                "verification-plan:verification-plan:controlled@plan-r1",
+            ]),
+        },
+    });
+    assert!(world
+        .refuses(world.returned("producer"))
+        .contains("Return differs from enrolled exact candidate"));
+    let mut returned = world.returned("producer");
+    if let FactoryAttemptOperation::ReturnArtifact {
+        artifact,
+        readable_return,
+        ..
+    } = &mut returned
+    {
+        artifact.evidence_refs.insert(
+            "candidate-fingerprint:git-tree:dddddddddddddddddddddddddddddddddddddddd".into(),
+        );
+        readable_return.evidence_refs.insert(
+            "candidate-fingerprint:git-tree:dddddddddddddddddddddddddddddddddddddddd".into(),
+        );
+    }
+    world.apply(returned);
+}
+
+#[test]
+fn delivery_lower_level_action_cannot_bypass_independent_review_or_change_material() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let receipt = OwnerOperationReceipt {
+        owner_ref: "factory/delivery".into(),
+        contract: DELIVERY_OBSERVATION.into(),
+        operation_ref: "delivery:unsafe-push".into(),
+        receipt_ref: "delivery:unsafe-push".into(),
+        source_revision: "b".repeat(40),
+        phase: OwnerOperationPhase::Dispatching,
+        evidence_refs: set(["evidence:controlled"]),
+        partial_effect_refs: BTreeSet::new(),
+        payload: json!({"kind":"publication-intent","reviewerAttemptRef":"producer"}),
+    };
+    assert!(world
+        .refuses(FactoryAttemptOperation::RecordObservation {
+            attempt_ref: "producer".into(),
+            receipt
+        })
+        .contains("current returned attempt"));
+    let mut stale = delivery_plan(&world);
+    stale.subject_revision = "foreign-head".into();
+    assert!(!delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "stale-selection",
+            DeliveryOperation::Select { plan: stale }
+        )
+    )
+    .status
+    .success());
+}
+
+#[test]
+fn delivery_candidate_change_invalidates_native_return_and_requires_new_verification() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    delivery_verified_return(
+        &world,
+        "producer",
+        "inspect-source",
+        &"b".repeat(40),
+        FINGERPRINT_B,
+    );
+    let mut changed = delivery_plan(&world);
+    changed.candidate_revision = "c".repeat(40);
+    changed.candidate_fingerprint = FINGERPRINT_C.into();
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "changed-candidate",
+            DeliveryOperation::Select { plan: changed },
+        ),
+    ));
+    let reading = world.reading();
+    let unit = &world.workflow.unit("inspect-source").unwrap().reference;
+    assert_eq!(reading.legs[unit].status, LegStatus::Failed);
+    assert!(!reading.current_returned_units.contains(unit));
+    let delivery = epilogos_factory::attempt_delivery::readiness(&reading, "producer").unwrap();
+    assert!(!delivery.ready);
+    assert!(delivery
+        .failures
+        .iter()
+        .any(|f| f.contains("verification missing or stale")));
+}
+
+#[test]
+fn delivery_lower_level_repair_cannot_forge_failed_run_identity() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "exact-failure",
+            DeliveryOperation::ObserveControlled {
+                observation: delivery_ci(Some("failure")),
+            },
+        ),
+    ));
+    let output=world.refuses(FactoryAttemptOperation::RecordObservation {
+        attempt_ref:"producer".into(),
+        receipt:OwnerOperationReceipt {
+            owner_ref:"factory/delivery".into(), contract:DELIVERY_OBSERVATION.into(),
+            operation_ref:"delivery:forged-repair".into(),receipt_ref:"delivery:forged-repair".into(),source_revision:"b".repeat(40),
+            phase:OwnerOperationPhase::Observed,evidence_refs:set(["artifact:bounded-log"]),partial_effect_refs:BTreeSet::new(),
+            payload:json!({"kind":"repair","observationRef":"delivery:exact-failure","failureClass":"code","failureLogs":"bounded failed invariant","failureIdentities":[]})
+        }
+    });
+    assert!(
+        output.contains("identities must match exact retained"),
+        "{output}"
+    );
+}
+
+fn delivery_verified_return(
+    world: &World,
+    reference: &str,
+    key: &str,
+    candidate: &str,
+    fingerprint: &str,
+) {
+    let unit = world.workflow.unit(key).unwrap();
+    let evidence = BTreeSet::from([
+        format!("candidate-fingerprint:{fingerprint}"),
+        "verification-plan:verification-plan:controlled@plan-r1".into(),
+    ]);
+    world.apply(FactoryAttemptOperation::RecordVerification {
+        attempt_ref: reference.into(),
+        verification: VerificationReceipt {
+            verification_ref: format!("verification:{reference}:{}", world.reading().revision),
+            owner_ref: "factory-verifier:controlled".into(),
+            source_revision: candidate.into(),
+            outcome: VerificationOutcome::Passed,
+            obligations: unit.verification_obligations.clone(),
+            evidence_refs: evidence.clone(),
+        },
+    });
+    world.apply(FactoryAttemptOperation::ReturnArtifact {
+        attempt_ref: reference.into(),
+        artifact: ReturnedArtifact {
+            artifact_ref: format!("artifact:{reference}"),
+            subject_ref: unit.subject_ref.to_string(),
+            subject_revision: unit.basis_revision.clone(),
+            producing_execution_ref: format!("execution:{reference}"),
+            evidence_refs: evidence.clone(),
+            semantic_difference: "controlled native exact candidate return".into(),
+        },
+        readable_return: ReadableReturn {
+            return_ref: format!("return:{reference}"),
+            summary: "controlled backend evidence; no real provider claim".into(),
+            artifact_refs: BTreeSet::from([format!("artifact:{reference}")]),
+            evidence_refs: evidence,
+            receiving_ref: None,
+            receiving_source_revision: None,
+            archive_refs: BTreeSet::new(),
+            regression_observation_refs: BTreeSet::new(),
+        },
+    });
+}
+
+#[test]
+fn delivery_hosted_failure_reopens_native_attempt_and_retry_keeps_exact_plan() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    delivery_verified_return(
+        &world,
+        "producer",
+        "inspect-source",
+        &"b".repeat(40),
+        FINGERPRINT_B,
+    );
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "ci-failed-after-return",
+            DeliveryOperation::ObserveControlled {
+                observation: delivery_ci(Some("failure")),
+            },
+        ),
+    ));
+    assert_eq!(
+        world.reading().legs[&world.workflow.unit("inspect-source").unwrap().reference].status,
+        LegStatus::Failed
+    );
+    world.apply(world.retry("repair-producer"));
+    world.bind("repair-producer", OwnerOperationPhase::Returned);
+    assert!(world
+        .refuses(world.returned("repair-producer"))
+        .contains("later failed/unknown verification"));
+    let inherited = world
+        .reading()
+        .attempts
+        .into_iter()
+        .find(|r| r.attempt_ref == "repair-producer")
+        .unwrap();
+    assert!(inherited
+        .observations
+        .iter()
+        .any(|r| r.payload["kind"] == "selection"));
+    assert!(world
+        .reading()
+        .attempts
+        .iter()
+        .find(|r| r.attempt_ref == "producer")
+        .unwrap()
+        .failure_evidence_refs
+        .contains("delivery:ci-failed-after-return"));
+}
+
+#[test]
+fn delivery_polling_same_failed_run_cannot_duplicate_repair() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    for (poll, repair) in [
+        ("ci-failure-first", "first-repair"),
+        ("ci-failure-again", "second-repair"),
+    ] {
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                poll,
+                DeliveryOperation::ObserveControlled {
+                    observation: delivery_ci(Some("failure")),
+                },
+            ),
+        ));
+        let request = delivery_request(
+            &world,
+            repair,
+            DeliveryOperation::RequestRepair {
+                observation_ref: format!("delivery:{poll}"),
+                failure_class: "code".into(),
+                failure_logs: "controlled failed invariant".into(),
+                artifact_refs: set(["artifact:failure-log"]),
+                prior_decision_refs: BTreeSet::new(),
+            },
+        );
+        let output = delivery_invoke(&world, &request);
+        if repair == "first-repair" {
+            success(output);
+        } else {
+            assert!(!output.status.success());
+            assert!(String::from_utf8_lossy(&output.stderr).contains("same hosted run/attempt"));
+        }
+    }
+}
+
+#[test]
+fn delivery_unavailable_hosted_reader_retains_exact_open_live_obligation() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let result: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "missing-github-reader",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: "/not-installed/gh".into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(result["ready"], false);
+    assert!(result["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str().unwrap().contains("/not-installed/gh")));
+    let reading = world.reading();
+    let observed = reading
+        .attempts
+        .iter()
+        .find(|r| r.attempt_ref == "producer")
+        .unwrap()
+        .observations
+        .last()
+        .unwrap();
+    assert_eq!(observed.payload["observation"]["enumerated"], false);
+    assert!(observed.payload["observation"]["error"].is_string());
+    assert_eq!(observed.payload["standing"], "actual-github-read");
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_hosted_read_deadline_stops_owned_reader_and_retains_failure() {
+    use epilogos_factory::attempt_delivery::*;
+    use std::os::unix::fs::PermissionsExt;
+    let world = World::new();
+    world.start("producer");
+    world.bind("producer", OwnerOperationPhase::Returned);
+    let mut plan = delivery_plan(&world);
+    plan.timeout_ms = 40;
+    success(delivery_invoke(
+        &world,
+        &delivery_request(&world, "select", DeliveryOperation::Select { plan }),
+    ));
+    let reader = world.dir.path().join("slow-owned-reader");
+    let pid = world.dir.path().join("reader.pid");
+    fs::write(&reader,format!("#!/usr/bin/python3\nimport os,time\nopen({:?},'w').write(str(os.getpid()))\ntime.sleep(30)\n",pid.to_str().unwrap())).unwrap();
+    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "deadline",
+            DeliveryOperation::ObserveGithub {
+                gh_binary: reader.to_str().unwrap().into(),
+            },
+        ),
+    ));
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["ready"], false);
+    assert!(value["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str().unwrap().contains("timed out")));
+    if pid.exists() {
+        let pid: i32 = fs::read_to_string(pid).unwrap().parse().unwrap();
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "owned reader residual pid={pid}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_owner_capture_bounds_inherited_pipes_and_nonreading_stdin() {
+    use std::time::{Duration, Instant};
+    let dir = tempfile::tempdir().unwrap();
+    let closed_pid = dir.path().join("closed-pipe-child.pid");
+    let script = format!("import subprocess,json; p=subprocess.Popen(['/bin/sleep','30'],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); open({:?},'w').write(str(p.pid)); print(json.dumps({{'complete':True}}))", closed_pid.to_str().unwrap());
+    let clock = Instant::now();
+    let output = epilogos_factory::sensing_sources::owner_json_with_timeout(
+        "/usr/bin/python3",
+        &["-c".into(), script],
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert_eq!(output["complete"], true);
+    assert!(clock.elapsed() < Duration::from_secs(10));
+    let pid = fs::read_to_string(closed_pid).unwrap();
+    assert!(pid.trim().parse::<u32>().unwrap() > 0);
+    let residual = Command::new("/bin/ps")
+        .args(["-o", "stat=", "-p", pid.trim()])
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&residual.stdout).trim().is_empty(),
+        "successful reader left owned child: {}",
+        String::from_utf8_lossy(&residual.stdout)
+    );
+    for exits_early in [false, true] {
+        let pids = dir.path().join(format!("pids-{exits_early}"));
+        let script = format!("import os,subprocess,time; p=subprocess.Popen(['/bin/sleep','30']); open({:?},'w').write(str(os.getpid())+' '+str(p.pid)); {}", pids.to_str().unwrap(), if exits_early { "raise SystemExit(0)" } else { "time.sleep(30)" });
+        let clock = Instant::now();
+        let error = epilogos_factory::sensing_sources::owner_json_with_timeout(
+            "/usr/bin/python3",
+            &["-c".into(), script],
+            Some(&json!({"request":"x".repeat(1024*1024-64)})),
+            Duration::from_secs(5),
+        )
+        .unwrap_err();
+        assert!(error.contains("timed out"), "{error}");
+        assert!(
+            clock.elapsed() < Duration::from_secs(10),
+            "owned capture exceeded wall budget: {:?}",
+            clock.elapsed()
+        );
+        let observed_pids = fs::read_to_string(pids)
+            .expect("reader must start and record its actual descendant before timeout");
+        let observed_pids = observed_pids.split_whitespace().collect::<Vec<_>>();
+        assert_eq!(
+            observed_pids.len(),
+            2,
+            "reader and descendant must be observed"
+        );
+        for pid in observed_pids {
+            assert!(pid.parse::<u32>().unwrap() > 0);
+            let deadline = Instant::now() + Duration::from_secs(1);
+            loop {
+                let output = Command::new("/bin/ps")
+                    .args(["-o", "stat=", "-p", pid])
+                    .output()
+                    .unwrap();
+                let status = String::from_utf8_lossy(&output.stdout);
+                // A reaped client or an observed retired orphan is no live
+                // owned process. Keep the actual status observable in failure.
+                if status.trim().is_empty() || status.trim().starts_with('Z') {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "owned reader residual {pid}: {status}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_hosted_rerun_cannot_relabel_old_green_check_as_current_attempt() {
+    use epilogos_factory::attempt_delivery::*;
+    use std::os::unix::fs::PermissionsExt;
+    let world = delivery_world();
+    let state = world.dir.path().join("controlled-rerun.json");
+    fs::write(&state, "1").unwrap();
+    let reader = world.dir.path().join("controlled-rerun-reader");
+    fs::write(&reader,format!("#!/usr/bin/python3\nimport json,sys\ni=json.load(open({:?}));e=sys.argv[-1];s='b'*40\nif '/git/matching-refs/' in e:r=[{{'ref':'refs/heads/feat/controlled-delivery','object':{{'sha':s}}}}]\nelif '/pulls/' in e:r={{'head':{{'ref':'feat/controlled-delivery','sha':s}}}}\nelif '/commits/' in e and '/check-runs?' not in e:r={{'sha':s,'commit':{{'tree':{{'sha':('e' if s=='c'*40 else 'd')*40}}}}}}\nelif '/check-runs?' in e:r={{'total_count':1,'check_runs':[{{'id':i,'name':'factory-owner-check','head_sha':s,'status':'completed','conclusion':'success','url':'controlled:check/'+str(i),'details_url':'https://github.com/EpiLogos/Factory/actions/runs/2/job/9'}}]}}\nelif '/attempts/2/jobs?' in e:r={{'total_count':1,'jobs':[{{'check_run_url':'controlled:check-runs/2'}}]}}\nelif '/actions/runs/2' in e:r={{'head_sha':s,'run_attempt':2}}\nelse:raise RuntimeError(e)\nprint(json.dumps(r))\n",state.to_str().unwrap())).unwrap();
+    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    let observed: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "old-green",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(observed["ready"], false);
+    assert!(observed["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f.as_str().unwrap().contains("superseded workflow attempt")));
+    fs::write(&state, "2").unwrap();
+    let current: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "current-green",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(current["checks"][0]["runAttempt"], 2);
+    assert_eq!(current["checks"][0]["runId"], "2");
+    assert!(!current["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f.as_str().unwrap().contains("superseded workflow attempt")));
+}
+
+#[test]
+fn delivery_native_review_publication_interruption_and_fresh_readiness() {
+    use epilogos_factory::attempt_delivery::*;
+    use epilogos_factory::workflow_inputs::{SelectedWorkflowInput, WorkflowInputSource};
+    let mut source: WorkflowSource = serde_json::from_str(SOURCE).unwrap();
+    source
+        .units
+        .iter_mut()
+        .find(|u| u.key == "review-adversarially")
+        .unwrap()
+        .inputs = vec![WorkflowInputSource {
+        predecessor: "inspect-source".into(),
+        receiving_context_ref: "context:controlled-review-material".into(),
+    }];
+    source.source.digest = workflow_source_digest(&source).unwrap();
+    let world = World::with_source(source);
+    world.start("producer");
+    world.bind("producer", OwnerOperationPhase::Returned);
+    let mut joined_plan = delivery_plan(&world);
+    joined_plan.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "select",
+            DeliveryOperation::Select { plan: joined_plan },
+        ),
+    ));
+    delivery_verified_return(
+        &world,
+        "producer",
+        "inspect-source",
+        &"b".repeat(40),
+        FINGERPRINT_B,
+    );
+    let mut start = world.start_operation("reviewer", "review-adversarially");
+    if let FactoryAttemptOperation::StartSerial { disposition, .. } = &mut start {
+        disposition.participant.agency_ref = "agency:controlled-distinct-reviewer".into();
+        disposition.selection.demand.agency_ref = Some(disposition.participant.agency_ref.clone());
+        disposition
+            .context_refs
+            .insert("context:controlled-review-material".into());
+        let leg = &world.reading().legs[&world.workflow.unit("inspect-source").unwrap().reference];
+        disposition
+            .selection
+            .demand
+            .independence_from
+            .insert(leg.execution_ref.clone());
+        disposition.selected_inputs = vec![SelectedWorkflowInput {
+            predecessor: world
+                .workflow
+                .unit("inspect-source")
+                .unwrap()
+                .reference
+                .clone(),
+            execution_ref: leg.execution_ref.clone(),
+            receiving_context_ref: "context:controlled-review-material".into(),
+            artifacts: leg.artifacts.clone(),
+        }];
+    }
+    world.apply(start);
+    // Pause before the reviewer body is bound. Every native read starts a new
+    // process, so this readback exercises restart with the selected material.
+    let paused = world.reading();
+    let selected = paused
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == "reviewer")
+        .unwrap()
+        .disposition
+        .selected_inputs
+        .clone();
+    assert_eq!(selected.len(), 1);
+    assert!(selected[0].artifacts.iter().any(|a| a
+        .evidence_refs
+        .contains(&format!("candidate-fingerprint:{FINGERPRINT_B}"))));
+    assert_eq!(
+        selected,
+        world
+            .reading()
+            .attempts
+            .iter()
+            .find(|a| a.attempt_ref == "reviewer")
+            .unwrap()
+            .disposition
+            .selected_inputs
+    );
+    world.bind("reviewer", OwnerOperationPhase::Returned);
+    delivery_verified_return(
+        &world,
+        "reviewer",
+        "review-adversarially",
+        &"b".repeat(40),
+        FINGERPRINT_B,
+    );
+    world.apply(FactoryAttemptOperation::RegisterIndependentReview {
+        attempt_ref: "reviewer".into(),
+        review_of: BTreeSet::from([world
+            .workflow
+            .unit("inspect-source")
+            .unwrap()
+            .reference
+            .clone()]),
+    });
+    let provider = world.dir.path().join("controlled-forge.json");
+    fs::write(
+        &provider,
+        json!({"head":"a".repeat(40),"conclusion":"success"}).to_string(),
+    )
+    .unwrap();
+    let gh = delivery_cross_reader(&world, &provider);
+    let request = delivery_request(
+        &world,
+        "publish-once",
+        DeliveryOperation::ReservePublication {
+            reviewer_attempt_ref: "reviewer".into(),
+            gh_binary: gh.to_str().unwrap().into(),
+        },
+    );
+    success(delivery_invoke(&world, &request));
+    let before_uncertain_retry = fs::read(&world.state).unwrap();
+    let retry_request = world.request(world.retry("premature-repair"));
+    let rejected_retry = world.invoke(&retry_request);
+    assert!(!rejected_retry.status.success());
+    let rejection = String::from_utf8_lossy(&rejected_retry.stderr);
+    assert!(
+        rejection.contains("reconcile retained publication")
+            || rejection.contains("unreconciled owner outcome"),
+        "{rejection}"
+    );
+    assert_eq!(before_uncertain_retry, fs::read(&world.state).unwrap());
+    let duplicate = delivery_invoke(
+        &world,
+        &delivery_request(&world, "another-publish", request.operation.clone()),
+    );
+    assert!(!duplicate.status.success());
+    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("uncertain publication"));
+    // Model a publisher's remote effect followed by a process crash before its
+    // response. Recovery performs only real native readback, never another effect.
+    fs::write(
+        &provider,
+        json!({"head":"b".repeat(40),"conclusion":"success"}).to_string(),
+    )
+    .unwrap();
+    let reconcile = delivery_request(
+        &world,
+        "recover-publication",
+        DeliveryOperation::ReconcilePublication {
+            gh_binary: gh.to_str().unwrap().into(),
+            publication_ref: "delivery:publish-once".into(),
+        },
+    );
+    let result: Value =
+        serde_json::from_slice(&success(delivery_invoke(&world, &reconcile)).stdout).unwrap();
+    assert_eq!(result["ready"], true, "{result}");
+    assert_eq!(result["crossOwner"]["basis"]["runId"], 91);
+    assert_eq!(
+        result["crossOwner"]["sourceCut"]["owners"]["factory"]["observed_revision"],
+        "b".repeat(40)
+    );
+    let before = fs::read(&world.state).unwrap();
+    success(delivery_invoke(&world, &reconcile));
+    assert_eq!(before, fs::read(&world.state).unwrap());
+    assert_eq!(
+        world
+            .reading()
+            .attempts
+            .iter()
+            .find(|r| r.attempt_ref == "producer")
+            .unwrap()
+            .observations
+            .iter()
+            .filter(|r| r.payload["kind"] == "publication-intent")
+            .count(),
+        1
+    );
+    fs::write(
+        &provider,
+        json!({"head":"c".repeat(40),"conclusion":"success"}).to_string(),
+    )
+    .unwrap();
+    let stale: Value = serde_json::from_slice(
+        &success(command(
+            &[
+                "attempt",
+                "readiness",
+                world.state.to_str().unwrap(),
+                RUN,
+                "producer",
+                "--json",
+            ],
+            None,
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        stale["ready"], false,
+        "remote movement cannot inherit prior green: {stale}"
+    );
+    // A real native hosted failure after publication must reopen both the
+    // candidate and its actual selected-material review, retaining old outputs.
+    fs::write(
+        &provider,
+        json!({"head":"b".repeat(40),"conclusion":"failure"}).to_string(),
+    )
+    .unwrap();
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "published-ci-failure",
+            DeliveryOperation::ObserveGithub {
+                gh_binary: gh.to_str().unwrap().into(),
+            },
+        ),
+    ));
+    let failed = world.reading();
+    assert_eq!(
+        failed.legs[&world.workflow.unit("inspect-source").unwrap().reference].status,
+        LegStatus::Failed
+    );
+    assert_eq!(
+        failed.legs[&world
+            .workflow
+            .unit("review-adversarially")
+            .unwrap()
+            .reference]
+            .status,
+        LegStatus::Failed
+    );
+    assert!(failed
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == "reviewer")
+        .unwrap()
+        .failure_evidence_refs
+        .contains("delivery:published-ci-failure"));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "bounded-live-shape-repair",
+            DeliveryOperation::RequestRepair {
+                observation_ref: "delivery:published-ci-failure".into(),
+                failure_class: "code".into(),
+                failure_logs: "controlled exact failed invariant".into(),
+                artifact_refs: set(["artifact:bounded-failure-log"]),
+                prior_decision_refs: set(["decision:preserve-admitted-delivery"]),
+            },
+        ),
+    ));
+    let mut repair = world.retry("repair-producer");
+    if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut repair {
+        *reresolution = Some(delivery_retry_resolution(&world, "producer"));
+    }
+    world.apply(repair);
+    world.bind("repair-producer", OwnerOperationPhase::Returned);
+    let mut repaired = delivery_plan(&world);
+    repaired.candidate_revision = "c".repeat(40);
+    repaired.candidate_fingerprint = FINGERPRINT_C.into();
+    repaired.expected_remote_head = Some("b".repeat(40));
+    repaired.cross_owner_verification = Some(delivery_cross_basis('c', Some(92)));
+    let mut request = delivery_request(
+        &world,
+        "select-correction",
+        DeliveryOperation::Select { plan: repaired },
+    );
+    request.attempt_ref = "repair-producer".into();
+    success(delivery_invoke(&world, &request));
+    delivery_verified_return(
+        &world,
+        "repair-producer",
+        "inspect-source",
+        &"c".repeat(40),
+        FINGERPRINT_C,
+    );
+    let mut disposition = world.disposition("review-adversarially");
+    disposition.participant.agency_ref = "agency:controlled-distinct-reviewer".into();
+    disposition.selection.demand.agency_ref = Some(disposition.participant.agency_ref.clone());
+    disposition
+        .context_refs
+        .insert("context:controlled-review-material".into());
+    let reading = world.reading();
+    let producer = &reading.legs[&world.workflow.unit("inspect-source").unwrap().reference];
+    disposition
+        .selection
+        .demand
+        .independence_from
+        .insert(producer.execution_ref.clone());
+    disposition.selected_inputs = vec![SelectedWorkflowInput {
+        predecessor: world
+            .workflow
+            .unit("inspect-source")
+            .unwrap()
+            .reference
+            .clone(),
+        execution_ref: producer.execution_ref.clone(),
+        receiving_context_ref: "context:controlled-review-material".into(),
+        artifacts: producer.artifacts.clone(),
+    }];
+    world.apply(FactoryAttemptOperation::Retry {
+        attempt_ref: "correction-reviewer".into(),
+        task_ref: "task:review-adversarially".into(),
+        parent_journey_ref: "journey:controlled-test".into(),
+        workflow_unit_ref: world
+            .workflow
+            .unit("review-adversarially")
+            .unwrap()
+            .reference
+            .clone(),
+        grant_ref: "grant:review-adversarially".into(),
+        disposition,
+        tracking: vec![],
+        reresolution: Some(delivery_retry_resolution(&world, "reviewer")),
+        place_grant: None,
+    });
+    world.bind("correction-reviewer", OwnerOperationPhase::Returned);
+    delivery_verified_return(
+        &world,
+        "correction-reviewer",
+        "review-adversarially",
+        &"c".repeat(40),
+        FINGERPRINT_C,
+    );
+    world.apply(FactoryAttemptOperation::RegisterIndependentReview {
+        attempt_ref: "correction-reviewer".into(),
+        review_of: BTreeSet::from([world
+            .workflow
+            .unit("inspect-source")
+            .unwrap()
+            .reference
+            .clone()]),
+    });
+    let mut reserve = delivery_request(
+        &world,
+        "publish-correction",
+        DeliveryOperation::ReservePublication {
+            reviewer_attempt_ref: "correction-reviewer".into(),
+            gh_binary: gh.to_str().unwrap().into(),
+        },
+    );
+    reserve.attempt_ref = "repair-producer".into();
+    success(delivery_invoke(&world, &reserve));
+    fs::write(
+        &provider,
+        json!({"head":"c".repeat(40),"candidate":"c".repeat(40),"conclusion":"success"})
+            .to_string(),
+    )
+    .unwrap();
+    let mut recovered = delivery_request(
+        &world,
+        "readback-correction",
+        DeliveryOperation::ReconcilePublication {
+            gh_binary: gh.to_str().unwrap().into(),
+            publication_ref: "delivery:publish-correction".into(),
+        },
+    );
+    recovered.attempt_ref = "repair-producer".into();
+    let ready: Value =
+        serde_json::from_slice(&success(delivery_invoke(&world, &recovered)).stdout).unwrap();
+    assert_eq!(ready["ready"], true, "{ready}");
+    assert_eq!(ready["candidateRevision"], "c".repeat(40));
+    assert_eq!(ready["repairs"], 1);
+    assert!(ready["failureEvidenceRefs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v == "delivery:published-ci-failure"));
+    assert_eq!(
+        world
+            .reading()
+            .attempts
+            .iter()
+            .flat_map(|a| &a.observations)
+            .filter(|r| r.payload["kind"] == "repair")
+            .count(),
+        1
+    );
+}
 
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;

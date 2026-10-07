@@ -6,6 +6,7 @@ pub mod artifact_evidence;
 pub mod attempt_application;
 pub mod attempt_central;
 pub mod attempt_cli;
+pub mod attempt_delivery;
 pub mod attempt_learning;
 mod attempt_lifecycle_provider;
 pub mod attempt_material;

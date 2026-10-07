@@ -31,6 +31,8 @@ factory attempt return <native-state> <run-ref> <attempt-ref> [--json]
 factory attempt receiving <native-state> <request-json|-> --json
 factory attempt learn <native-state> <request-json|-> --json
 factory attempt material <native-state> <request-json|-> --json
+factory attempt delivery <native-state> <request-json|-> [--json]
+factory attempt readiness <native-state> <run-ref> <attempt-ref> [--json]
 ```
 
 `factory development attempt ...` projects the same operations. The existing
@@ -56,6 +58,59 @@ AgentSession and SessionSpace. A valid receipt from another conversation is not
 the body for this attempt. The ordinary ranked selection path remains available.
 Neither receipt is dispatch, an authority grant, a loaded-Skill claim or a model
 result; current native task/authority checks still run before the actual send.
+
+## Exact-revision delivery
+
+Factory #280 extends these same attempts through focused verification,
+distinct selected-input review, one admitted task-branch publisher, hosted CI,
+bounded repair and reviewed correction. `factory.attempt-delivery-action/v1`
+selects the existing Run/change with its intent, base and candidate commits,
+verification-plan and source revisions, required checks, publication target
+and finite bounds. Candidate fingerprints use the observed immutable Git tree:
+`git-tree:<tree-sha>`. The operation retains each failure, correction and
+publication observation in the existing attempt history.
+
+The native Subject revision remains the selected workflow unit's source basis.
+The candidate Git revision belongs to `Verification.sourceRevision` and the
+delivery plan's candidate revision and tree fingerprint. Updating the candidate
+does not rewrite the Subject's authored basis.
+
+Reserve publication before its remote effect. The admitted publisher compares
+the expected remote head, pushes only the selected branch and reconciles the
+exact retained publication intent by readback. An uncertain effect fences
+selection and retry until reconciliation. A changed candidate invalidates
+affected verification, Return and dependent reviewer evidence. A correction
+needs its own distinct review and fresh required checks.
+
+After a settled publication, native retry also requires re-resolution evidence
+that retains the published effect references, prior failure and current workflow
+basis. This preserves repair commits and the original publication history.
+Workflow graph independence and reviewer independence have different meanings:
+the review consumes the candidate as a selected input, while Execution
+Intelligence requires a distinct reviewer execution, AgentSession and Agency.
+
+`factory attempt readiness` performs fresh bounded hosted observation and
+returns `factory.attempt-delivery-reading/v1` through both human and JSON
+surfaces. Required check enumeration, run/attempt identity, head and immutable
+tree must agree. Pending, missing, stale, unreadable or incompletely enumerated
+results remain unready. A PR declaration supplies no verification evidence.
+Retained-history SDK projections remain distinguishable from this fresh read.
+
+This route uses Factory's native execution and publication operation rather
+than competing with no-mistakes' agent/Git driver. The pinned upstream CI and
+resume algorithms inform its bounded repair, exact-result and recovery checks.
+Its selected provider and GitHub execution still need observed live receipts;
+controlled orchestration regressions alone do not establish those observations.
+The existing O:I cross-product workflow supplies focused exact-cut owner proof,
+alongside each repository's own gate.
+
+An optional `crossOwnerVerification` plan binds the exact AIKit and Factory
+commits and trees to the O:I workflow revision, run and attempt. The native
+reader requires the expected workflow path and successful required jobs, reads
+the executed source/build witness from bounded job logs, and rechecks the
+Factory head after that read. Missing proof remains unready. A repaired
+candidate needs a fresh matching cross-owner run; an O:I run's own head is
+never substituted for the Factory candidate revision.
 
 ## Native preparation and fresh dispatch
 
