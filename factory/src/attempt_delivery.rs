@@ -51,6 +51,10 @@ pub struct CrossOwnerVerification {
     pub required_jobs: BTreeSet<String>,
     pub aikit: SourceCommit,
     pub factory: SourceCommit,
+    /// Material execution is enrolled explicitly; older two-owner operations
+    /// retain their original source fingerprint and verification obligation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workcell: Option<SourceCommit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -272,6 +276,13 @@ fn validate_cross_owner(plan: &DeliveryPlan) -> Result<(), FactoryAttemptError> 
         || cross.factory.repository != plan.repository
         || cross.factory.revision != plan.candidate_revision
         || candidate_tree(plan).ok() != Some(cross.factory.tree.as_str())
+        || cross.workcell.as_ref().is_some_and(|source| {
+            source.repository != "EpiLogos/Workcell"
+                || source.revision.len() != 40
+                || !sha(&source.revision)
+                || source.tree.len() != 40
+                || !sha(&source.tree)
+        })
     {
         return Err(invalid("cross-owner verification needs exact workflow/run/attempt and immutable owner commits/trees"));
     }
@@ -284,8 +295,11 @@ fn validate_cross_owner(plan: &DeliveryPlan) -> Result<(), FactoryAttemptError> 
 /// afterwards and deliberately do not enter this source fingerprint.
 pub fn cross_owner_material_ref(plan: &DeliveryPlan) -> Option<String> {
     let cross = plan.cross_owner_verification.as_ref()?;
-    let source = json!({"repository":cross.repository,"workflowRevision":cross.workflow_revision,
+    let mut source = json!({"repository":cross.repository,"workflowRevision":cross.workflow_revision,
         "requiredJobs":cross.required_jobs,"aikit":cross.aikit,"factory":cross.factory});
+    if let Some(workcell) = &cross.workcell {
+        source["workcell"] = json!(workcell);
+    }
     Some(format!(
         "cross-owner-source-fingerprint:{}",
         blake3::hash(&serde_json::to_vec(&source).ok()?).to_hex()
@@ -312,6 +326,11 @@ fn validate_cross_transition(
     if prior.repository != next.repository || prior.required_jobs != next.required_jobs {
         return Err(invalid(
             "cross-owner repository and required jobs are fixed",
+        ));
+    }
+    if prior.workcell.is_some() && next.workcell.is_none() {
+        return Err(invalid(
+            "selected Workcell verification obligation cannot be removed",
         ));
     }
     let changed = cross_owner_material_ref(before) != cross_owner_material_ref(selected);
@@ -1399,6 +1418,27 @@ fn marker_source_cut(logs: &str) -> Result<Value, String> {
 fn exact_number(value: &Value) -> Option<u64> {
     value.as_u64().or_else(|| value.as_str()?.parse().ok())
 }
+fn selected_sources(basis: &CrossOwnerVerification) -> impl Iterator<Item = (&str, &SourceCommit)> {
+    [("ai-kit", &basis.aikit), ("factory", &basis.factory)]
+        .into_iter()
+        .chain(basis.workcell.as_ref().map(|source| ("workcell", source)))
+}
+fn workcell_stamp_matches(source: &SourceCommit, actual: &Value) -> bool {
+    actual["binary_stamp_revision"] == source.revision
+        && actual["source_revision"] == source.revision
+        && actual["binary_version"].as_str().is_some_and(|version| {
+            version.len() <= 256
+                && !version.chars().any(char::is_control)
+                && version.strip_prefix("workcell ").is_some_and(|rest| {
+                    let Some((package, stamp)) = rest.split_once(" (") else {
+                        return false;
+                    };
+                    !package.is_empty()
+                        && !package.chars().any(char::is_whitespace)
+                        && stamp == format!("{})", source.revision)
+                })
+        })
+}
 fn source_identity_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
     cut["schema"] == "oi.development-field-cut-execution/v1"
         && cut["oi_revision"] == basis.workflow_revision
@@ -1413,25 +1453,30 @@ fn source_identity_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool 
                     .iter()
                     .all(|v| v.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 256))
         })
-        && [("ai-kit", &basis.aikit), ("factory", &basis.factory)]
-            .iter()
-            .all(|(owner, source)| {
-                let actual = &cut["owners"][*owner];
-                actual["requested_revision"] == source.revision
-                    && actual["observed_revision"] == source.revision
-                    && actual["tree"] == source.tree
-                    && digest(&actual["lock_sha256"])
-                    && (actual["binary_sha256"].is_null() || digest(&actual["binary_sha256"]))
-            })
+        && selected_sources(basis).all(|(owner, source)| {
+            let actual = &cut["owners"][owner];
+            actual["requested_revision"] == source.revision
+                && actual["observed_revision"] == source.revision
+                && actual["tree"] == source.tree
+                && digest(&actual["lock_sha256"])
+                && (actual["binary_sha256"].is_null() || digest(&actual["binary_sha256"]))
+                && (owner != "workcell"
+                    || ["binary_stamp_revision", "source_revision", "binary_version"]
+                        .iter()
+                        .all(|field| actual[*field].is_null())
+                    || workcell_stamp_matches(source, actual))
+        })
 }
 fn digest(value: &Value) -> bool {
     value.as_str().is_some_and(|v| v.len() == 64 && sha(v))
 }
 fn source_cut_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
     source_identity_matches(basis, cut)
-        && ["ai-kit", "factory"]
-            .iter()
-            .all(|owner| digest(&cut["owners"][*owner]["binary_sha256"]))
+        && selected_sources(basis).all(|(owner, source)| {
+            let actual = &cut["owners"][owner];
+            digest(&actual["binary_sha256"])
+                && (owner != "workcell" || workcell_stamp_matches(source, actual))
+        })
 }
 /// Negative evidence is settled and source-bound even when compilation failed
 /// before either binary existed. It can authorise a bounded repair, never ready.
@@ -1541,7 +1586,7 @@ fn observe_cross_owner(
             return Err("cross-owner workflow run/head/attempt moved".into());
         }
         // These are owner commit objects, not workflow checkout labels.
-        for source in [&basis.aikit, &basis.factory] {
+        for (_, source) in selected_sources(basis) {
             let commit = gh(
                 binary,
                 format!("repos/{}/commits/{}", source.repository, source.revision),
@@ -2171,6 +2216,12 @@ pub fn human(reading: &DeliveryReading) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
+        if let Some(workcell) = &basis.workcell {
+            result.push_str(&format!(
+                "\nSelected Workcell: {} @ {} (git-tree:{})",
+                workcell.repository, workcell.revision, workcell.tree
+            ));
+        }
     }
     result
 }

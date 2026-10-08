@@ -204,6 +204,7 @@ fn delivery_cross_basis(
             revision: candidate.to_string().repeat(40),
             tree: (if candidate == 'c' { "e" } else { "d" }).repeat(40),
         },
+        workcell: None,
     }
 }
 
@@ -218,13 +219,31 @@ import json,sys
 v=json.load(open(PROVIDER))
 e=sys.argv[-1]; s=v.get('candidate','b'*40); oi=v.get('oi','f'*40)
 ai=v.get('aikit_revision','1'*40); ai_tree=v.get('aikit_tree','2'*40)
+wc=v.get('workcell_revision','7'*40); wc_tree=v.get('workcell_tree','8'*40)
 run=v.get('run',92 if s=='c'*40 else 91); attempt=v.get('attempt',1)
 tree=('e' if s=='c'*40 else 'd')*40
 job={'id':901,'run_id':run,'head_sha':oi,'name':JOB,'status':v.get('job_status','completed'),'conclusion':v.get('job_conclusion','success')}
 cut={'schema':'oi.development-field-cut-execution/v1','oi_revision':oi,'run_id':str(run),'run_attempt':str(attempt),'provider_inference_observed':False,'physical_acceptance':False,'logs':['repertoire.log','handoff.log','team.log','delivery.log'],'owners':{}}
 for owner,revision,owner_tree in [('ai-kit',ai,ai_tree),('factory',s,tree)]:
     cut['owners'][owner]={'requested_revision':revision,'observed_revision':revision,'tree':owner_tree,'lock_sha256':'3'*64,'binary_sha256':'4'*64}
+if v.get('workcell',False):
+    cut['owners']['workcell']={'requested_revision':wc,'observed_revision':wc,'tree':wc_tree,'lock_sha256':'3'*64,'binary_sha256':'4'*64,'binary_version':'workcell 0.1.0 ('+wc+')','binary_stamp_revision':wc,'source_revision':wc}
 mode=v.get('mode','valid')
+if 'workcell' in cut['owners']:
+    w=cut['owners']['workcell']
+    if mode=='missing-workcell':del cut['owners']['workcell']
+    if mode=='wrong-workcell':w['observed_revision']='9'*40
+    if mode=='wrong-workcell-tree':w['tree']='9'*40
+    if mode=='missing-workcell-binary':w['binary_sha256']=None
+    if mode=='wrong-workcell-lock':w['lock_sha256']=None
+    if mode=='wrong-workcell-stamp':w['binary_stamp_revision']='9'*40
+    if mode=='wrong-workcell-version':w['binary_version']='workcell 0.1.0 ('+'9'*40+')'
+    if mode=='wrong-workcell-source':w['source_revision']='9'*40
+    if mode=='missing-workcell-stamp':
+        for field in ['binary_stamp_revision','binary_version','source_revision']:del w[field]
+    if mode=='unbuilt-workcell':
+        w['binary_sha256']=None
+        for field in ['binary_stamp_revision','binary_version','source_revision']:del w[field]
 if mode=='wrong-aikit':cut['owners']['ai-kit']['observed_revision']='9'*40
 if mode=='wrong-factory':cut['owners']['factory']['tree']='9'*40
 if mode=='missing-binary':cut['owners']['factory']['binary_sha256']=None
@@ -246,6 +265,8 @@ if e.startswith('repos/EpiLogos/O-I/actions/runs/'):
     else:r={'id':run,'head_sha':oi,'run_attempt':attempt,'path':'.github/workflows/other.yml' if mode=='wrong-workflow' else '.github/workflows/cross-product.yml','status':v.get('run_status','completed'),'conclusion':v.get('run_conclusion','success')}
 elif e.startswith('repos/EpiLogos/ai-kit/commits/'):
     r={'sha':ai,'commit':{'tree':{'sha':'9'*40 if mode=='immutable-aikit' else ai_tree}}}
+elif e.startswith('repos/EpiLogos/Workcell/commits/'):
+    r={'sha':wc,'commit':{'tree':{'sha':'9'*40 if mode=='immutable-workcell' else wc_tree}}}
 elif '/git/matching-refs/' in e:r=[{'ref':'refs/heads/feat/controlled-delivery','object':{'sha':v.get('head',s)}}]
 elif '/pulls/' in e:r={'head':{'ref':'feat/controlled-delivery','sha':s}}
 elif '/commits/' in e and '/check-runs?' not in e:r={'sha':s,'commit':{'tree':{'sha':tree}}}
@@ -265,6 +286,266 @@ print(json.dumps(r))
     .unwrap();
     fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
     reader
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_selected_workcell_requires_exact_immutable_source_and_compiled_stamp() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let mut selected = delivery_plan(&world);
+    let original = delivery_cross_basis('b', Some(91));
+    selected.cross_owner_verification = Some(original.clone());
+    // Absence preserves the precise old fingerprint and serialized contract.
+    let old_source = json!({"repository":original.repository,"workflowRevision":original.workflow_revision,
+        "requiredJobs":original.required_jobs,"aikit":original.aikit,"factory":original.factory});
+    assert_eq!(
+        cross_owner_material_ref(&selected),
+        Some(format!(
+            "cross-owner-source-fingerprint:{}",
+            blake3::hash(&serde_json::to_vec(&old_source).unwrap()).to_hex()
+        ))
+    );
+    assert!(serde_json::to_value(&original)
+        .unwrap()
+        .get("workcell")
+        .is_none());
+    let old_fingerprint = cross_owner_material_ref(&selected);
+    selected.cross_owner_verification.as_mut().unwrap().workcell = Some(SourceCommit {
+        repository: "EpiLogos/Workcell".into(),
+        revision: "7".repeat(40),
+        tree: "8".repeat(40),
+    });
+    assert_ne!(cross_owner_material_ref(&selected), old_fingerprint);
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "enrol-material-owner",
+            DeliveryOperation::Select {
+                plan: selected.clone(),
+            },
+        ),
+    ));
+    let provider = world.dir.path().join("workcell-source-reader.json");
+    let reader = delivery_cross_reader(&world, &provider);
+    for mode in [
+        "valid",
+        "missing-workcell",
+        "wrong-workcell",
+        "wrong-workcell-tree",
+        "immutable-workcell",
+        "missing-workcell-binary",
+        "wrong-workcell-lock",
+        "missing-workcell-stamp",
+        "wrong-workcell-stamp",
+        "wrong-workcell-version",
+        "wrong-workcell-source",
+    ] {
+        fs::write(&provider, json!({"mode":mode,"workcell":true}).to_string()).unwrap();
+        let reading: Value = serde_json::from_slice(
+            &success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    &format!("workcell-proof-{mode}"),
+                    DeliveryOperation::ObserveGithub {
+                        gh_binary: reader.to_str().unwrap().into(),
+                    },
+                ),
+            ))
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(
+            reading["crossOwnerVerification"]["workcell"]["revision"],
+            "7".repeat(40)
+        );
+        if mode == "valid" {
+            assert_eq!(reading["crossOwner"]["error"], Value::Null, "{reading}");
+            assert_eq!(reading["crossOwner"]["enumerated"], true);
+            assert!(reading["crossOwner"]["evidenceRefs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reference| reference
+                    .as_str()
+                    .unwrap()
+                    .contains("github:EpiLogos/Workcell:commit:")));
+            let rendered = human(&readiness(&world.reading(), "producer").unwrap());
+            assert!(rendered.contains(&format!(
+                "Selected Workcell: EpiLogos/Workcell @ {} (git-tree:{})",
+                "7".repeat(40),
+                "8".repeat(40)
+            )));
+        } else {
+            assert_eq!(reading["ready"], false, "{mode}: {reading}");
+            assert!(
+                reading["crossOwner"]["error"].is_string(),
+                "{mode}: {reading}"
+            );
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_workcell_source_change_requires_retained_failure_repair_retry_and_fresh_evidence() {
+    use epilogos_factory::attempt_delivery::*;
+    for mode in ["no-repair", "stale-fingerprint", "remove-owner", "valid"] {
+        let world = delivery_world();
+        let mut selected = delivery_plan(&world);
+        let mut basis = delivery_cross_basis('b', Some(91));
+        basis.workcell = Some(SourceCommit {
+            repository: "EpiLogos/Workcell".into(),
+            revision: "7".repeat(40),
+            tree: "8".repeat(40),
+        });
+        selected.cross_owner_verification = Some(basis);
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "enrol-workcell",
+                DeliveryOperation::Select {
+                    plan: selected.clone(),
+                },
+            ),
+        ));
+        let mut corrected = selected.clone();
+        let cross = corrected.cross_owner_verification.as_mut().unwrap();
+        cross.workcell.as_mut().unwrap().revision = "5".repeat(40);
+        cross.workcell.as_mut().unwrap().tree = "6".repeat(40);
+        cross.run_id = Some(92);
+        if mode == "remove-owner" {
+            cross.workcell = None;
+        }
+        let before = fs::read(&world.state).unwrap();
+        assert!(!delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "ordinary-material-edit",
+                DeliveryOperation::Select {
+                    plan: corrected.clone()
+                }
+            )
+        )
+        .status
+        .success());
+        assert_eq!(before, fs::read(&world.state).unwrap());
+        delivery_verified_return(
+            &world,
+            "producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+        let provider = world.dir.path().join("workcell-repair-reader.json");
+        fs::write(
+            &provider,
+            json!({"workcell":true,"mode":"unbuilt-workcell",
+            "job_conclusion":"failure","run_conclusion":"failure"})
+            .to_string(),
+        )
+        .unwrap();
+        let reader = delivery_cross_reader(&world, &provider);
+        let failed: Value = serde_json::from_slice(
+            &success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    "material-build-failure",
+                    DeliveryOperation::ObserveGithub {
+                        gh_binary: reader.to_str().unwrap().into(),
+                    },
+                ),
+            ))
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(failed["ready"], false);
+        assert_eq!(failed["crossOwner"]["error"], Value::Null, "{failed}");
+        assert_eq!(failed["crossOwner"]["enumerated"], true);
+        if mode != "no-repair" {
+            success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    "material-repair",
+                    DeliveryOperation::RequestRepair {
+                        observation_ref: "delivery:material-build-failure".into(),
+                        failure_class: "code".into(),
+                        failure_logs: "controlled actual build fault".into(),
+                        artifact_refs: set(["artifact:controlled-workcell-build-log"]),
+                        prior_decision_refs: set(["decision:retain-material-owner"]),
+                    },
+                ),
+            ));
+        }
+        let mut retry = world.retry("material-repair-producer");
+        if mode != "no-repair" {
+            if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut retry {
+                let mut resolution =
+                    delivery_cross_retry_resolution(&world, "producer", &corrected);
+                if mode == "stale-fingerprint" {
+                    resolution
+                        .evidence_refs
+                        .remove(&cross_owner_material_ref(&corrected).unwrap());
+                }
+                *reresolution = Some(resolution);
+            }
+        }
+        world.apply(retry);
+        world.bind("material-repair-producer", OwnerOperationPhase::Returned);
+        let before = fs::read(&world.state).unwrap();
+        let mut request = delivery_request(
+            &world,
+            "corrected-material-source",
+            DeliveryOperation::Select { plan: corrected },
+        );
+        request.attempt_ref = "material-repair-producer".into();
+        let result = delivery_invoke(&world, &request);
+        if mode != "valid" {
+            assert!(!result.status.success(), "{mode}");
+            assert_eq!(before, fs::read(&world.state).unwrap());
+            continue;
+        }
+        success(result);
+        request = delivery_request(
+            &world,
+            "fresh-material-proof",
+            DeliveryOperation::ObserveGithub {
+                gh_binary: reader.to_str().unwrap().into(),
+            },
+        );
+        request.attempt_ref = "material-repair-producer".into();
+        fs::write(
+            &provider,
+            json!({"workcell":true,"workcell_revision":"5".repeat(40),
+            "workcell_tree":"6".repeat(40),"run":92})
+            .to_string(),
+        )
+        .unwrap();
+        let fresh: Value =
+            serde_json::from_slice(&success(delivery_invoke(&world, &request)).stdout).unwrap();
+        assert_eq!(fresh["crossOwner"]["error"], Value::Null, "{fresh}");
+        assert!(
+            fresh["failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|failure| failure.as_str().unwrap().contains("verification")),
+            "new source needs new verification: {fresh}"
+        );
+        delivery_verified_return(
+            &world,
+            "material-repair-producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+    }
 }
 
 #[cfg(unix)]
