@@ -280,6 +280,23 @@ fn validate_cross_owner(plan: &DeliveryPlan) -> Result<(), FactoryAttemptError> 
     }
     Ok(())
 }
+/// Immutable source material reviewed before hosted dispatch. Run IDs are read
+/// afterwards and deliberately do not enter this source fingerprint.
+pub fn cross_owner_material_ref(plan: &DeliveryPlan) -> Option<String> {
+    let cross = plan.cross_owner_verification.as_ref()?;
+    let source = json!({"repository":cross.repository,"workflowRevision":cross.workflow_revision,
+        "requiredJobs":cross.required_jobs,"aikit":cross.aikit,"factory":cross.factory});
+    Some(format!(
+        "cross-owner-source-fingerprint:{}",
+        blake3::hash(&serde_json::to_vec(&source).ok()?).to_hex()
+    ))
+}
+fn material_evidence_current(evidence: &BTreeSet<String>, plan: &DeliveryPlan) -> bool {
+    evidence.contains(&format!(
+        "candidate-fingerprint:{}",
+        plan.candidate_fingerprint
+    )) && cross_owner_material_ref(plan).is_none_or(|reference| evidence.contains(&reference))
+}
 fn validate_cross_transition(
     before: &DeliveryPlan,
     selected: &DeliveryPlan,
@@ -292,17 +309,12 @@ fn validate_cross_transition(
             "cross-owner verification obligation cannot be removed",
         ));
     };
-    if prior.repository != next.repository
-        || prior.workflow_revision != next.workflow_revision
-        || prior.required_jobs != next.required_jobs
-        || prior.aikit != next.aikit
-    {
+    if prior.repository != next.repository || prior.required_jobs != next.required_jobs {
         return Err(invalid(
-            "cross-owner workflow, required jobs and AIKit source basis are fixed",
+            "cross-owner repository and required jobs are fixed",
         ));
     }
-    let changed = before.candidate_revision != selected.candidate_revision
-        || before.candidate_fingerprint != selected.candidate_fingerprint;
+    let changed = cross_owner_material_ref(before) != cross_owner_material_ref(selected);
     if changed {
         if prior.run_id.is_some() && next.run_id == prior.run_id {
             return Err(invalid(
@@ -384,10 +396,7 @@ pub(crate) fn verification_current(record: &FactoryAttemptRecord) -> bool {
 fn verification_material_current(record: &FactoryAttemptRecord, plan: &DeliveryPlan) -> bool {
     record.verifications.last().is_some_and(|v| {
         v.source_revision == plan.candidate_revision
-            && v.evidence_refs.contains(&format!(
-                "candidate-fingerprint:{}",
-                plan.candidate_fingerprint
-            ))
+            && material_evidence_current(&v.evidence_refs, plan)
             && v.evidence_refs.contains(&format!(
                 "verification-plan:{}@{}",
                 plan.verification_plan_ref, plan.verification_plan_revision
@@ -404,10 +413,7 @@ pub(crate) fn return_material_current(
         Ok(Some(selected)) => {
             artifact.subject_ref == selected.subject_ref
                 && artifact.subject_revision == selected.subject_revision
-                && artifact.evidence_refs.contains(&format!(
-                    "candidate-fingerprint:{}",
-                    selected.candidate_fingerprint
-                ))
+                && material_evidence_current(&artifact.evidence_refs, &selected)
         }
         Err(_) => false,
     }
@@ -443,7 +449,7 @@ fn selected_failed_checks<'a>(
         .collect::<Vec<_>>();
     if let Some(basis) = &selected.cross_owner_verification {
         if let Some(proof) = &ci.cross_owner {
-            if &proof.basis == basis && proof.enumerated && proof.error.is_none() {
+            if settled_cross_failure(basis, proof) {
                 checks.extend(proof.checks.iter().filter(|c| {
                     basis.required_jobs.contains(&c.name)
                         && c.head_revision == basis.workflow_revision
@@ -766,6 +772,109 @@ pub(crate) fn unresolved_task_publication(state: &StoredAttemptState, task_ref: 
 
 /// Locked native admission prevents the lower-level Action from bypassing
 /// selected-material review or replenishing delivery budgets across retries.
+fn attempt_start_revision(state: &StoredAttemptState, attempt: &str) -> Option<u64> {
+    state
+        .action_receipts
+        .values()
+        .filter(|action| match &action.request.operation {
+            FactoryAttemptOperation::StartSerial { attempt_ref, .. }
+            | FactoryAttemptOperation::Retry { attempt_ref, .. } => attempt_ref == attempt,
+            FactoryAttemptOperation::StartFork { attempts, .. } => {
+                attempts.iter().any(|a| a.attempt_ref == attempt)
+            }
+            _ => false,
+        })
+        .map(|action| action.receipt.next_revision)
+        .min()
+}
+fn validate_cross_renewal(
+    state: &StoredAttemptState,
+    record: &FactoryAttemptRecord,
+    before: &DeliveryPlan,
+    selected: &DeliveryPlan,
+) -> Result<(), FactoryAttemptError> {
+    if before.cross_owner_verification.is_none()
+        || cross_owner_material_ref(before) == cross_owner_material_ref(selected)
+    {
+        return Ok(());
+    }
+    let retry = state.action_receipts.values().find(|action| matches!(
+        &action.request.operation, FactoryAttemptOperation::Retry { attempt_ref, .. }
+            if attempt_ref == &record.attempt_ref))
+        .ok_or_else(|| invalid("cross-owner source correction needs actual native Retry, not an ordinary selection edit"))?;
+    let resolution = match &retry.request.operation {
+        FactoryAttemptOperation::Retry {
+            reresolution: Some(resolution),
+            ..
+        } => resolution,
+        _ => {
+            return Err(invalid(
+                "cross-owner correction requires selected repair re-resolution at native Retry",
+            ))
+        }
+    };
+    // Persisted native Actions identify the immediate predecessor. A historic
+    // failure from an earlier retry cannot be recycled to authorise new effects.
+    let predecessor = state
+        .attempts
+        .values()
+        .filter(|a| {
+            a.task_ref == record.task_ref
+                && a.workflow_unit_ref == record.workflow_unit_ref
+                && a.attempt_ref != record.attempt_ref
+        })
+        .filter_map(|a| attempt_start_revision(state, &a.attempt_ref).map(|revision| (revision, a)))
+        .filter(|(revision, _)| *revision < retry.receipt.next_revision)
+        .max_by_key(|(revision, _)| *revision)
+        .map(|(_, a)| a)
+        .ok_or_else(|| invalid("cross-owner Retry predecessor is not retained"))?;
+    let previous =
+        plan(predecessor)?.ok_or_else(|| invalid("cross-owner Retry predecessor plan absent"))?;
+    let (ci_receipt, ci) = last_ci(predecessor)?
+        .ok_or_else(|| invalid("cross-owner Retry requires retained failed hosted proof"))?;
+    let basis = previous
+        .cross_owner_verification
+        .as_ref()
+        .ok_or_else(|| invalid("cross-owner prior source basis absent"))?;
+    let proof = ci
+        .cross_owner
+        .as_ref()
+        .ok_or_else(|| invalid("cross-owner prior source proof absent"))?;
+    if !failed_ci(predecessor)
+        || !(settled_cross_failure(basis, proof) || cross_owner_failures(basis, proof).is_empty())
+    {
+        return Err(invalid("cross-owner correction requires exact settled failed source proof; pending, stale and unreadable proof cannot authorise renewal"));
+    }
+    let repair = predecessor
+        .observations
+        .iter()
+        .rev()
+        .find(|receipt| {
+            receipt.contract == DELIVERY_OBSERVATION
+                && receipt.payload["kind"] == "repair"
+                && receipt.payload["observationRef"] == ci_receipt.receipt_ref
+                && receipt.payload["failureClass"] == "code"
+        })
+        .ok_or_else(|| {
+            invalid("cross-owner source correction has no admitted bounded code repair")
+        })?;
+    let mut required = predecessor
+        .observations
+        .iter()
+        .flat_map(|r| r.partial_effect_refs.iter().cloned())
+        .collect::<BTreeSet<_>>();
+    required.extend(predecessor.failure_evidence_refs.iter().cloned());
+    required.extend([
+        repair.receipt_ref.clone(),
+        ci_receipt.receipt_ref.clone(),
+        cross_owner_material_ref(selected).unwrap(),
+    ]);
+    if !resolution.evidence_refs.is_superset(&required) {
+        return Err(invalid("cross-owner Retry re-resolution must retain exact failed proof, repair, settled effects and successor source fingerprint"));
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_native_observation(
     state: &StoredAttemptState,
     engine: &crate::orchestration::ExecutableOrchestration,
@@ -782,6 +891,9 @@ pub(crate) fn validate_native_observation(
     validate_observation(record, receipt)?;
     if receipt.payload["kind"] == "selection" {
         let selected: DeliveryPlan = serde_json::from_value(receipt.payload["plan"].clone())?;
+        if let Some(before) = plan(record)? {
+            validate_cross_renewal(state, record, &before, &selected)?;
+        }
         for retained in state
             .attempts
             .values()
@@ -810,6 +922,7 @@ pub(crate) fn validate_native_observation(
         {
             if let Some(before) = plan(prior)? {
                 validate_cross_transition(&before, &selected)?;
+                validate_cross_renewal(state, record, &before, &selected)?;
                 let mut proposed = selected.clone();
                 if before.pull_request.is_none() {
                     proposed.pull_request = None;
@@ -904,10 +1017,7 @@ pub(crate) fn validate_native_observation(
                     && i.artifacts.iter().any(|a| {
                         a.subject_ref == selected.subject_ref
                             && a.subject_revision == selected.subject_revision
-                            && a.evidence_refs.contains(&format!(
-                                "candidate-fingerprint:{}",
-                                selected.candidate_fingerprint
-                            ))
+                            && material_evidence_current(&a.evidence_refs, &selected)
                     })
             })
         {
@@ -1063,10 +1173,7 @@ pub fn readiness(
                             && i.artifacts.iter().any(|a| {
                                 a.subject_ref == selected.subject_ref
                                     && a.subject_revision == selected.subject_revision
-                                    && a.evidence_refs.contains(&format!(
-                                        "candidate-fingerprint:{}",
-                                        selected.candidate_fingerprint
-                                    ))
+                                    && material_evidence_current(&a.evidence_refs, &selected)
                             })
                     })
                 {
@@ -1292,7 +1399,7 @@ fn marker_source_cut(logs: &str) -> Result<Value, String> {
 fn exact_number(value: &Value) -> Option<u64> {
     value.as_u64().or_else(|| value.as_str()?.parse().ok())
 }
-fn source_cut_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
+fn source_identity_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
     cut["schema"] == "oi.development-field-cut-execution/v1"
         && cut["oi_revision"] == basis.workflow_revision
         && exact_number(&cut["run_id"]) == basis.run_id
@@ -1313,12 +1420,47 @@ fn source_cut_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
                 actual["requested_revision"] == source.revision
                     && actual["observed_revision"] == source.revision
                     && actual["tree"] == source.tree
-                    && ["lock_sha256", "binary_sha256"].iter().all(|key| {
-                        actual[*key]
-                            .as_str()
-                            .is_some_and(|v| v.len() == 64 && sha(v))
-                    })
+                    && digest(&actual["lock_sha256"])
+                    && (actual["binary_sha256"].is_null() || digest(&actual["binary_sha256"]))
             })
+}
+fn digest(value: &Value) -> bool {
+    value.as_str().is_some_and(|v| v.len() == 64 && sha(v))
+}
+fn source_cut_matches(basis: &CrossOwnerVerification, cut: &Value) -> bool {
+    source_identity_matches(basis, cut)
+        && ["ai-kit", "factory"]
+            .iter()
+            .all(|owner| digest(&cut["owners"][*owner]["binary_sha256"]))
+}
+/// Negative evidence is settled and source-bound even when compilation failed
+/// before either binary existed. It can authorise a bounded repair, never ready.
+fn settled_cross_failure(basis: &CrossOwnerVerification, proof: &CrossOwnerObservation) -> bool {
+    &proof.basis == basis
+        && proof.enumerated
+        && proof.error.is_none()
+        && source_identity_matches(basis, &proof.source_cut)
+        && basis.required_jobs.iter().all(|name| {
+            let matches = proof
+                .checks
+                .iter()
+                .filter(|c| &c.name == name)
+                .collect::<Vec<_>>();
+            matches.len() == 1
+                && matches[0].status == "completed"
+                && matches[0].head_revision == basis.workflow_revision
+                && Some(matches[0].run_id.as_str())
+                    == basis.run_id.map(|v| v.to_string()).as_deref()
+                && Some(matches[0].run_attempt) == basis.run_attempt
+                && matches!(
+                    matches[0].conclusion.as_deref(),
+                    Some("success" | "failure" | "timed_out")
+                )
+        })
+        && proof.checks.iter().any(|c| {
+            basis.required_jobs.contains(&c.name)
+                && matches!(c.conclusion.as_deref(), Some("failure" | "timed_out"))
+        })
 }
 fn cross_owner_failures(
     basis: &CrossOwnerVerification,
@@ -1491,7 +1633,10 @@ fn observe_cross_owner(
                 remaining.min(Duration::from_secs(60)),
             )?;
             let cut = marker_source_cut(&logs)?;
-            if !source_cut_matches(basis, &cut) {
+            let failed = job["status"] == "completed"
+                && matches!(job["conclusion"].as_str(), Some("failure" | "timed_out"));
+            if !(source_cut_matches(basis, &cut) || failed && source_identity_matches(basis, &cut))
+            {
                 return Err(
                     "cross-owner executed source/build cut differs from selected owner revisions"
                         .into(),
@@ -1887,10 +2032,7 @@ pub fn execute(
                     && i.artifacts.iter().any(|a| {
                         a.subject_ref == selected.subject_ref
                             && a.subject_revision == selected.subject_revision
-                            && a.evidence_refs.contains(&format!(
-                                "candidate-fingerprint:{}",
-                                selected.candidate_fingerprint
-                            ))
+                            && material_evidence_current(&a.evidence_refs, &selected)
                     })
             }) {
                 return Err(invalid(

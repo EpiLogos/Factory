@@ -233,6 +233,36 @@ pub fn invoke_native_owner_bounded(
     }
 }
 
+/// Read-only adapter for the existing AIKit source/encounter commands. Reuses
+/// the same finite transport and capture owner as consequential calls.
+pub(crate) fn read_aikit_json(
+    binary: &Path,
+    cwd: &Path,
+    transport: Option<&crate::native_aikit_route::AikitOwnerTransport>,
+    args: &[String],
+    timeout: Duration,
+) -> Result<Value, NativeOwnerError> {
+    let output = crate::native_aikit_route::output(binary, cwd, transport, args, timeout).map_err(
+        |error| match error {
+            crate::native_aikit_route::AikitOwnerRouteError::InvalidConfiguration(message) => {
+                NativeOwnerError::InvalidInvocation(message)
+            }
+            crate::native_aikit_route::AikitOwnerRouteError::ClientIo { binary, error } => {
+                NativeOwnerError::Spawn {
+                    owner: "AIKit",
+                    binary,
+                    error,
+                }
+            }
+        },
+    )?;
+    let payload = parse_json_output("AIKit", &output)?;
+    if !output.status.success() || payload.get("ok") == Some(&Value::Bool(false)) {
+        return Err(command_failure("AIKit", output, Some(payload)));
+    }
+    Ok(payload)
+}
+
 fn invoke_aikit(
     binary: &Path,
     cwd: &Path,
@@ -1253,6 +1283,44 @@ pub enum NativeOwnerError {
         stderr: String,
         payload: Option<Value>,
     },
+}
+
+impl NativeOwnerError {
+    /// Preserve the observed semantic code and response fingerprint in the
+    /// canonical transport history. Native bodies/argv/private output stay on
+    /// the original typed error, never in human text or the public receipt.
+    pub(crate) fn public_failure_reading(&self) -> Value {
+        match self {
+            Self::CommandFailed {
+                owner,
+                code,
+                stdout,
+                stderr,
+                payload,
+            } => {
+                let native_code = payload
+                    .as_ref()
+                    .and_then(|p| p.pointer("/error/code"))
+                    .and_then(Value::as_str)
+                    .filter(|code| {
+                        code.starts_with("encounter.")
+                            && code.len() <= 128
+                            && code
+                                .bytes()
+                                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                    });
+                let payload_digest = payload.as_ref().map(|p| {
+                    blake3::hash(&serde_json::to_vec(p).expect("JSON payload serializes"))
+                        .to_hex()
+                        .to_string()
+                });
+                serde_json::json!({"owner":owner,"exitCode":code,"nativeCode":native_code,
+                    "payloadDigest":payload_digest,"stdoutPrefixBytes":stdout.len(),
+                    "stderrPrefixBytes":stderr.len(),"privateOutputRetainedInTypedCause":true})
+            }
+            _ => serde_json::json!({"privateOutputRetainedInTypedCause":true}),
+        }
+    }
 }
 
 impl Display for NativeOwnerError {

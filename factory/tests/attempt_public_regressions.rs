@@ -154,6 +154,34 @@ fn delivery_retry_resolution(world: &World, previous: &str) -> ReresolutionRecor
     ReresolutionRecord { resolution_ref: format!("resolution:controlled-{previous}"), reason: "Retain published effects and current source, repair exact invariant, independently review fresh selected material".into(), source_revision: retained.disposition.participant.source_revision.clone(), evidence_refs, replacement_now_ref: None, replacement_material_ref: None, replacement_harness_ref: None }
 }
 
+fn delivery_cross_retry_resolution(
+    world: &World,
+    previous: &str,
+    next: &epilogos_factory::attempt_delivery::DeliveryPlan,
+) -> ReresolutionRecord {
+    let mut resolution = delivery_retry_resolution(world, previous);
+    let reading = world.reading();
+    let prior = reading
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == previous)
+        .unwrap();
+    let repair = prior
+        .observations
+        .iter()
+        .rev()
+        .find(|r| r.payload["kind"] == "repair")
+        .unwrap();
+    resolution.evidence_refs.insert(repair.receipt_ref.clone());
+    resolution
+        .evidence_refs
+        .insert(repair.payload["observationRef"].as_str().unwrap().into());
+    resolution
+        .evidence_refs
+        .insert(epilogos_factory::attempt_delivery::cross_owner_material_ref(next).unwrap());
+    resolution
+}
+
 const CROSS_JOB: &str = "Exact development cut / repertoire, collaboration and delivery";
 fn delivery_cross_basis(
     candidate: char,
@@ -188,17 +216,21 @@ fn delivery_cross_reader(world: &World, provider: &std::path::Path) -> PathBuf {
     let script = r#"#!/usr/bin/python3
 import json,sys
 v=json.load(open(PROVIDER))
-e=sys.argv[-1]; s=v.get('candidate','b'*40); oi='f'*40
+e=sys.argv[-1]; s=v.get('candidate','b'*40); oi=v.get('oi','f'*40)
+ai=v.get('aikit_revision','1'*40); ai_tree=v.get('aikit_tree','2'*40)
 run=v.get('run',92 if s=='c'*40 else 91); attempt=v.get('attempt',1)
 tree=('e' if s=='c'*40 else 'd')*40
 job={'id':901,'run_id':run,'head_sha':oi,'name':JOB,'status':v.get('job_status','completed'),'conclusion':v.get('job_conclusion','success')}
 cut={'schema':'oi.development-field-cut-execution/v1','oi_revision':oi,'run_id':str(run),'run_attempt':str(attempt),'provider_inference_observed':False,'physical_acceptance':False,'logs':['repertoire.log','handoff.log','team.log','delivery.log'],'owners':{}}
-for owner,revision,owner_tree in [('ai-kit','1'*40,'2'*40),('factory',s,tree)]:
+for owner,revision,owner_tree in [('ai-kit',ai,ai_tree),('factory',s,tree)]:
     cut['owners'][owner]={'requested_revision':revision,'observed_revision':revision,'tree':owner_tree,'lock_sha256':'3'*64,'binary_sha256':'4'*64}
 mode=v.get('mode','valid')
 if mode=='wrong-aikit':cut['owners']['ai-kit']['observed_revision']='9'*40
 if mode=='wrong-factory':cut['owners']['factory']['tree']='9'*40
 if mode=='missing-binary':cut['owners']['factory']['binary_sha256']=None
+if mode=='missing-binaries':
+    cut['owners']['factory']['binary_sha256']=None;cut['owners']['ai-kit']['binary_sha256']=None
+if mode=='wrong-lock':cut['owners']['ai-kit']['lock_sha256']=None
 if '/actions/jobs/901/logs' in e:
     marker='2026-10-07T12:00:00.000Z OI_DEVELOPMENT_FIELD_CUT_JSON='+json.dumps(cut)
     if mode=='missing-marker': print("2026-10-07T12:00:00.000Z print('OI_DEVELOPMENT_FIELD_CUT_JSON=' + json.dumps(reading))");sys.exit(0)
@@ -213,7 +245,7 @@ if e.startswith('repos/EpiLogos/O-I/actions/runs/'):
         r={'total_count':2 if mode=='incomplete' else len(jobs),'jobs':jobs}
     else:r={'id':run,'head_sha':oi,'run_attempt':attempt,'path':'.github/workflows/other.yml' if mode=='wrong-workflow' else '.github/workflows/cross-product.yml','status':v.get('run_status','completed'),'conclusion':v.get('run_conclusion','success')}
 elif e.startswith('repos/EpiLogos/ai-kit/commits/'):
-    r={'sha':'1'*40,'commit':{'tree':{'sha':('9' if mode=='immutable-aikit' else '2')*40}}}
+    r={'sha':ai,'commit':{'tree':{'sha':'9'*40 if mode=='immutable-aikit' else ai_tree}}}
 elif '/git/matching-refs/' in e:r=[{'ref':'refs/heads/feat/controlled-delivery','object':{'sha':v.get('head',s)}}]
 elif '/pulls/' in e:r={'head':{'ref':'feat/controlled-delivery','sha':s}}
 elif '/commits/' in e and '/check-runs?' not in e:r={'sha':s,'commit':{'tree':{'sha':tree}}}
@@ -388,6 +420,271 @@ fn delivery_cross_owner_proves_exact_executed_cuts_and_refuses_stale_or_ambiguou
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn delivery_failed_cross_owner_build_retains_source_proof_without_claiming_ready() {
+    use epilogos_factory::attempt_delivery::*;
+    let world = delivery_world();
+    let mut selected = delivery_plan(&world);
+    selected.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+    success(delivery_invoke(
+        &world,
+        &delivery_request(
+            &world,
+            "enrol-negative-source",
+            DeliveryOperation::Select { plan: selected },
+        ),
+    ));
+    let provider = world.dir.path().join("negative-source-reader.json");
+    let reader = delivery_cross_reader(&world, &provider);
+    for (i, shape) in [
+        json!({"mode":"wrong-aikit"}),
+        json!({"mode":"wrong-factory"}),
+        json!({"mode":"wrong-lock"}),
+        json!({"mode":"missing-marker"}),
+        json!({"mode":"ambiguous-marker"}),
+        json!({"mode":"incomplete"}),
+        json!({"attempt":2}),
+        json!({"job_status":"in_progress","job_conclusion":null}),
+        json!({"run_status":"in_progress"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut shape = shape;
+        shape["job_conclusion"] = shape
+            .get("job_conclusion")
+            .cloned()
+            .unwrap_or(json!("failure"));
+        shape["run_conclusion"] = json!("failure");
+        fs::write(&provider, shape.to_string()).unwrap();
+        let name = format!("invalid-negative-{i}");
+        let result: Value = serde_json::from_slice(
+            &success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    &name,
+                    DeliveryOperation::ObserveGithub {
+                        gh_binary: reader.to_str().unwrap().into(),
+                    },
+                ),
+            ))
+            .stdout,
+        )
+        .unwrap();
+        assert_eq!(result["ready"], false, "{result}");
+        let before = fs::read(&world.state).unwrap();
+        let refused = delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                &format!("invalid-repair-{i}"),
+                DeliveryOperation::RequestRepair {
+                    observation_ref: format!("delivery:{name}"),
+                    failure_class: "code".into(),
+                    failure_logs: "controlled source-bound failed build".into(),
+                    artifact_refs: set(["artifact:controlled-log"]),
+                    prior_decision_refs: set(["decision:retain-source"]),
+                },
+            ),
+        );
+        assert!(!refused.status.success(), "{result}");
+        assert_eq!(fs::read(&world.state).unwrap(), before);
+    }
+    fs::write(
+        &provider,
+        json!({"mode":"missing-binaries","job_conclusion":"failure","run_conclusion":"failure"})
+            .to_string(),
+    )
+    .unwrap();
+    let observed: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "settled-negative-source",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(observed["ready"], false, "{observed}");
+    assert_eq!(observed["crossOwner"]["enumerated"], true, "{observed}");
+    assert_eq!(observed["crossOwner"]["error"], Value::Null, "{observed}");
+    assert_eq!(
+        observed["crossOwner"]["sourceCut"]["owners"]["ai-kit"]["binary_sha256"],
+        Value::Null
+    );
+    assert_eq!(
+        observed["crossOwner"]["sourceCut"]["owners"]["factory"]["binary_sha256"],
+        Value::Null
+    );
+    success(delivery_invoke(&world, &delivery_request(&world, "admit-source-repair", DeliveryOperation::RequestRepair {
+        observation_ref: "delivery:settled-negative-source".into(), failure_class: "code".into(),
+        failure_logs: "controlled real compile fault before binaries; immutable owner sources retained".into(),
+        artifact_refs: set(["artifact:controlled-compile-log"]), prior_decision_refs: set(["decision:retain-source"]) })));
+    let restarted = world.reading();
+    assert!(restarted
+        .attempts
+        .iter()
+        .find(|a| a.attempt_ref == "producer")
+        .unwrap()
+        .observations
+        .iter()
+        .any(|r| r.receipt_ref == "delivery:admit-source-repair"));
+}
+
+#[cfg(unix)]
+#[test]
+fn delivery_cross_source_renewal_requires_actual_retry_selected_repair_and_full_material_evidence()
+{
+    use epilogos_factory::attempt_delivery::*;
+    for mode in ["no-repair", "no-resolution", "stale-fingerprint", "valid"] {
+        let world = delivery_world();
+        let mut selected = delivery_plan(&world);
+        selected.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "enrol-cross",
+                DeliveryOperation::Select {
+                    plan: selected.clone(),
+                },
+            ),
+        ));
+        delivery_verified_return(
+            &world,
+            "producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+        let provider = world.dir.path().join("source-renewal-reader.json");
+        fs::write(&provider, json!({"mode":"missing-binaries","job_conclusion":"failure","run_conclusion":"failure"}).to_string()).unwrap();
+        let reader = delivery_cross_reader(&world, &provider);
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "failed-source",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ));
+        if mode != "no-repair" {
+            success(delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    "source-repair",
+                    DeliveryOperation::RequestRepair {
+                        observation_ref: "delivery:failed-source".into(),
+                        failure_class: "code".into(),
+                        failure_logs: "controlled compile invariant".into(),
+                        artifact_refs: set(["artifact:controlled-compile-log"]),
+                        prior_decision_refs: set(["decision:preserve-intent"]),
+                    },
+                ),
+            ));
+        }
+        let cross = selected.cross_owner_verification.as_mut().unwrap();
+        cross.aikit.revision = "5".repeat(40);
+        cross.aikit.tree = "6".repeat(40);
+        cross.workflow_revision = "8".repeat(40);
+        cross.run_id = Some(92);
+        let mut retry = world.retry("repair-producer");
+        if mode != "no-repair" && mode != "no-resolution" {
+            if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut retry {
+                let mut resolution = delivery_cross_retry_resolution(&world, "producer", &selected);
+                if mode == "stale-fingerprint" {
+                    resolution
+                        .evidence_refs
+                        .remove(&cross_owner_material_ref(&selected).unwrap());
+                }
+                *reresolution = Some(resolution);
+            }
+        }
+        world.apply(retry);
+        world.bind("repair-producer", OwnerOperationPhase::Returned);
+        let before = fs::read(&world.state).unwrap();
+        let mut request = delivery_request(
+            &world,
+            "select-successor",
+            DeliveryOperation::Select {
+                plan: selected.clone(),
+            },
+        );
+        request.attempt_ref = "repair-producer".into();
+        let result = delivery_invoke(&world, &request);
+        if mode != "valid" {
+            assert!(!result.status.success(), "{mode}");
+            assert_eq!(before, fs::read(&world.state).unwrap(), "{mode}");
+            continue;
+        }
+        success(result);
+        // A passing code verification for the same Factory tree, but the old
+        // cross-source basis, cannot produce a Return after the AIKit correction.
+        let stale_ref =
+            cross_owner_material_ref(&delivery_plan_with_original_cross(&world)).unwrap();
+        world.apply(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "repair-producer".into(),
+            verification: VerificationReceipt {
+                verification_ref: "verification:stale-cross".into(),
+                owner_ref: "factory-verifier:controlled".into(),
+                source_revision: "b".repeat(40),
+                outcome: VerificationOutcome::Passed,
+                obligations: world
+                    .workflow
+                    .unit("inspect-source")
+                    .unwrap()
+                    .verification_obligations
+                    .clone(),
+                evidence_refs: BTreeSet::from([
+                    format!("candidate-fingerprint:{FINGERPRINT_B}"),
+                    "verification-plan:verification-plan:controlled@plan-r1".into(),
+                    stale_ref,
+                ]),
+            },
+        });
+        let rejected = world.refuses(world.returned("repair-producer"));
+        assert!(
+            rejected.contains("verification") || rejected.contains("selected"),
+            "{rejected}"
+        );
+        delivery_verified_return(
+            &world,
+            "repair-producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+        let before = world.reading();
+        assert_eq!(
+            before
+                .attempts
+                .iter()
+                .find(|a| a.attempt_ref == "repair-producer")
+                .unwrap()
+                .reresolutions
+                .len(),
+            1
+        );
+    }
+}
+fn delivery_plan_with_original_cross(
+    world: &World,
+) -> epilogos_factory::attempt_delivery::DeliveryPlan {
+    let mut plan = delivery_plan(world);
+    plan.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+    plan
+}
+
 #[test]
 fn delivery_cross_owner_binding_is_one_way_and_repair_requires_new_run_proof() {
     use epilogos_factory::attempt_delivery::*;
@@ -449,14 +746,16 @@ fn delivery_cross_owner_binding_is_one_way_and_repair_requires_new_run_proof() {
     selected.candidate_revision = "c".repeat(40);
     selected.candidate_fingerprint = FINGERPRINT_C.into();
     selected.cross_owner_verification = Some(delivery_cross_basis('c', Some(92)));
-    success(delivery_invoke(
+    assert!(!delivery_invoke(
         &world,
         &delivery_request(
             &world,
             "cross-correction",
             DeliveryOperation::Select { plan: selected },
         ),
-    ));
+    )
+    .status
+    .success());
 }
 
 #[test]
@@ -833,10 +1132,30 @@ fn delivery_verified_return(
     fingerprint: &str,
 ) {
     let unit = world.workflow.unit(key).unwrap();
-    let evidence = BTreeSet::from([
+    let mut evidence = BTreeSet::from([
         format!("candidate-fingerprint:{fingerprint}"),
         "verification-plan:verification-plan:controlled@plan-r1".into(),
     ]);
+    let reading = world.reading();
+    let producer = &reading.legs[&world.workflow.unit("inspect-source").unwrap().reference];
+    if let Some(selected) = reading
+        .attempts
+        .iter()
+        .find(|a| a.execution_ref.as_deref() == Some(producer.execution_ref.as_str()))
+        .and_then(|a| {
+            a.observations
+                .iter()
+                .rev()
+                .find(|o| o.payload["kind"] == "selection")
+        })
+    {
+        let plan: epilogos_factory::attempt_delivery::DeliveryPlan =
+            serde_json::from_value(selected.payload["plan"].clone()).unwrap();
+        if let Some(reference) = epilogos_factory::attempt_delivery::cross_owner_material_ref(&plan)
+        {
+            evidence.insert(reference);
+        }
+    }
     world.apply(FactoryAttemptOperation::RecordVerification {
         attempt_ref: reference.into(),
         verification: VerificationReceipt {
@@ -1379,7 +1698,7 @@ fn delivery_native_review_publication_interruption_and_fresh_readiness() {
     // candidate and its actual selected-material review, retaining old outputs.
     fs::write(
         &provider,
-        json!({"head":"b".repeat(40),"conclusion":"failure"}).to_string(),
+        json!({"head":"b".repeat(40),"job_conclusion":"failure","run_conclusion":"failure","mode":"missing-binaries"}).to_string(),
     )
     .unwrap();
     success(delivery_invoke(
@@ -1427,17 +1746,23 @@ fn delivery_native_review_publication_interruption_and_fresh_readiness() {
             },
         ),
     ));
-    let mut repair = world.retry("repair-producer");
-    if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut repair {
-        *reresolution = Some(delivery_retry_resolution(&world, "producer"));
-    }
-    world.apply(repair);
-    world.bind("repair-producer", OwnerOperationPhase::Returned);
     let mut repaired = delivery_plan(&world);
     repaired.candidate_revision = "c".repeat(40);
     repaired.candidate_fingerprint = FINGERPRINT_C.into();
     repaired.expected_remote_head = Some("b".repeat(40));
     repaired.cross_owner_verification = Some(delivery_cross_basis('c', Some(92)));
+    let successor = repaired.cross_owner_verification.as_mut().unwrap();
+    successor.aikit.revision = "5".repeat(40);
+    successor.aikit.tree = "6".repeat(40);
+    successor.workflow_revision = "8".repeat(40);
+    let mut repair = world.retry("repair-producer");
+    if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut repair {
+        *reresolution = Some(delivery_cross_retry_resolution(
+            &world, "producer", &repaired,
+        ));
+    }
+    world.apply(repair);
+    world.bind("repair-producer", OwnerOperationPhase::Returned);
     let mut request = delivery_request(
         &world,
         "select-correction",
@@ -1521,7 +1846,7 @@ fn delivery_native_review_publication_interruption_and_fresh_readiness() {
     success(delivery_invoke(&world, &reserve));
     fs::write(
         &provider,
-        json!({"head":"c".repeat(40),"candidate":"c".repeat(40),"conclusion":"success"})
+        json!({"head":"c".repeat(40),"candidate":"c".repeat(40),"conclusion":"success", "aikit_revision":"5".repeat(40),"aikit_tree":"6".repeat(40),"oi":"8".repeat(40)})
             .to_string(),
     )
     .unwrap();

@@ -23,7 +23,10 @@ fn main() -> std::process::ExitCode {
         }
         Err(error) => {
             if args.iter().any(|arg| arg == "--json") {
-                if let Some(result) = error.native_publication_failure() {
+                if let Some(result) = error
+                    .native_publication_failure()
+                    .or_else(|| error.native_owner_failure_result().cloned())
+                {
                     println!("{result}");
                 }
             }
