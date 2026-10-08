@@ -340,13 +340,9 @@ fn validate_cross_transition(
                 "changed candidate requires a new cross-owner workflow run proof",
             ));
         }
-    } else if prior.run_id.is_some()
-        && (prior.run_id != next.run_id || prior.run_attempt != next.run_attempt)
-    {
-        return Err(invalid(
-            "cross-owner run/attempt binding is one-way for the selected material",
-        ));
     }
+    // Rebinding unchanged source material is admitted only by the locked native
+    // Retry/repair guard below. Structural validation alone cannot authorise it.
     Ok(())
 }
 fn validate_plan(plan: &DeliveryPlan) -> Result<(), FactoryAttemptError> {
@@ -812,9 +808,30 @@ fn validate_cross_renewal(
     before: &DeliveryPlan,
     selected: &DeliveryPlan,
 ) -> Result<(), FactoryAttemptError> {
-    if before.cross_owner_verification.is_none()
-        || cross_owner_material_ref(before) == cross_owner_material_ref(selected)
+    let current = plan(record)?;
+    if current.as_ref() == Some(selected)
+        || current.as_ref().is_some_and(|current| {
+            cross_owner_material_ref(current) == cross_owner_material_ref(selected)
+                && current
+                    .cross_owner_verification
+                    .as_ref()
+                    .is_some_and(|basis| basis.run_id.is_none())
+        })
     {
+        return Ok(());
+    }
+    let Some(prior) = &before.cross_owner_verification else {
+        return Ok(());
+    };
+    let source_changed = cross_owner_material_ref(before) != cross_owner_material_ref(selected);
+    let binding_changed = selected
+        .cross_owner_verification
+        .as_ref()
+        .is_some_and(|next| {
+            prior.run_id.is_some()
+                && (prior.run_id != next.run_id || prior.run_attempt != next.run_attempt)
+        });
+    if !source_changed && !binding_changed {
         return Ok(());
     }
     let retry = state.action_receipts.values().find(|action| matches!(
@@ -847,6 +864,16 @@ fn validate_cross_renewal(
         .max_by_key(|(revision, _)| *revision)
         .map(|(_, a)| a)
         .ok_or_else(|| invalid("cross-owner Retry predecessor is not retained"))?;
+    if record.observations.iter().any(|receipt| {
+        receipt.contract == DELIVERY_OBSERVATION
+            && receipt.payload["kind"] == "selection"
+            && !predecessor
+                .observations
+                .iter()
+                .any(|inherited| inherited == receipt)
+    }) {
+        return Err(invalid("cross-owner run/source renewal is one-way within a native Retry; another renewal needs its own retained failure and Retry"));
+    }
     let previous =
         plan(predecessor)?.ok_or_else(|| invalid("cross-owner Retry predecessor plan absent"))?;
     let (ci_receipt, ci) = last_ci(predecessor)?
@@ -864,6 +891,27 @@ fn validate_cross_renewal(
     {
         return Err(invalid("cross-owner correction requires exact settled failed source proof; pending, stale and unreadable proof cannot authorise renewal"));
     }
+    // Classify against the immediate predecessor, even when the immutable
+    // bounds are checked against older attempts too. An environment retry may
+    // renew a run/attempt only for the identical complete source fingerprint.
+    let changed_material =
+        cross_owner_material_ref(&previous) != cross_owner_material_ref(selected);
+    if !changed_material
+        && selected
+            .cross_owner_verification
+            .as_ref()
+            .is_none_or(|next| {
+                next.run_id.is_none()
+                    || (next.run_id == basis.run_id && next.run_attempt == basis.run_attempt)
+            })
+    {
+        return Err(invalid("environment Retry requires a fresh exact workflow run/attempt for identical selected source material"));
+    }
+    let failure_class = if changed_material {
+        "code"
+    } else {
+        "environment"
+    };
     let repair = predecessor
         .observations
         .iter()
@@ -872,10 +920,10 @@ fn validate_cross_renewal(
             receipt.contract == DELIVERY_OBSERVATION
                 && receipt.payload["kind"] == "repair"
                 && receipt.payload["observationRef"] == ci_receipt.receipt_ref
-                && receipt.payload["failureClass"] == "code"
+                && receipt.payload["failureClass"] == failure_class
         })
         .ok_or_else(|| {
-            invalid("cross-owner source correction has no admitted bounded code repair")
+            invalid("cross-owner renewal requires an admitted bounded repair of its exact class: code for changed material, environment for identical material")
         })?;
     let mut required = predecessor
         .observations

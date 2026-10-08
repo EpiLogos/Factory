@@ -966,6 +966,202 @@ fn delivery_plan_with_original_cross(
     plan
 }
 
+#[cfg(unix)]
+#[test]
+fn delivery_environment_retry_renews_only_exact_same_sources_with_retained_failure_and_resolution()
+{
+    use epilogos_factory::attempt_delivery::*;
+    for mode in [
+        "no-repair",
+        "no-resolution",
+        "stale-fingerprint",
+        "edited-source",
+        "pending",
+        "missing",
+        "new-run",
+        "new-attempt",
+    ] {
+        let world = delivery_world();
+        let mut selected = delivery_plan(&world);
+        selected.cross_owner_verification = Some(delivery_cross_basis('b', Some(91)));
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "enrol-environment-cross",
+                DeliveryOperation::Select {
+                    plan: selected.clone(),
+                },
+            ),
+        ));
+        delivery_verified_return(
+            &world,
+            "producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+        let mut renewed = selected.clone();
+        let next = renewed.cross_owner_verification.as_mut().unwrap();
+        if mode == "new-attempt" {
+            next.run_attempt = 2;
+        } else {
+            next.run_id = Some(92);
+        }
+        if mode == "edited-source" {
+            next.aikit.revision = "5".repeat(40);
+            next.aikit.tree = "6".repeat(40);
+        }
+        let before = fs::read(&world.state).unwrap();
+        assert!(
+            !delivery_invoke(
+                &world,
+                &delivery_request(
+                    &world,
+                    "ordinary-run-rebinding",
+                    DeliveryOperation::Select {
+                        plan: renewed.clone()
+                    }
+                )
+            )
+            .status
+            .success(),
+            "{mode}"
+        );
+        assert_eq!(before, fs::read(&world.state).unwrap(), "{mode}");
+        let provider = world.dir.path().join("environment-renewal-reader.json");
+        let mut failed = json!({"job_conclusion":"failure", "run_conclusion":"failure"});
+        if mode == "pending" {
+            failed["job_status"] = json!("in_progress");
+            failed["run_status"] = json!("in_progress");
+        }
+        if mode == "missing" {
+            failed["mode"] = json!("missing-job");
+        }
+        fs::write(&provider, failed.to_string()).unwrap();
+        let reader = delivery_cross_reader(&world, &provider);
+        success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "failed-environment-cross",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ));
+        if mode != "no-repair" {
+            let before = fs::read(&world.state).unwrap();
+            let result = delivery_invoke(&world, &delivery_request(&world, "admit-environment-retry",
+                DeliveryOperation::RequestRepair {
+                    observation_ref: "delivery:failed-environment-cross".into(),
+                    failure_class: "environment".into(), failure_logs: "controlled actual runner environment failure; source material unchanged".into(),
+                    artifact_refs: set(["artifact:controlled-environment-log"]),
+                    prior_decision_refs: set(["decision:retain-exact-sources"]),
+                }));
+            if mode == "pending" || mode == "missing" {
+                assert!(!result.status.success(), "{mode}");
+                assert_eq!(before, fs::read(&world.state).unwrap(), "{mode}");
+                continue;
+            }
+            success(result);
+        }
+        let mut retry = world.retry("environment-retry-producer");
+        if mode != "no-repair" && mode != "no-resolution" {
+            if let FactoryAttemptOperation::Retry { reresolution, .. } = &mut retry {
+                let mut resolution = delivery_cross_retry_resolution(&world, "producer", &renewed);
+                if mode == "stale-fingerprint" {
+                    resolution
+                        .evidence_refs
+                        .remove(&cross_owner_material_ref(&renewed).unwrap());
+                }
+                *reresolution = Some(resolution);
+            }
+        }
+        world.apply(retry);
+        world.bind("environment-retry-producer", OwnerOperationPhase::Returned);
+        let before = fs::read(&world.state).unwrap();
+        let mut request = delivery_request(
+            &world,
+            "select-environment-rerun",
+            DeliveryOperation::Select {
+                plan: renewed.clone(),
+            },
+        );
+        request.attempt_ref = "environment-retry-producer".into();
+        let result = delivery_invoke(&world, &request);
+        if mode != "new-run" && mode != "new-attempt" {
+            assert!(!result.status.success(), "{mode}");
+            assert_eq!(before, fs::read(&world.state).unwrap(), "{mode}");
+            continue;
+        }
+        success(result);
+        assert_eq!(
+            cross_owner_material_ref(&selected),
+            cross_owner_material_ref(&renewed)
+        );
+        let before = fs::read(&world.state).unwrap();
+        let mut repeated_renewal = renewed.clone();
+        repeated_renewal
+            .cross_owner_verification
+            .as_mut()
+            .unwrap()
+            .run_id = Some(93);
+        let mut extra = delivery_request(
+            &world,
+            "repeat-environment-renewal",
+            DeliveryOperation::Select {
+                plan: repeated_renewal,
+            },
+        );
+        extra.attempt_ref = "environment-retry-producer".into();
+        assert!(!delivery_invoke(&world, &extra).status.success());
+        assert_eq!(before, fs::read(&world.state).unwrap());
+        fs::write(
+            &provider,
+            json!({"run": if mode == "new-run" { 92 } else { 91 },
+            "attempt": if mode == "new-attempt" { 2 } else { 1 }})
+            .to_string(),
+        )
+        .unwrap();
+        request = delivery_request(
+            &world,
+            "fresh-environment-rerun",
+            DeliveryOperation::ObserveGithub {
+                gh_binary: reader.to_str().unwrap().into(),
+            },
+        );
+        request.attempt_ref = "environment-retry-producer".into();
+        let fresh: Value =
+            serde_json::from_slice(&success(delivery_invoke(&world, &request)).stdout).unwrap();
+        assert_eq!(fresh["crossOwner"]["error"], Value::Null, "{fresh}");
+        assert_eq!(fresh["crossOwner"]["enumerated"], true);
+        assert_eq!(fresh["ready"], false);
+        assert!(
+            fresh["failures"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|failure| failure.as_str().unwrap().contains("verification")),
+            "fresh retry requires its own verification: {fresh}"
+        );
+        delivery_verified_return(
+            &world,
+            "environment-retry-producer",
+            "inspect-source",
+            &"b".repeat(40),
+            FINGERPRINT_B,
+        );
+        let reading = readiness(&world.reading(), "environment-retry-producer").unwrap();
+        assert!(
+            !reading.ready,
+            "new attempt still requires distinct selected reviewer"
+        );
+        assert_eq!(reading.environment_retries, 1);
+        assert_eq!(reading.repairs, 0);
+    }
+}
+
 #[test]
 fn delivery_cross_owner_binding_is_one_way_and_repair_requires_new_run_proof() {
     use epilogos_factory::attempt_delivery::*;
