@@ -1004,7 +1004,7 @@ fn delivery_environment_retry_renews_only_exact_same_sources_with_retained_failu
         let mut renewed = selected.clone();
         let next = renewed.cross_owner_verification.as_mut().unwrap();
         if mode == "new-attempt" {
-            next.run_attempt = 2;
+            next.run_attempt = Some(2);
         } else {
             next.run_id = Some(92);
         }
