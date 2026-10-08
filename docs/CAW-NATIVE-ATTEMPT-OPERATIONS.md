@@ -105,12 +105,32 @@ The existing O:I cross-product workflow supplies focused exact-cut owner proof,
 alongside each repository's own gate.
 
 An optional `crossOwnerVerification` plan binds the exact AIKit and Factory
-commits and trees to the O:I workflow revision, run and attempt. The native
-reader requires the expected workflow path and successful required jobs, reads
-the executed source/build witness from bounded job logs, and rechecks the
-Factory head after that read. Missing proof remains unready. A repaired
-candidate needs a fresh matching cross-owner run; an O:I run's own head is
-never substituted for the Factory candidate revision.
+commits and trees to the O:I workflow revision, run and attempt. When material
+execution selects Workcell, its optional `workcell` value carries that owner's
+repository, commit and tree too. Once enrolled, the Workcell obligation cannot
+be removed by a repair. The reader requires the canonical workflow path,
+complete required jobs, immutable hosted commit trees and the executed
+source/build witness from bounded job logs, then rereads the Factory head.
+Selected Workcell proof also requires its full compiled revision stamp,
+source revision, binary version and lock/binary hashes. This hosted proof does
+not establish a physical Workcell execution or provider inference; those need
+their own correlated native material and body receipts.
+
+An exact completed failed job may retain a source-bound negative proof before
+its binaries were produced. It can authorise a finite repair, never readiness.
+Changed source material requires a retained bounded code repair, native Retry
+and re-resolution carrying the immediate predecessor's failed proof, settled
+effects and complete successor source fingerprint. A bounded environment retry
+may instead select a fresh run or attempt for the identical full source
+fingerprint. It requires the same native Retry, exact settled predecessor
+failure and explicit repair/re-resolution, and cannot hide a source change.
+Each Retry renews its run binding once. Ordinary selection edits, pending,
+missing and stale observations cannot renew it. The new attempt still needs
+fresh verification and distinct selected-input review before readiness.
+
+An O:I run's own head is never substituted for the Factory candidate revision.
+Human and JSON readiness expose the same enrolled owner basis and unresolved
+obligations.
 
 ## Native preparation and fresh dispatch
 
