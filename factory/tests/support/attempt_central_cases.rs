@@ -198,10 +198,7 @@ fn pre_allocate(world: &World, ctrl: &Path) -> String {
         "source_refs": [world.workflow.source.reference.to_string()],
     });
     let response = run_action("central.now.allocate", request);
-    response["data"]["now_ref"]
-        .as_str()
-        .unwrap()
-        .to_owned()
+    response["data"]["now_ref"].as_str().unwrap().to_owned()
 }
 
 #[test]
