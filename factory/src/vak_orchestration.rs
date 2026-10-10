@@ -5,6 +5,7 @@
 //! correlates those identities to existing owners. It is not a parser, scheduler,
 //! Method store, permission system or second Run model.
 mod authoring;
+mod conduct;
 mod lineage;
 mod model;
 mod plan;
@@ -13,6 +14,7 @@ mod runtime;
 mod z;
 
 pub use authoring::*;
+pub use conduct::*;
 pub use lineage::*;
 pub use model::*;
 pub use plan::*;

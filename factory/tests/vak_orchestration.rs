@@ -15,17 +15,20 @@ use epilogos_factory::orchestration::{
     ExecutableOrchestration, ExecutionLaunch, LegStatus, ReturnedArtifact,
 };
 use epilogos_factory::vak_orchestration::{
-    sustained_retry_grant, vak_scope_tracking, CPrimeExecutionBinding, NativeVakPerformance,
-    VakChainInputBinding, VakConductPlan, VakThoughtConsumptionRequest, VakUnitScope, VakZCycle,
-    ZStage, AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT,
+    derive_conduct_plans, sustained_retry_grant, vak_scope_tracking, CPrimeExecutionBinding,
+    NativeVakPerformance, VakChainInputBinding, VakConductPlan, VakThoughtConsumptionRequest,
+    VakUnitScope, VakZCycle, ZStage, AIKIT_OPERATIVE_SCOPE_CONTRACT, QL_C_PRIME_PROFILE_CONTRACT,
     VAK_CHAIN_INPUT_TRACKING_KIND, VAK_ORCHESTRATION_CONTRACT, VAK_SCOPE_TRACKING_KIND,
 };
 use epilogos_factory::workflow::{
     compile_workflow, workflow_source_digest, CompiledWorkflow, WorkflowNestingSource,
-    WorkflowSource,
+    WorkflowSource, WorkflowUnitSource,
 };
+use epilogos_factory::workflow_authoring::load_workflow;
+use epilogos_factory::workflow_inputs::WorkflowInputSource;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 const FIXTURE: &str = include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -852,4 +855,681 @@ fn c_prime_metadata_cannot_grant_autonomous_authority_or_change_native_subject()
     invalid.binding.participation = "dialogical".into();
     invalid.units[0].subject_ref = "project:another".into();
     assert!(invalid.validate(&workflow).is_err());
+}
+
+// --- #217: conduct derived from unit compositions ---
+
+fn ql_fixtures() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ql-vak-workflows")
+}
+
+fn compiled_fixture(name: &str) -> CompiledWorkflow {
+    load_workflow(&ql_fixtures(), Path::new(name))
+        .unwrap_or_else(|diagnostic| panic!("{name}: {diagnostic}"))
+        .compiled
+}
+
+/// A compiled workflow carrying the given unit compositions, authored input
+/// routes and nesting. Each composition is the hand-constructed plan's
+/// binding with the unit's own declared participant as actor, so it passes
+/// the same compile-time composition law the QL-authored fixtures pass.
+fn composed(
+    compositions: &[(&str, &str)],
+    inputs: &[(&str, &str, &str)],
+    nesting: &[(&str, &str)],
+) -> CompiledWorkflow {
+    let mut source: WorkflowSource = source();
+    for (key, thread) in compositions {
+        for unit in source.units.iter_mut() {
+            if unit.key == *key {
+                let mut composition = binding(thread);
+                composition.actor_ref = declared_actor(unit);
+                unit.composition = Some(composition);
+            }
+        }
+    }
+    for (key, predecessor, receiving_context_ref) in inputs {
+        for unit in source.units.iter_mut() {
+            if unit.key == *key {
+                unit.inputs.push(WorkflowInputSource {
+                    predecessor: (*predecessor).into(),
+                    receiving_context_ref: (*receiving_context_ref).into(),
+                });
+            }
+        }
+    }
+    for (parent, child) in nesting {
+        source.nesting.push(WorkflowNestingSource {
+            parent: (*parent).into(),
+            child: (*child).into(),
+        });
+    }
+    source.source.digest = workflow_source_digest(&source).unwrap();
+    compile_workflow(source).unwrap()
+}
+
+fn declared_actor(unit: &WorkflowUnitSource) -> String {
+    unit.agent_requirements
+        .agent_refs
+        .iter()
+        .chain(unit.agent_requirements.agent_set_refs.iter())
+        .chain(unit.agent_requirements.agency_refs.iter())
+        .next()
+        .cloned()
+        .expect("declared participant")
+}
+
+fn composition_actor(workflow: &CompiledWorkflow, key: &str) -> String {
+    workflow
+        .unit(key)
+        .unwrap()
+        .composition
+        .as_ref()
+        .unwrap()
+        .actor_ref
+        .clone()
+}
+
+/// The derived performance carries its opening voice's binding: the hand
+/// plan's binding with that voice's declared actor.
+fn opening_binding(hand: &CPrimeExecutionBinding, actor: &str) -> CPrimeExecutionBinding {
+    let mut expected = hand.clone();
+    expected.actor_ref = actor.into();
+    expected
+}
+
+fn unit_refs(plan: &VakConductPlan) -> Vec<WorkflowUnitRef> {
+    plan.units
+        .iter()
+        .map(|scope| scope.unit_ref.clone())
+        .collect()
+}
+
+fn scope_keys<'a>(workflow: &'a CompiledWorkflow, plan: &VakConductPlan) -> Vec<&'a str> {
+    plan.units
+        .iter()
+        .map(|scope| {
+            workflow
+                .units
+                .values()
+                .find(|compiled| compiled.reference == scope.unit_ref)
+                .expect("planned unit")
+                .key
+                .as_str()
+        })
+        .collect()
+}
+
+/// Every derived scope is the authored C′ of its own unit, addressed at that
+/// unit's native subject.
+fn assert_scopes_carry_their_authored_composition(
+    workflow: &CompiledWorkflow,
+    plan: &VakConductPlan,
+) {
+    for scope in &plan.units {
+        let compiled = workflow
+            .units
+            .values()
+            .find(|compiled| compiled.reference == scope.unit_ref)
+            .unwrap();
+        let composition = compiled.composition.as_ref().unwrap();
+        assert_eq!(scope.whole_ref, composition.whole_ref);
+        assert_eq!(
+            scope.ai_kit_resolve_path_ref,
+            composition.ai_kit_resolve_path_ref
+        );
+        assert_eq!(
+            scope.context_resolution_ref,
+            composition.context_resolution_ref
+        );
+        assert_eq!(scope.source_refs, composition.source_refs);
+        assert_eq!(scope.subject_ref, compiled.subject_ref.to_string());
+    }
+}
+
+#[test]
+fn derived_conduct_matches_the_hand_constructed_plan_shape_for_every_thread_form() {
+    // CFP0 single voice: one unit, one plan, opening-voice binding.
+    let workflow = composed(&[("inspect-source", "CFP0")], &[], &[]);
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(&workflow, "CFP0", &[("inspect-source", "inspect")]);
+    let derived_plan = &derived.plans()[0];
+    assert_eq!(derived_plan.contract, hand.contract);
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(
+            &hand.binding,
+            &composition_actor(&workflow, "inspect-source")
+        )
+    );
+    assert_eq!(unit_refs(derived_plan), unit_refs(&hand));
+    assert_eq!(derived_plan.chain_inputs, hand.chain_inputs);
+    assert_eq!(derived_plan.continuation_ref, None);
+    assert_eq!(derived_plan.stop_condition_ref, None);
+    assert_eq!(derived_plan.fusion_barrier_ref, hand.fusion_barrier_ref);
+    assert_eq!(derived_plan.parent_performance_ref, None);
+    assert_eq!(
+        derived_plan.performance_ref,
+        format!(
+            "performance:{}:{}@{}:{}:CFP0",
+            workflow.workflow_key,
+            hand.binding.ql_binding_ref,
+            hand.binding.ql_binding_revision,
+            hand.binding.whole_ref
+        )
+    );
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // CFP1 chord: the same two independent voices, forked together.
+    let workflow = composed(
+        &[
+            ("implement-compiler", "CFP1"),
+            ("review-adversarially", "CFP1"),
+        ],
+        &[],
+        &[],
+    );
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(
+        &workflow,
+        "CFP1",
+        &[
+            ("implement-compiler", "implementation"),
+            ("review-adversarially", "review"),
+        ],
+    );
+    let derived_plan = &derived.plans()[0];
+    // Fork order is ascending unit ref; the opening voice carries the binding.
+    let left = unit(&workflow, "implement-compiler");
+    let right = unit(&workflow, "review-adversarially");
+    let opening_key = if left <= right {
+        "implement-compiler"
+    } else {
+        "review-adversarially"
+    };
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(&hand.binding, &composition_actor(&workflow, opening_key))
+    );
+    assert_eq!(
+        unit_refs(derived_plan)
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        unit_refs(&hand).iter().cloned().collect::<BTreeSet<_>>()
+    );
+    assert_eq!(derived_plan.fusion_barrier_ref, None);
+    assert_eq!(derived_plan.parent_performance_ref, None);
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // CFP2 melody: chain order with one authored input binding per transition.
+    let workflow = composed(
+        &[("inspect-source", "CFP2"), ("implement-compiler", "CFP2")],
+        &[(
+            "implement-compiler",
+            "inspect-source",
+            "receiving-context:inspect-source-to-implement-compiler",
+        )],
+        &[],
+    );
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(
+        &workflow,
+        "CFP2",
+        &[
+            ("inspect-source", "inspect"),
+            ("implement-compiler", "implementation"),
+        ],
+    );
+    let derived_plan = &derived.plans()[0];
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(
+            &hand.binding,
+            &composition_actor(&workflow, "inspect-source")
+        )
+    );
+    assert_eq!(unit_refs(derived_plan), unit_refs(&hand));
+    assert_eq!(derived_plan.chain_inputs, hand.chain_inputs);
+    assert_eq!(derived_plan.chain_inputs.len(), 1);
+    assert_eq!(
+        derived_plan.chain_inputs[0].receiving_context_ref,
+        "receiving-context:inspect-source-to-implement-compiler"
+    );
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // CFP3 fusion: the independent readings wait at the one compiled barrier.
+    let workflow = composed(
+        &[
+            ("implement-compiler", "CFP3"),
+            ("review-adversarially", "CFP3"),
+        ],
+        &[],
+        &[],
+    );
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(
+        &workflow,
+        "CFP3",
+        &[
+            ("implement-compiler", "implementation"),
+            ("review-adversarially", "review"),
+        ],
+    );
+    let derived_plan = &derived.plans()[0];
+    let left = unit(&workflow, "implement-compiler");
+    let right = unit(&workflow, "review-adversarially");
+    let opening_key = if left <= right {
+        "implement-compiler"
+    } else {
+        "review-adversarially"
+    };
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(&hand.binding, &composition_actor(&workflow, opening_key))
+    );
+    assert_eq!(
+        unit_refs(derived_plan)
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        unit_refs(&hand).iter().cloned().collect::<BTreeSet<_>>()
+    );
+    assert_eq!(
+        derived_plan.fusion_barrier_ref,
+        hand.fusion_barrier_ref.clone()
+    );
+    assert_eq!(
+        derived_plan.fusion_barrier_ref,
+        Some("implementation-reviewed".into())
+    );
+    assert_eq!(derived_plan.parent_performance_ref, None);
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // CFP4 sustained: the continuation and stop condition name the unit.
+    let workflow = composed(&[("inspect-source", "CFP4")], &[], &[]);
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(&workflow, "CFP4", &[("inspect-source", "sustained")]);
+    let derived_plan = &derived.plans()[0];
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(
+            &hand.binding,
+            &composition_actor(&workflow, "inspect-source")
+        )
+    );
+    assert_eq!(unit_refs(derived_plan), unit_refs(&hand));
+    let inspect = unit(&workflow, "inspect-source").to_string();
+    assert_eq!(
+        derived_plan.continuation_ref,
+        Some(format!("continuation:{inspect}"))
+    );
+    assert_eq!(
+        derived_plan.stop_condition_ref,
+        Some(format!("stop:{inspect}"))
+    );
+    assert_eq!(derived_plan.fusion_barrier_ref, None);
+    assert_eq!(derived_plan.parent_performance_ref, None);
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // CFP5 canon: root first, child in nested continuation order.
+    let workflow = composed(
+        &[("inspect-source", "CFP5"), ("implement-compiler", "CFP5")],
+        &[],
+        &[("inspect-source", "implement-compiler")],
+    );
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    let hand = plan(
+        &workflow,
+        "CFP5",
+        &[("inspect-source", "root"), ("implement-compiler", "child")],
+    );
+    let derived_plan = &derived.plans()[0];
+    assert_eq!(
+        derived_plan.binding,
+        opening_binding(
+            &hand.binding,
+            &composition_actor(&workflow, "inspect-source")
+        )
+    );
+    assert_eq!(unit_refs(derived_plan), unit_refs(&hand));
+    assert_eq!(
+        scope_keys(&workflow, derived_plan),
+        ["inspect-source", "implement-compiler"]
+    );
+    assert_eq!(
+        derived_plan.parent_performance_ref,
+        Some(format!(
+            "performance:{}:{}@{}:{}:parent",
+            workflow.workflow_key,
+            hand.binding.ql_binding_ref,
+            hand.binding.ql_binding_revision,
+            hand.binding.whole_ref
+        ))
+    );
+    assert_eq!(derived_plan.chain_inputs, Vec::new());
+    assert_scopes_carry_their_authored_composition(&workflow, derived_plan);
+
+    // Determinism: the same compiled content derives the same plans.
+    assert_eq!(derive_conduct_plans(&workflow).unwrap(), derived);
+}
+
+#[test]
+fn ql_fixture_workflows_derive_their_authored_conduct_plans() {
+    // Expression development: a five-voice melody, a two-voice chord and the
+    // returning single voice, all under one interpretation.
+    let workflow = compiled_fixture("expression-development.workflow.ts");
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 3);
+    let melody = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP2")
+        .unwrap();
+    assert_eq!(
+        scope_keys(&workflow, melody),
+        [
+            "nous-open-ground",
+            "logos-articulate",
+            "anima-conduct",
+            "psyche-continuity",
+            "sophia-integrate"
+        ]
+    );
+    assert_eq!(melody.binding.actor_ref, "agent/anima-nous");
+    let receiving = melody
+        .chain_inputs
+        .iter()
+        .map(|input| input.receiving_context_ref.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        receiving,
+        [
+            "context:expression-development/logos-from-nous",
+            "context:expression-development/anima-from-logos",
+            "context:expression-development/psyche-from-anima",
+            "context:expression-development/sophia-from-psyche",
+        ]
+    );
+    let chord = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP1")
+        .unwrap();
+    assert_eq!(
+        scope_keys(&workflow, chord)
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["eros-exchange", "mythos-image"])
+    );
+    let single = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP0")
+        .unwrap();
+    assert_eq!(scope_keys(&workflow, single), ["aletheia-disclose-return"]);
+    assert_eq!(single.binding.actor_ref, "agent/aletheia");
+
+    // Technē constellation: blueprint → aggregate → next form behind the
+    // three fused readings at the readings-fuse barrier, then the return.
+    let workflow = compiled_fixture("techne-constellation.workflow.ts");
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 3);
+    let melody = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP2")
+        .unwrap();
+    assert_eq!(
+        scope_keys(&workflow, melody),
+        ["anansi-blueprint", "agora-aggregate", "zeithoven-next-form"]
+    );
+    assert_eq!(
+        melody
+            .chain_inputs
+            .iter()
+            .map(|input| input.receiving_context_ref.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "context:techne-constellation/agora-from-anansi",
+            "context:techne-constellation/zeithoven-from-agora",
+        ]
+    );
+    let fusion = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP3")
+        .unwrap();
+    assert_eq!(
+        scope_keys(&workflow, fusion)
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            "moirai-distil",
+            "mercurius-translate",
+            "janus-temporal-seam"
+        ])
+    );
+    assert_eq!(fusion.fusion_barrier_ref, Some("readings-fuse".into()));
+    for scope in &fusion.units {
+        assert_eq!(scope.subject_ref, "central:wiki:root");
+    }
+    assert!(derived
+        .plans()
+        .iter()
+        .any(|candidate| candidate.binding.thread == "CFP0"
+            && scope_keys(&workflow, candidate) == ["aletheia-return-revision"]));
+
+    // Development and knowledge: one five-voice melody and the returning
+    // single voice.
+    let workflow = compiled_fixture("development-and-knowledge.workflow.ts");
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 2);
+    let melody = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP2")
+        .unwrap();
+    assert_eq!(
+        scope_keys(&workflow, melody),
+        [
+            "logos-scope-plan",
+            "techne-implement",
+            "eros-verify",
+            "mythos-debug",
+            "sophia-finish"
+        ]
+    );
+    assert!(derived
+        .plans()
+        .iter()
+        .any(|candidate| candidate.binding.thread == "CFP0"
+            && scope_keys(&workflow, candidate) == ["aletheia-knowledge-return"]));
+
+    // Opening resolution: each derived plan is found by exactly its own
+    // opening launch set, and nothing else resolves.
+    let melody = derived
+        .plans()
+        .iter()
+        .find(|candidate| candidate.binding.thread == "CFP2")
+        .unwrap();
+    let opening = melody.units[0].unit_ref.clone();
+    let second = melody.units[1].unit_ref.clone();
+    assert_eq!(
+        derived
+            .plan_for_units(&BTreeSet::from([opening]))
+            .map(|plan| plan.performance_ref.clone()),
+        Some(melody.performance_ref.clone())
+    );
+    assert!(derived.plan_for_units(&BTreeSet::from([second])).is_none());
+
+    // Determinism across the whole fixture set.
+    assert_eq!(derive_conduct_plans(&workflow).unwrap(), derived);
+}
+
+#[test]
+fn workflows_without_compositions_derive_nothing_and_the_default_path_stands() {
+    let workflow = compiled();
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert!(derived.is_empty());
+    let inspect = unit(&workflow, "inspect-source");
+    let mut orchestration = engine(workflow.clone());
+    let default_launch = launch(&orchestration, &inspect, "execution:default");
+    let started = NativeVakPerformance::start_derived(
+        &mut orchestration,
+        "journey:vak",
+        &derived,
+        BTreeMap::from([(inspect.clone(), default_launch)]),
+    )
+    .unwrap();
+    assert!(started.is_none());
+    assert!(orchestration.leg(&inspect).is_none());
+    // The plain bounded-coordination path is exactly as before.
+    orchestration
+        .start_serial(
+            "journey:vak",
+            &inspect,
+            launch(&orchestration, &inspect, "execution:plain"),
+        )
+        .unwrap();
+    assert_eq!(
+        orchestration.leg(&inspect).unwrap().status,
+        LegStatus::Active
+    );
+
+    // A mixed workflow: composed units derive plans; plain units stay
+    // invisible to derivation and to derived starts.
+    let workflow = composed(&[("inspect-source", "CFP0")], &[], &[]);
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    assert_eq!(derived.plans().len(), 1);
+    assert_eq!(
+        scope_keys(&workflow, &derived.plans()[0]),
+        ["inspect-source"]
+    );
+    let mut orchestration = engine(workflow.clone());
+    let review = unit(&workflow, "review-adversarially");
+    let plain_launch = launch(&orchestration, &review, "execution:plain-voice");
+    let started = NativeVakPerformance::start_derived(
+        &mut orchestration,
+        "journey:vak",
+        &derived,
+        BTreeMap::from([(review.clone(), plain_launch)]),
+    )
+    .unwrap();
+    assert!(started.is_none());
+    assert!(orchestration.leg(&review).is_none());
+}
+
+#[test]
+fn derived_conduct_starts_through_the_runtime_and_keeps_the_z_recompose_law() {
+    let workflow = composed(&[("inspect-source", "CFP0")], &[], &[]);
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    let derived_plan = derived.plans()[0].clone();
+    let inspect = unit(&workflow, "inspect-source");
+    let mut orchestration = engine(workflow.clone());
+    let inspect_launch = launch(&orchestration, &inspect, "execution:derived");
+    let performance = NativeVakPerformance::start_derived(
+        &mut orchestration,
+        "journey:vak",
+        &derived,
+        BTreeMap::from([(inspect.clone(), inspect_launch)]),
+    )
+    .unwrap()
+    .expect("derived single voice starts");
+    assert_eq!(
+        performance.plan().performance_ref,
+        derived_plan.performance_ref
+    );
+    let snapshot = performance.snapshot(&orchestration).unwrap();
+    assert_eq!(snapshot.musical_role, "single-voice");
+    assert_eq!(snapshot.attempts[0].status, LegStatus::Active);
+    assert_eq!(snapshot.ql_binding_ref, derived_plan.binding.ql_binding_ref);
+
+    // The derived plan drives the same Z cycle law: rehearsed evidence only
+    // recomposes onto a changed binding.
+    let mut z = VakZCycle::compose("z:derived", &derived_plan).unwrap();
+    z.performing(&snapshot).unwrap();
+    let returned = artifact(
+        &orchestration,
+        &inspect,
+        "artifact:derived",
+        "execution:derived",
+        "evidence:derived",
+    );
+    orchestration.return_artifact(&inspect, returned).unwrap();
+    let snapshot = performance.snapshot(&orchestration).unwrap();
+    z.record(&snapshot).unwrap();
+    z.rehear(BTreeSet::from(["evidence:derived".into()]))
+        .unwrap();
+    assert!(z
+        .recompose(&derived_plan.binding, &derived_plan.binding)
+        .is_err());
+    let mut next = derived_plan.binding.clone();
+    next.ql_binding_revision = "ql-revision-2".into();
+    z.recompose(&derived_plan.binding, &next).unwrap();
+    assert_eq!(z.stage, ZStage::Recomposed);
+}
+
+#[test]
+fn derived_melody_continues_through_its_authored_chain_inputs() {
+    let workflow = composed(
+        &[("inspect-source", "CFP2"), ("implement-compiler", "CFP2")],
+        &[(
+            "implement-compiler",
+            "inspect-source",
+            "receiving-context:inspect-source-to-implement-compiler",
+        )],
+        &[],
+    );
+    let derived = derive_conduct_plans(&workflow).unwrap();
+    let inspect = unit(&workflow, "inspect-source");
+    let implement = unit(&workflow, "implement-compiler");
+    let mut orchestration = engine(workflow.clone());
+    let opening_launch = launch(&orchestration, &inspect, "execution:derived-chain-a");
+    let mut performance = NativeVakPerformance::start_derived(
+        &mut orchestration,
+        "journey:vak",
+        &derived,
+        BTreeMap::from([(inspect.clone(), opening_launch)]),
+    )
+    .unwrap()
+    .expect("derived melody opens");
+    let returned = artifact(
+        &orchestration,
+        &inspect,
+        "artifact:derived-chain-a",
+        "execution:derived-chain-a",
+        "evidence:derived-chain-a",
+    );
+    orchestration.return_artifact(&inspect, returned).unwrap();
+    let continuation = launch(&orchestration, &implement, "execution:derived-chain-b");
+    let material = performance
+        .continue_chain(
+            &mut orchestration,
+            "journey:vak",
+            BTreeSet::from(["artifact:derived-chain-a".into()]),
+            continuation,
+        )
+        .unwrap();
+    assert_eq!(
+        material.receiving_context_ref,
+        "receiving-context:inspect-source-to-implement-compiler"
+    );
+    assert_eq!(material.successor_unit_ref, implement);
+    assert_eq!(
+        performance
+            .snapshot(&orchestration)
+            .unwrap()
+            .chain_inputs
+            .len(),
+        1
+    );
 }

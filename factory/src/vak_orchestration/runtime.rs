@@ -1,5 +1,6 @@
 use super::{
-    required, ThreadForm, VakConductPlan, VakOrchestrationError, VAK_ORCHESTRATION_CONTRACT,
+    required, ThreadForm, VakConductPlan, VakConductPlans, VakOrchestrationError,
+    VAK_ORCHESTRATION_CONTRACT,
 };
 use crate::core::run::WorkflowUnitRef;
 use crate::execution_intelligence::ExecutionDisposition;
@@ -184,6 +185,26 @@ impl NativeVakPerformance {
 
     pub fn plan(&self) -> &VakConductPlan {
         &self.plan
+    }
+
+    /// Begin the derived performance a launch set opens, when the commissioned
+    /// workflow carries compositions at all (#217). The explicit-supply path
+    /// (`start`) is unchanged and stays authoritative; this only attaches the
+    /// workflow-derived plan so a commission of composed units conducts
+    /// without hand-building one. When no derived plan matches the launch set
+    /// — no compositions, or units continuing an already-open performance —
+    /// `None` returns and the default bounded-coordination path stands.
+    pub fn start_derived(
+        orchestration: &mut ExecutableOrchestration,
+        parent_journey_ref: &str,
+        plans: &VakConductPlans,
+        launches: BTreeMap<WorkflowUnitRef, ExecutionLaunch>,
+    ) -> Result<Option<Self>, VakOrchestrationError> {
+        let units = launches.keys().cloned().collect::<BTreeSet<_>>();
+        let Some(plan) = plans.plan_for_units(&units) else {
+            return Ok(None);
+        };
+        Self::start(orchestration, parent_journey_ref, plan.clone(), launches).map(Some)
     }
 
     pub fn continue_chain(
