@@ -235,6 +235,8 @@ pub fn inspect(
             "destination":native_run.destination,"thoughtAvailable":native_run.thought_available,"actions":native_run.actions,
             "nativeDetailCommand":"development.run","fullSssfCommand":"development.build"},
         "units":units,"legs":legs,"barriers":barriers,"attempts":rows,"telemetry":telemetry,
+        "conduct":{"derivedPlans":reading.derived_conduct_plans,"performedPerformances":reading.conduct_performances,
+            "standing":if reading.derived_conduct_plans.is_empty(){"no-authored-compositions"}else{"derived-at-admission"}},
         "totalAttempts":attempts.len(),"totalUnits":all_units.len(),"totalBarriers":all_barriers.len(),
         "totalTelemetry":correlations.len(),"nextCursor":next,
         "disclosure":"source bodies and transport payloads withheld; bounded first-page observation summaries disclose totals and native detail reads; references never assert missing telemetry"}),

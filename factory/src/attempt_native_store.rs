@@ -18,6 +18,7 @@ use crate::orchestration::{ExecutableOrchestration, OrchestrationSnapshot};
 use crate::project_development_store::{
     read_developmental_state, transact_developmental_state, ProjectDevelopmentStoreError,
 };
+use crate::vak_orchestration::{VakConductPlan, VakPerformanceSnapshot};
 use crate::workflow::{compile_workflow, WorkflowSource};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -35,6 +36,14 @@ pub struct FactoryRunAttempts {
     attempts: BTreeMap<String, FactoryAttemptRecord>,
     #[serde(default)]
     action_receipts: BTreeMap<String, PersistedAttemptAction>,
+    /// The conduct plans this attempt field's admission derived from the
+    /// retained source (#217). Empty — and omitted from the document — when
+    /// the source carries no compositions, so plain runs persist identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    derived_conduct_plans: Vec<VakConductPlan>,
+    /// Snapshots of the derived performances the attempt Actions opened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    conduct_performances: Vec<VakPerformanceSnapshot>,
 }
 
 impl FactoryRunAttempts {
@@ -49,6 +58,17 @@ impl FactoryRunAttempts {
         &self.snapshot
     }
 
+    /// The conduct plans this attempt field's admission derived from the
+    /// retained source (#217); empty without authored compositions.
+    pub fn derived_conduct_plans(&self) -> &[VakConductPlan] {
+        &self.derived_conduct_plans
+    }
+
+    /// The derived performances conducted through the attempt Actions.
+    pub fn conduct_performances(&self) -> &[VakPerformanceSnapshot] {
+        &self.conduct_performances
+    }
+
     /// The exact admitted source, not a current file or a guessed display name.
     pub fn workflow_source(&self) -> &WorkflowSource {
         &self.workflow_source
@@ -61,6 +81,8 @@ impl FactoryRunAttempts {
             snapshot: state.snapshot.clone(),
             attempts: state.attempts.clone(),
             action_receipts: state.action_receipts.clone(),
+            derived_conduct_plans: state.derived_conduct_plans.clone(),
+            conduct_performances: state.conduct_performances.clone(),
         }
     }
 
@@ -295,6 +317,10 @@ impl FileAttemptStore {
             snapshot: engine.snapshot(),
             attempts: BTreeMap::new(),
             action_receipts: BTreeMap::new(),
+            // Seed init records no admission-time derivation; a start still
+            // derives from the retained source at attempt time (#217).
+            derived_conduct_plans: Vec::new(),
+            conduct_performances: Vec::new(),
         };
         validate_state(&view)?;
         native
@@ -341,8 +367,19 @@ impl FileAttemptStore {
                     .ok_or_else(|| {
                         invalid("workflow source is not admitted in the native provider")
                     })?;
+                let compiled = compile_workflow(source.clone())?;
+                // Admission derives the authored C′ conduct once, against the
+                // exact source being attached (#217). A composition cluster
+                // that cannot derive conduct is refused here, loudly, instead
+                // of silently degrading to plain coordination later.
+                let derived = crate::vak_orchestration::derive_conduct_plans(&compiled)
+                    .map_err(|error| {
+                        invalid(&format!(
+                            "attached source's authored compositions do not derive conduct plans: {error}"
+                        ))
+                    })?;
                 let engine =
-                    ExecutableOrchestration::new(compile_workflow(source.clone())?, run.clone())?;
+                    ExecutableOrchestration::new(compiled, run.clone())?;
                 native
                     .build
                     .replace_attempt_run(run.revision(), engine.run().clone())
@@ -355,6 +392,8 @@ impl FileAttemptStore {
                     snapshot: engine.snapshot(),
                     attempts: BTreeMap::new(),
                     action_receipts: BTreeMap::new(),
+                    derived_conduct_plans: derived.plans().to_vec(),
+                    conduct_performances: Vec::new(),
                 };
                 validate_state(&view)?;
                 native
@@ -652,6 +691,8 @@ pub(crate) fn view_for(
         snapshot: retained.snapshot.clone(),
         attempts: retained.attempts.clone(),
         action_receipts: retained.action_receipts.clone(),
+        derived_conduct_plans: retained.derived_conduct_plans.clone(),
+        conduct_performances: retained.conduct_performances.clone(),
     };
     validate_state(&view)?;
     Ok(view)
