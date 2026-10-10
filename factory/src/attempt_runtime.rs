@@ -20,7 +20,10 @@ use crate::orchestration::{
     ExecutableOrchestration, ExecutionLaunch, LegRecord, OrchestrationError, OrchestrationSnapshot,
     RetryGrant, ReturnedArtifact,
 };
-use crate::workflow::{compile_workflow, CompiledWorkflowUnit, WorkflowSource};
+use crate::vak_orchestration::{
+    NativeVakPerformance, VakConductPlan, VakConductPlans, VakPerformanceSnapshot,
+};
+use crate::workflow::{compile_workflow, CompiledWorkflow, CompiledWorkflowUnit, WorkflowSource};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -335,6 +338,16 @@ pub(crate) struct StoredAttemptState {
     pub(crate) attempts: BTreeMap<String, FactoryAttemptRecord>,
     #[serde(default)]
     pub(crate) action_receipts: BTreeMap<String, PersistedAttemptAction>,
+    /// The conduct plans this attempt field's admission derived from the
+    /// retained source (#217). Empty without authored compositions, which
+    /// leaves the state byte-identical to the plain path.
+    #[serde(default)]
+    pub(crate) derived_conduct_plans: Vec<VakConductPlan>,
+    /// Snapshots of the derived performances the attempt Actions opened.
+    /// Recorded once at conduct time; later plain-path retries keep adding
+    /// their own coordinator attempts and never rewrite these readings.
+    #[serde(default)]
+    pub(crate) conduct_performances: Vec<VakPerformanceSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -375,6 +388,13 @@ pub struct FactoryAttemptReading {
     pub independent_reviewers: BTreeMap<String, crate::orchestration::IndependentReviewer>,
     #[serde(default)]
     pub syntheses: BTreeMap<String, crate::orchestration::SynthesisRecord>,
+    /// The conduct plans this Run's admission derived from its authored C′
+    /// compositions (#217). Empty without compositions.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_conduct_plans: Vec<VakConductPlan>,
+    /// Snapshots of the derived performances the attempt Actions opened.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conduct_performances: Vec<VakPerformanceSnapshot>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -571,7 +591,9 @@ pub(crate) fn apply_operation_with_source_currency(
     source_current: bool,
 ) -> Result<(String, Vec<String>), FactoryAttemptError> {
     let workflow = compile_workflow(state.workflow_source.clone())?;
-    let mut engine = state.snapshot.restore(workflow, state.run.clone())?;
+    let mut engine = state
+        .snapshot
+        .restore(workflow.clone(), state.run.clone())?;
     let mut attempt_refs = Vec::new();
     let operation_name = match operation {
         FactoryAttemptOperation::TransitionRun { .. }
@@ -602,8 +624,16 @@ pub(crate) fn apply_operation_with_source_currency(
                 tracking,
                 place_grant,
             };
+            let plans = derived_conduct(&workflow)?;
             let (launch, record) = prepare_start(state, &engine, &start, None)?;
-            engine.start_serial(parent_journey_ref, &start.workflow_unit_ref, launch)?;
+            let units = BTreeSet::from([start.workflow_unit_ref.clone()]);
+            if plans.plan_for_units(&units).is_some() {
+                let mut launches = BTreeMap::new();
+                launches.insert(start.workflow_unit_ref.clone(), launch);
+                conduct_opening(state, &mut engine, &parent_journey_ref, &plans, launches)?;
+            } else {
+                engine.start_serial(parent_journey_ref, &start.workflow_unit_ref, launch)?;
+            }
             state.attempts.insert(attempt_ref.clone(), record);
             attempt_refs.push(attempt_ref);
             "start-serial"
@@ -636,11 +666,17 @@ pub(crate) fn apply_operation_with_source_currency(
                 launches.insert(start.workflow_unit_ref.clone(), launch);
                 records.push(record);
             }
-            let units = attempts
-                .iter()
-                .map(|start| start.workflow_unit_ref.clone())
-                .collect::<Vec<_>>();
-            engine.fork(parent_journey_ref, &units, launches)?;
+            let plans = derived_conduct(&workflow)?;
+            let units = launches.keys().cloned().collect::<BTreeSet<_>>();
+            if plans.plan_for_units(&units).is_some() {
+                conduct_opening(state, &mut engine, &parent_journey_ref, &plans, launches)?;
+            } else {
+                let units = attempts
+                    .iter()
+                    .map(|start| start.workflow_unit_ref.clone())
+                    .collect::<Vec<_>>();
+                engine.fork(parent_journey_ref, &units, launches)?;
+            }
             for record in records {
                 attempt_refs.push(record.attempt_ref.clone());
                 state.attempts.insert(record.attempt_ref.clone(), record);
@@ -1080,6 +1116,57 @@ pub(crate) fn apply_operation_with_source_currency(
     state.run = engine.run().clone();
     state.snapshot = engine.snapshot();
     Ok((operation_name.into(), attempt_refs))
+}
+
+/// The retained source's derived conduct plans (#217). Derivation is
+/// deterministic from the compiled units, so an attached commission source
+/// derives exactly the plans its admission recorded.
+fn derived_conduct(workflow: &CompiledWorkflow) -> Result<VakConductPlans, FactoryAttemptError> {
+    crate::vak_orchestration::derive_conduct_plans(workflow).map_err(|error| {
+        FactoryAttemptError::InvalidOperation(format!(
+            "authored compositions do not derive conduct plans: {error}"
+        ))
+    })
+}
+
+/// Open the derived performance a launch set begins and record its snapshot.
+/// The caller has already matched the launch set against
+/// [`VakConductPlans::plan_for_units`]; a launch set that opens no derived
+/// performance takes the plain bounded-coordination branch instead and never
+/// reaches here.
+fn conduct_opening(
+    state: &mut StoredAttemptState,
+    engine: &mut ExecutableOrchestration,
+    parent_journey_ref: &str,
+    plans: &VakConductPlans,
+    launches: BTreeMap<WorkflowUnitRef, ExecutionLaunch>,
+) -> Result<(), FactoryAttemptError> {
+    let performance =
+        match NativeVakPerformance::start_derived(engine, parent_journey_ref, plans, launches) {
+            Ok(performance) => performance,
+            // The derived performance delegates to the same native start/fork, so
+            // an orchestration refusal keeps the plain path's exact error.
+            Err(crate::vak_orchestration::VakOrchestrationError::Orchestration(error)) => {
+                return Err(error.into());
+            }
+            Err(error) => {
+                return Err(FactoryAttemptError::InvalidOperation(format!(
+                    "derived conduct performance refused: {error}"
+                )));
+            }
+        };
+    let performance = performance.ok_or_else(|| {
+        FactoryAttemptError::InvalidOperation(
+            "derived conduct plan matched its launch set but opened no performance".into(),
+        )
+    })?;
+    let snapshot = performance.snapshot(engine).map_err(|error| {
+        FactoryAttemptError::InvalidOperation(format!(
+            "conducted performance snapshot refused: {error}"
+        ))
+    })?;
+    state.conduct_performances.push(snapshot);
+    Ok(())
 }
 
 fn prepare_start(
@@ -1612,6 +1699,18 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
         ));
     }
     let workflow = compile_workflow(state.workflow_source.clone())?;
+    for plan in &state.derived_conduct_plans {
+        plan.validate(&workflow).map_err(|error| {
+            FactoryAttemptError::CorruptState(format!("recorded conduct plan refused: {error}"))
+        })?;
+    }
+    for performance in &state.conduct_performances {
+        if performance.run_ref != state.run.reference().to_string() {
+            return Err(FactoryAttemptError::CorruptState(
+                "recorded conduct performance names another Run".into(),
+            ));
+        }
+    }
     let engine = state.snapshot.restore(workflow, state.run.clone())?;
     let mut execution_refs = BTreeSet::new();
     for (reference, record) in &state.attempts {
@@ -1775,6 +1874,8 @@ pub(crate) fn reading_for(
         attempts: state.attempts.values().cloned().collect(),
         independent_reviewers: engine.independent_reviewers().clone(),
         syntheses: engine.syntheses().clone(),
+        derived_conduct_plans: state.derived_conduct_plans.clone(),
+        conduct_performances: state.conduct_performances.clone(),
     })
 }
 
