@@ -31,6 +31,9 @@ const ATTEMPT: &str = "attempt:material";
 const MATERIAL: &str = "world:material-test";
 const WORKCELL: &str = "workcell:material-test";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn binary(args: &[String], body: Option<Value>) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_factory"))
         .args(args)
@@ -299,6 +302,10 @@ print(json.dumps(value))
             context_refs: BTreeSet::new(),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
             body: ExecutionBody {
                 model_ref: "model:test".into(),
                 provider_ref: "provider:test".into(),

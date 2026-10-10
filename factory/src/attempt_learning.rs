@@ -538,6 +538,32 @@ pub(crate) mod publication_tests {
     use std::rc::Rc;
     const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
     const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
+    /// Fixture `aikit.encounter-task-praxis/v1` receipt (AIKit wire shape)
+    /// resolving every given ref with available standing, so the controlled
+    /// admission carries the receipt the praxis admission law demands.
+    fn resolved_praxis_receipt_fixture(
+        workflow_unit_ref: &str,
+        praxis_refs: &BTreeSet<String>,
+    ) -> Value {
+        json!({
+            "schema": "aikit.encounter-task-praxis/v1",
+            "resolution_hash": "resolution:fixture",
+            "claim": "resolved",
+            "units": [{
+                "workflow_unit_ref": workflow_unit_ref,
+                "resolved": praxis_refs.iter().map(|reference| json!({
+                    "reference": reference,
+                    "form": "skill",
+                    "revision": "r1",
+                    "standing": "available"
+                })).collect::<Vec<_>>(),
+                "refusals": []
+            }],
+            "standing": "resolution standing only; fixture receipt"
+        })
+    }
+
     // Controlled native store data admits no real worker/model. The exercised
     // behavior is native transaction/retention, not participant execution.
     struct World {
@@ -653,6 +679,10 @@ pub(crate) mod publication_tests {
                 context_refs: BTreeSet::from(["context:test".into()]),
                 praxis_refs: unit.praxis_refs.clone(),
                 capability_refs: unit.capability_refs.clone(),
+                praxis_receipt: Some(resolved_praxis_receipt_fixture(
+                    &unit.reference.to_string(),
+                    &unit.praxis_refs,
+                )),
                 body: ExecutionBody {
                     model_ref: "model:test".into(),
                     provider_ref: "provider:test".into(),

@@ -20,6 +20,10 @@ use std::process::{Child, Command, Output, Stdio};
 
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
+
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn spawn(args: &[String], body: Option<Value>) -> Child {
     let mut child = Command::new(env!("CARGO_BIN_EXE_factory"))
         .args(args)
@@ -159,6 +163,10 @@ impl World {
             context_refs: BTreeSet::from(["context:test".into()]),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
             body: ExecutionBody {
                 model_ref: "model:test".into(),
                 provider_ref: "provider:test".into(),

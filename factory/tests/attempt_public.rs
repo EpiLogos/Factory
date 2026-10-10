@@ -29,6 +29,9 @@ const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workfl
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 #[test]
 fn unit_decision_survives_fresh_clients_and_role_labels_cannot_resume_it() {
     use epilogos_factory::core::run::{RunLifecycle, RunLifecycleCommand};
@@ -2208,6 +2211,10 @@ fn disposition(
         context_refs: BTreeSet::from(["context:controlled".into()]),
         praxis_refs: unit.praxis_refs.clone(),
         capability_refs: unit.capability_refs.clone(),
+        praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
         body: ExecutionBody {
             model_ref: "model:controlled-test".into(),
             provider_ref: "provider:controlled-test".into(),

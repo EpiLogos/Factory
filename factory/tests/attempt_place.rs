@@ -33,6 +33,9 @@ const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const TIMEOUT_MS: u64 = 5_000;
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn tmux_grant_json() -> String {
     json!({
         "schema": PLACE_GRANT_CONTRACT_REVISION,
@@ -557,6 +560,10 @@ impl World {
             context_refs: BTreeSet::from(["context:place-test".into()]),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
             body: ExecutionBody {
                 model_ref: "model:place-test".into(),
                 provider_ref: "provider:place-test".into(),
