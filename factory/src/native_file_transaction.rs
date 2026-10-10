@@ -694,9 +694,32 @@ mod unix {
             )?;
             let parent = directory(&parent_path, create_parent)?;
             let lock_name = name(lock_name)?;
-            let lock = open_at(&parent, &lock_name, libc::O_RDWR | libc::O_CREAT)?;
-            regular(&lock)?;
+            // Concurrent first acquisition of one name races the lock file's
+            // creation below the syscall: APFS has answered a fresh create
+            // with a transient ENOENT and answered the creator's immediate
+            // re-open with EACCES while the entry's metadata was still
+            // materializing (mode reading back 0000). The lock path earns the
+            // same bounded budget as the flock below; any other error, and
+            // either error past the deadline, stays fatal.
             let deadline = Instant::now() + LOCK_TIMEOUT;
+            let lock = loop {
+                match open_at(&parent, &lock_name, libc::O_RDWR | libc::O_CREAT) {
+                    Ok(lock) => break lock,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                        ) =>
+                    {
+                        if Instant::now() >= deadline {
+                            return Err(error);
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            regular(&lock)?;
             loop {
                 match FileExt::try_lock_exclusive(&lock) {
                     Ok(()) => break,
@@ -737,7 +760,23 @@ mod unix {
                 lock_name,
                 source,
             };
-            transaction.validate_binding()?;
+            loop {
+                match transaction.validate_binding() {
+                    Ok(()) => break,
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                        ) =>
+                    {
+                        if Instant::now() >= deadline {
+                            return Err(error);
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
             Ok(transaction)
         }
         pub(crate) fn current(&self) -> Option<&[u8]> {
