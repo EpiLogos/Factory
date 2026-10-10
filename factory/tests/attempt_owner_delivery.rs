@@ -160,12 +160,15 @@ impl World {
     /// Admits with an explicit praxis NOW-context identity: the central_cases
     /// harness pre-allocates the NOW through its double and names the exact
     /// identity the disposition must carry, because a unit demanding
-    /// praxisRefs names its prepared NOW context at admission.
+    /// praxisRefs names its prepared NOW context at admission. The inner
+    /// option forces the field — `Some(None)` admits a praxis unit that names
+    /// nothing, to prove the refusal — while the outer `None` keeps the
+    /// fixture default.
     fn start_with_receipt_in(
         &self,
         protected: bool,
         praxis_receipt: Option<Value>,
-        placed: Option<String>,
+        placed: Option<Option<String>>,
     ) -> Output {
         let unit = self.workflow.unit("inspect-source").unwrap();
         let demand = ExecutionDemand {
@@ -233,7 +236,7 @@ impl World {
                 workcell_ref: None,
             },
             now_context_ref: placed
-                .or_else(|| (!unit.praxis_refs.is_empty()).then(|| "now:test".into())),
+                .unwrap_or_else(|| (!unit.praxis_refs.is_empty()).then(|| "now:test".into())),
             placement: protected.then(|| PlacementProtection {
                 now_ref: "now:test".into(),
                 now_path: self.dir.path().display().to_string(),
@@ -644,6 +647,26 @@ fn a_missing_praxis_receipt_fails_admission_with_the_named_absence() {
     assert!(
         diagnostic.contains("aikit.encounter-task-praxis/v1"),
         "receipt contract not named: {diagnostic}"
+    );
+}
+
+#[test]
+fn a_praxis_unit_that_names_no_now_context_fails_admission_with_the_named_law() {
+    let world = World::new();
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    let output = world.start_with_receipt_in(
+        false,
+        Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
+        Some(None),
+    );
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("a unit demanding praxisRefs names its prepared NOW context"),
+        "named law missing: {diagnostic}"
     );
 }
 
