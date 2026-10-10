@@ -147,10 +147,12 @@ pub struct SituatedExecutionDisposition {
     /// `crate::attempt_praxis_receipt::validate_praxis_receipt` at the
     /// admission site. Absent stays absent (serde default, skipped when
     /// None), so units without praxisRefs — and every historical attempt —
-    /// serialise byte-identically to earlier state. No AIKit surface returns
-    /// the receipt yet (reported retrieval gap); the disposition constructor
-    /// attaches it through the existing `crate::native_aikit_route` channel
-    /// once one exists.
+    /// serialise byte-identically to earlier state. The read surface exists
+    /// (`aikit now context inspect`, `prepared.praxis`) and retrieval is
+    /// implemented in `crate::attempt_praxis_receipt`; admission wiring stops
+    /// at the NOW-inspect handles this path does not carry (see the retrieval
+    /// module note), so admission consults exactly the receipt a caller
+    /// attached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub praxis_receipt: Option<Value>,
     pub body: ExecutionBody,
