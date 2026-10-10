@@ -27,6 +27,9 @@ const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const P: &str = "central:position:project:O-I:factory-guardian";
 const OTHER: &str = "central:position:project:O-I:reviewer";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn occupancy_stub() -> PathBuf {
     let path = std::env::temp_dir().join("factory-test-occupancy-ok");
     if !path.exists() {
@@ -209,6 +212,10 @@ impl World {
             context_refs: BTreeSet::from(["context:test".into()]),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
             body: ExecutionBody {
                 model_ref: "model:test".into(),
                 provider_ref: "provider:test".into(),

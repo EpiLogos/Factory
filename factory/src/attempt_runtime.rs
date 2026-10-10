@@ -143,6 +143,19 @@ pub struct SituatedExecutionDisposition {
     pub praxis_refs: BTreeSet<String>,
     #[serde(default)]
     pub capability_refs: BTreeSet<String>,
+    /// AIKit's typed `aikit.encounter-task-praxis/v1` receipt for this
+    /// attempt's NOW preparation, when the process carries it. It rides the
+    /// disposition like AIKit's explicit-selection receipt rides
+    /// `ranking_explanation`: opaque evidence, interpreted only through
+    /// `crate::attempt_praxis_receipt::validate_praxis_receipt` at the
+    /// admission site. Absent stays absent (serde default, skipped when
+    /// None), so units without praxisRefs — and every historical attempt —
+    /// serialise byte-identically to earlier state. No AIKit surface returns
+    /// the receipt yet (reported retrieval gap); the disposition constructor
+    /// attaches it through the existing `crate::native_aikit_route` channel
+    /// once one exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub praxis_receipt: Option<Value>,
     pub body: ExecutionBody,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<PlacementProtection>,
@@ -1193,6 +1206,7 @@ fn prepare_start(
         engine.run().reference(),
         unit,
         start.retry_grant.as_ref(),
+        true,
     )?;
     validate_participant_requirements(&start.disposition, unit)?;
     crate::workflow_inputs::validate_selected_inputs(
@@ -1278,6 +1292,7 @@ fn validate_disposition(
     run_ref: &RunRef,
     unit: &CompiledWorkflowUnit,
     retry_grant: Option<&RetryGrant>,
+    praxis_receipt_required: bool,
 ) -> Result<(), FactoryAttemptError> {
     let demand = &disposition.selection.demand;
     if demand.run_ref != run_ref.to_string()
@@ -1381,6 +1396,19 @@ fn validate_disposition(
             "situated arrangement weakens or changes compiled workflow law".into(),
         ));
     }
+    // The AIKit NOW-preparation praxis receipt, beside the superset check it
+    // refines: a unit's required praxisRefs must be resolved with available
+    // standing by the typed receipt, and any refusal fails the admission
+    // closed echoing the receipt's code/condition/recovery. Fresh admission
+    // demands the receipt; reopen only validates one when carried, because
+    // new admission checks do not retroactively erase historical executions
+    // whose older compiler lacked this rule (see the module note above).
+    crate::attempt_praxis_receipt::validate_praxis_receipt(
+        disposition.praxis_receipt.as_ref(),
+        unit,
+        praxis_receipt_required,
+    )
+    .map_err(FactoryAttemptError::InvalidDisposition)?;
     if let Some(contribution) = &unit.contribution {
         if !disposition
             .context_refs
@@ -1737,7 +1765,13 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
             .ok_or_else(|| {
                 FactoryAttemptError::CorruptState("attempt names unknown unit".into())
             })?;
-        validate_disposition(&record.disposition, state.run.reference(), unit, None)?;
+        validate_disposition(
+            &record.disposition,
+            state.run.reference(),
+            unit,
+            None,
+            false,
+        )?;
         if let Some(grant_ref) = &record.disposition.budget.retry_grant_ref {
             let grant = engine.retry_grant(grant_ref).ok_or_else(|| {
                 FactoryAttemptError::CorruptState(

@@ -7,6 +7,9 @@
 #[path = "workflow_authoring/acp.rs"]
 mod acp;
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 use epilogos_factory::action_projection::{
     FactoryActionCaller, FactoryActionProjectionKind, ProjectedFactoryActionAuthority,
 };
@@ -326,6 +329,10 @@ impl World {
             context_refs: set(["context:controlled-test"]),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
             body: ExecutionBody {
                 model_ref: "model:controlled-test".into(),
                 provider_ref: "provider:controlled-test".into(),

@@ -47,6 +47,9 @@ const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const DECISION: &str = "human-request:controlled-native-receiving";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn value(output: Output) -> Value {
     assert!(
         output.status.success(),
@@ -1050,6 +1053,10 @@ fn disposition(run: &Run, workflow: &CompiledWorkflow, key: &str) -> SituatedExe
         context_refs: BTreeSet::from(["context:controlled-native-owner".into()]),
         praxis_refs: unit.praxis_refs.clone(),
         capability_refs: unit.capability_refs.clone(),
+        praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
         body: ExecutionBody {
             model_ref: "model:controlled-owner-contract-not-invoked".into(),
             provider_ref: "provider:controlled-owner-contract-not-invoked".into(),
