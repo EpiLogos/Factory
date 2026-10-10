@@ -19,6 +19,9 @@ const SOURCE: &str = include_str!("../../contracts/factory/fixtures/agent-workfl
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 fn workflow() -> CompiledWorkflow {
     let source: WorkflowSource = serde_json::from_str(SOURCE).unwrap();
     compile_workflow(source).unwrap()
@@ -138,6 +141,10 @@ fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDispo
         context_refs: BTreeSet::from(["context:preexisting".into()]),
         praxis_refs: unit.praxis_refs.clone(),
         capability_refs: unit.capability_refs.clone(),
+        praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
         body: ExecutionBody {
             model_ref: "model:durable-chain".into(),
             provider_ref: "provider:durable-chain".into(),

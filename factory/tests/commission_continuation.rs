@@ -45,6 +45,9 @@ const HISTORICAL_OWNER: &str =
 const COMMISSION: &str = "commission:continuation-owner-regression";
 const SUCCESSOR: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBE";
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 struct World {
     _directory: tempfile::TempDir,
     path: PathBuf,
@@ -360,6 +363,10 @@ fn read_only_disposition(
         context_refs: BTreeSet::from(["context:controlled-source-cleanup".into()]),
         praxis_refs: unit.praxis_refs.clone(),
         capability_refs: unit.capability_refs.clone(),
+        praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
         body: ExecutionBody {
             model_ref: "model:controlled-owner-regression".into(),
             provider_ref: "provider:controlled-owner-regression".into(),

@@ -22,6 +22,9 @@ use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
 const ATTEMPT: &str = "attempt:transport";
@@ -140,6 +143,19 @@ impl World {
     }
     fn start(&self, protected: bool) {
         let unit = self.workflow.unit("inspect-source").unwrap();
+        success(self.start_with_receipt(
+            protected,
+            Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
+        ));
+    }
+    /// Admits the controlled attempt carrying exactly the given praxis
+    /// receipt (or none), returning the raw admission output so tests can
+    /// assert the fail-closed refusal itself.
+    fn start_with_receipt(&self, protected: bool, praxis_receipt: Option<Value>) -> Output {
+        let unit = self.workflow.unit("inspect-source").unwrap();
         let demand = ExecutionDemand {
             project_ref: PROJECT.into(),
             run_ref: RUN.into(),
@@ -192,6 +208,7 @@ impl World {
             context_refs: BTreeSet::from(["context:test".into()]),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt,
             body: ExecutionBody {
                 model_ref: "model:test".into(),
                 provider_ref: "provider:test".into(),
@@ -229,7 +246,7 @@ impl World {
                 maximum_attempts: None,
             },
         };
-        success(self.action(FactoryAttemptOperation::StartSerial {
+        self.action(FactoryAttemptOperation::StartSerial {
             attempt_ref: ATTEMPT.into(),
             task_ref: "task:inspect".into(),
             parent_journey_ref: "journey:test".into(),
@@ -238,7 +255,7 @@ impl World {
             retry_grant: None,
             tracking: vec![],
             place_grant: None,
-        }));
+        })
     }
     fn request(&self, id: &str, action: &str) -> Value {
         let packet = if action == "send" {
@@ -574,6 +591,45 @@ fn development_alias_uses_same_canonical_owner_action_and_readback() {
     assert_eq!(
         world.reading().attempts[0].execution_ref.as_deref(),
         Some(EXECUTION)
+    );
+}
+
+#[test]
+fn a_refused_praxis_receipt_fails_admission_echoing_code_and_recovery() {
+    let world = World::new();
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    let output = world.start_with_receipt(
+        false,
+        Some(praxis_receipt_fixture::refused_receipt(
+            &unit.reference.to_string(),
+            unit.praxis_refs.iter().next().unwrap(),
+        )),
+    );
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("ref-absent"),
+        "refusal code not echoed: {diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("author or register the Skill the praxisRef names"),
+        "recovery not echoed: {diagnostic}"
+    );
+}
+
+#[test]
+fn a_missing_praxis_receipt_fails_admission_with_the_named_absence() {
+    let world = World::new();
+    let output = world.start_with_receipt(false, None);
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("carries no AIKit NOW-preparation praxis receipt"),
+        "named absence missing: {diagnostic}"
+    );
+    assert!(
+        diagnostic.contains("aikit.encounter-task-praxis/v1"),
+        "receipt contract not named: {diagnostic}"
     );
 }
 
