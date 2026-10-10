@@ -155,6 +155,18 @@ impl World {
     /// receipt (or none), returning the raw admission output so tests can
     /// assert the fail-closed refusal itself.
     fn start_with_receipt(&self, protected: bool, praxis_receipt: Option<Value>) -> Output {
+        self.start_with_receipt_in(protected, praxis_receipt, None)
+    }
+    /// Admits with an explicit praxis NOW-context identity: the central_cases
+    /// harness pre-allocates the NOW through its double and names the exact
+    /// identity the disposition must carry, because a unit demanding
+    /// praxisRefs names its prepared NOW context at admission.
+    fn start_with_receipt_in(
+        &self,
+        protected: bool,
+        praxis_receipt: Option<Value>,
+        placed: Option<String>,
+    ) -> Output {
         let unit = self.workflow.unit("inspect-source").unwrap();
         let demand = ExecutionDemand {
             project_ref: PROJECT.into(),
@@ -220,6 +232,8 @@ impl World {
                 material_world_ref: None,
                 workcell_ref: None,
             },
+            now_context_ref: placed
+                .or_else(|| (!unit.praxis_refs.is_empty()).then(|| "now:test".into())),
             placement: protected.then(|| PlacementProtection {
                 now_ref: "now:test".into(),
                 now_path: self.dir.path().display().to_string(),

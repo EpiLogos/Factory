@@ -2,9 +2,7 @@ use super::*;
 
 #[test]
 fn unresolved_preparation_cannot_be_replaced_by_a_different_request() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     world.mode("returned");
     fs::write(world.dir.path().join("central-mode"), "lost").unwrap();
     let request = prepare_request(&world, &ctrl, "prepare:unresolved");
@@ -21,9 +19,7 @@ fn unresolved_preparation_cannot_be_replaced_by_a_different_request() {
 
 #[test]
 fn old_preparation_replay_is_read_only_but_cannot_refresh_over_its_successor() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     let mut first = prepare_request(&world, &ctrl, "prepare:first");
     assert_eq!(preparation(&world, &first)["needsReconciliation"], false);
     let second = prepare_request(&world, &ctrl, "prepare:second");
@@ -40,9 +36,7 @@ fn old_preparation_replay_is_read_only_but_cannot_refresh_over_its_successor() {
 
 #[test]
 fn two_preparations_on_the_same_opening_revision_have_one_winner() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     let first = prepare_request(&world, &ctrl, "prepare:concurrent-a");
     let second = prepare_request(&world, &ctrl, "prepare:concurrent-b");
     let args = [
@@ -74,9 +68,7 @@ fn two_preparations_on_the_same_opening_revision_have_one_winner() {
 
 #[test]
 fn expired_preparation_requires_explicit_fresh_native_readback() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     policy_change(&world, "lease_seconds", json!(2));
     let mut request = prepare_request(&world, &ctrl, "prepare:expiry");
     assert_eq!(preparation(&world, &request)["needsReconciliation"], false);

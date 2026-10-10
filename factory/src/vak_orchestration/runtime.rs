@@ -519,6 +519,11 @@ impl NativeVakPerformance {
                     attempt_index,
                     current: attempt_index + 1 == leg.attempts.len(),
                     execution_ref: attempt.execution_ref.clone(),
+                    // The snapshot's actor is the conducting binding's actor.
+                    // The per-voice actor is the attempt's own admitted
+                    // participant (`participant.agent_ref` on the attempt
+                    // record, optionally a durable Central profile) — this
+                    // reading correlates voices; it does not re-attribute them.
                     actor_ref: self.plan.binding.actor_ref.clone(),
                     whole_ref: scope.whole_ref.clone(),
                     subject_ref: attempt.delegation.subject_ref.clone(),

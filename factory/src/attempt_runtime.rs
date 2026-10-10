@@ -158,6 +158,12 @@ pub struct SituatedExecutionDisposition {
     /// attached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub praxis_receipt: Option<Value>,
+    /// The prepared NOW context this attempt's praxis was resolved against —
+    /// named at admission for units demanding praxisRefs, and checked against
+    /// the idempotent Central allocation at preparation. Resolution identity,
+    /// not enforcement: protection stays `placement`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub now_context_ref: Option<String>,
     pub body: ExecutionBody,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement: Option<PlacementProtection>,
@@ -1405,6 +1411,26 @@ fn validate_disposition(
     // demands the receipt; reopen only validates one when carried, because
     // new admission checks do not retroactively erase historical executions
     // whose older compiler lacked this rule (see the module note above).
+    // The receipt is resolved against a prepared NOW context, so a unit
+    // demanding praxisRefs names that context: resolving it is the
+    // orchestrator's obligation — it prepares the NOW context and holds the
+    // AIKit handles — and Factory's single gate stays here, at the earliest
+    // boundary, with nothing to re-admit later.
+    if praxis_receipt_required
+        && crate::attempt_praxis_receipt::retrieval_applies(unit)
+        && disposition
+            .now_context_ref
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Err(FactoryAttemptError::InvalidDisposition(
+            "a unit demanding praxisRefs names its prepared NOW context: the disposition \
+             carries the now_context_ref the praxis receipt was resolved against"
+                .into(),
+        ));
+    }
     crate::attempt_praxis_receipt::validate_praxis_receipt(
         disposition.praxis_receipt.as_ref(),
         unit,
