@@ -151,7 +151,7 @@ fn placed_world(native: bool) -> (World, std::path::PathBuf) {
             &unit.reference.to_string(),
             &unit.praxis_refs,
         )),
-        Some(now_context_ref),
+        Some(Some(now_context_ref)),
     );
     (world, ctrl)
 }
@@ -200,6 +200,41 @@ fn pre_allocate(world: &World, ctrl: &Path) -> String {
     let response: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["ok"], true, "{response}");
     response["data"]["now_ref"].as_str().unwrap().into()
+}
+
+#[test]
+fn native_central_now_differs_from_the_resolution_context_stops_prepare() {
+    let world = World::new();
+    let ctrl = setup(&world, true);
+    // Admit naming a NOW context the double never allocated; the idempotent
+    // allocation lands on the real one and preparation must refuse before
+    // any worker transport, because the receipt speaks for the named context.
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    world.start_with_receipt_in(
+        false,
+        Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
+        Some(Some("central:now:foreign-resolution-context".into())),
+    );
+    let request = prepare_request(&world, &ctrl, "prepare:foreign-context");
+    // A refused preparation is a recorded, uncertain outcome: the process
+    // succeeds and the receipt carries needsReconciliation with the named law.
+    let result = world.call("prepare", Some(&request));
+    let receipt: Value =
+        serde_json::from_slice(&result.stdout).expect("Central preparation receipt");
+    assert_eq!(receipt["needsReconciliation"], true);
+    assert!(
+        receipt["observation"]["payload"]["detail"]["error"]
+            .as_str()
+            .unwrap()
+            .contains(
+                "native NOW differs from the NOW context the praxis receipt was resolved against"
+            ),
+        "identity law missing: {receipt}"
+    );
+    assert!(world.reading().attempts[0].execution_ref.is_none());
 }
 
 #[test]

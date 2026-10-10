@@ -362,12 +362,12 @@ pub(crate) struct StoredAttemptState {
     /// The conduct plans this attempt field's admission derived from the
     /// retained source (#217). Empty without authored compositions, which
     /// leaves the state byte-identical to the plain path.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) derived_conduct_plans: Vec<VakConductPlan>,
     /// Snapshots of the derived performances the attempt Actions opened.
     /// Recorded once at conduct time; later plain-path retries keep adding
     /// their own coordinator attempts and never rewrite these readings.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) conduct_performances: Vec<VakPerformanceSnapshot>,
 }
 
@@ -1755,6 +1755,20 @@ pub(crate) fn validate_state(state: &StoredAttemptState) -> Result<(), FactoryAt
         ));
     }
     let workflow = compile_workflow(state.workflow_source.clone())?;
+    // Derivation is deterministic from the retained source: the recorded
+    // plans must equal a fresh derivation, so a stale or tampered record
+    // cannot pass as this Run's conduct.
+    let fresh_derivation =
+        crate::vak_orchestration::derive_conduct_plans(&workflow).map_err(|error| {
+            FactoryAttemptError::CorruptState(format!(
+                "retained source no longer derives conduct: {error}"
+            ))
+        })?;
+    if fresh_derivation.plans() != state.derived_conduct_plans {
+        return Err(FactoryAttemptError::CorruptState(
+            "recorded conduct plans differ from a fresh derivation of the retained source".into(),
+        ));
+    }
     for plan in &state.derived_conduct_plans {
         plan.validate(&workflow).map_err(|error| {
             FactoryAttemptError::CorruptState(format!("recorded conduct plan refused: {error}"))

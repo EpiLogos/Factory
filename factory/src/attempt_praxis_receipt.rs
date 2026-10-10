@@ -41,14 +41,14 @@
 //! The admission wiring itself stops at a missing handle, reported rather
 //! than invented: the enforcement site `prepare_start`
 //! (`attempt_runtime.rs`) holds no NOW-context identity. The only candidate
-//! is `disposition.placement.now_ref` (`attempt_runtime.rs:93`), optional and
+//! is `disposition.placement.now_ref` (`the `SituatedExecutionDisposition.placement` declaration`), optional and
 //! guaranteed only for effectful/materialised attempts
-//! (`attempt_runtime.rs:1366-1372`); the authoritative allocation happens
+//! (`the admission placement law in `attempt_runtime``); the authoritative allocation happens
 //! later, for an already-admitted attempt (`central.now.allocate`,
-//! `attempt_central.rs:441`). The inspection's own handles — binary, cwd,
+//! `the `central.now.allocate` call in `attempt_central::prepare``). The inspection's own handles — binary, cwd,
 //! transport, the Redis NOW `--config-file` and the `--participant-ref` —
 //! ride the dispatch-time `FactoryAttemptOwnerRequest.invocation`
-//! (`attempt_owner_dispatch.rs:47`) and exist nowhere in `AttemptStart` or
+//! (`the `FactoryAttemptOwnerRequest.invocation` declaration`) and exist nowhere in `AttemptStart` or
 //! `StoredAttemptState`. Until a caller that holds those handles invokes the
 //! retrieval and attaches the result to the disposition
 //! ([`crate::attempt_runtime::SituatedExecutionDisposition::praxis_receipt`]),
