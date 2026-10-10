@@ -161,7 +161,6 @@ fn placed_world(native: bool) -> (World, std::path::PathBuf) {
 /// because the double asserts record equality on the idempotent
 /// re-allocation.
 fn pre_allocate(world: &World, ctrl: &Path) -> String {
-    use sha2::Digest;
     let root = world.dir.path().canonicalize().unwrap();
     let unit = world.workflow.unit("inspect-source").unwrap();
     let agent_ref = unit
@@ -171,35 +170,38 @@ fn pre_allocate(world: &World, ctrl: &Path) -> String {
         .next()
         .unwrap()
         .clone();
-    let policy_revision = format!(
-        "test-only-policy:{}",
-        sha2::Sha256::digest(fs::read(root.join("Control/user/placement.json")).unwrap())
-            .iter()
-            .map(|byte| format!("{byte:02x}"))
-            .collect::<String>()
-    );
+    // The policy revision comes from the server, never from a local model of
+    // it: the same call works against the protocol double and the real ctrl.
+    let run_action = |action: &str, request: Value| {
+        let output = Command::new(ctrl)
+            .args([
+                "--json",
+                "--root",
+                root.to_str().unwrap(),
+                "action",
+                "run",
+                action,
+            ])
+            .arg(request.to_string())
+            .output()
+            .unwrap();
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(response["ok"], true, "{response}");
+        response
+    };
+    let policy = run_action("central.work.policy", json!({}));
     let request = json!({
-        "expected_policy_revision": policy_revision,
+        "expected_policy_revision": policy["data"]["revision"].clone(),
         "task_ref": "task:inspect",
         "purpose": "Recover the current Factory architecture and source obligations",
         "participant_refs": [agent_ref, "agency:transport"],
         "source_refs": [world.workflow.source.reference.to_string()],
     });
-    let output = Command::new(ctrl)
-        .args([
-            "--json",
-            "--root",
-            root.to_str().unwrap(),
-            "action",
-            "run",
-            "central.now.allocate",
-        ])
-        .arg(request.to_string())
-        .output()
-        .unwrap();
-    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["ok"], true, "{response}");
-    response["data"]["now_ref"].as_str().unwrap().into()
+    let response = run_action("central.now.allocate", request);
+    response["data"]["now_ref"]
+        .as_str()
+        .unwrap()
+        .to_owned()
 }
 
 #[test]
