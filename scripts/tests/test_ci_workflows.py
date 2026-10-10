@@ -136,9 +136,9 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.assertEqual(32, len(sets['groups']['receiving']))
         self.assertEqual(3, len(sets['groups']['consumer-os']))
         self.assertNotIn(sets['integration_child_definition'], sets['groups']['receiving'])
-        self.assertEqual(9, len(sets['groups']['preparation']))
+        self.assertEqual(10, len(sets['groups']['preparation']))
         self.assertIn('central_cases::followup::native_central_return_keeps_the_allocated_now_without_including_the_document', sets['groups']['preparation'])
-        self.assertEqual(64, sum(len(cases) for cases in sets['groups'].values()))
+        self.assertEqual(65, sum(len(cases) for cases in sets['groups'].values()))
         self.assertFalse(sets['full_native_composite_qualified'])
 
     def test_owner_dispatch_requires_six_actual_bodies_and_observed_inputs(self):
@@ -367,8 +367,8 @@ class NativeEvidencePathTests(unittest.TestCase):
             self.census.declare_log_path(self.directory, 'capture', case, self.sets)
         self.assertEqual(b'original output', log.read_bytes())
         mapping = self.census.case_path_mapping(self.sets)
-        self.assertEqual(64, len(mapping))
-        self.assertEqual(64, len(set(mapping.values())))
+        self.assertEqual(65, len(mapping))
+        self.assertEqual(65, len(set(mapping.values())))
 
     def test_nested_actual_unsupported_names_refuse_upload_without_renaming_or_losing_bytes(self):
         nested = self.directory / 'fixture-snapshot'
