@@ -449,6 +449,20 @@ fn prepare(
             return Err("native NOW/policy differs from the selected disposition; explicitly re-resolve the attempt".into());
         }
     }
+    // The praxis receipt was resolved against a named prepared NOW context;
+    // the idempotent allocation must land on that same identity, or the
+    // receipt says nothing about the NOW this attempt would run in.
+    if let Some(now_context_ref) = attempt
+        .disposition
+        .now_context_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|reference| !reference.is_empty())
+    {
+        if allocation["now_ref"] != json!(now_context_ref) {
+            return Err("native NOW differs from the NOW context the praxis receipt was resolved against; explicitly re-resolve the attempt".into());
+        }
+    }
     if previous.is_some_and(|old| old["allocation"]["now_ref"] != allocation["now_ref"]) {
         return Err("recovery changed the original NOW identity".into());
     }

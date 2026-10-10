@@ -306,6 +306,7 @@ print(json.dumps(value))
                 &unit.reference.to_string(),
                 &unit.praxis_refs,
             )),
+            now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
             body: ExecutionBody {
                 model_ref: "model:test".into(),
                 provider_ref: "provider:test".into(),

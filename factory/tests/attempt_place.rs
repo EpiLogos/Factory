@@ -564,6 +564,7 @@ impl World {
                 &unit.reference.to_string(),
                 &unit.praxis_refs,
             )),
+            now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
             body: ExecutionBody {
                 model_ref: "model:place-test".into(),
                 provider_ref: "provider:place-test".into(),

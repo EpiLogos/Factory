@@ -130,11 +130,76 @@ fn central_calls(world: &World) -> usize {
         .count()
 }
 fn native_world() -> (World, std::path::PathBuf, Value) {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, true);
+    let (world, ctrl) = placed_world(true);
     let request = prepare_request(&world, &ctrl, "prepare:native");
     (world, ctrl, request)
+}
+
+/// A World whose admitted disposition names the NOW context the double
+/// allocated. A unit demanding praxisRefs names its prepared NOW context at
+/// admission, so every test that reaches `attempt prepare` allocates through
+/// the double first; `attempt prepare` then re-allocates the same identity
+/// idempotently.
+fn placed_world(native: bool) -> (World, std::path::PathBuf) {
+    let world = World::new();
+    let ctrl = setup(&world, native);
+    let now_context_ref = pre_allocate(&world, &ctrl);
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    world.start_with_receipt_in(
+        false,
+        Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
+        Some(now_context_ref),
+    );
+    (world, ctrl)
+}
+
+/// Allocates the fixture NOW through the actual double and returns its
+/// identity. The request repeats exactly what `attempt prepare` will send,
+/// because the double asserts record equality on the idempotent
+/// re-allocation.
+fn pre_allocate(world: &World, ctrl: &Path) -> String {
+    use sha2::Digest;
+    let root = world.dir.path().canonicalize().unwrap();
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    let agent_ref = unit
+        .agent_requirements
+        .agent_refs
+        .iter()
+        .next()
+        .unwrap()
+        .clone();
+    let policy_revision = format!(
+        "test-only-policy:{}",
+        sha2::Sha256::digest(fs::read(root.join("Control/user/placement.json")).unwrap())
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>()
+    );
+    let request = json!({
+        "expected_policy_revision": policy_revision,
+        "task_ref": "task:inspect",
+        "purpose": "Recover the current Factory architecture and source obligations",
+        "participant_refs": [agent_ref, "agency:transport"],
+        "source_refs": [world.workflow.source.reference.to_string()],
+    });
+    let output = Command::new(ctrl)
+        .args([
+            "--json",
+            "--root",
+            root.to_str().unwrap(),
+            "action",
+            "run",
+            "central.now.allocate",
+        ])
+        .arg(request.to_string())
+        .output()
+        .unwrap();
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["ok"], true, "{response}");
+    response["data"]["now_ref"].as_str().unwrap().into()
 }
 
 #[test]
@@ -349,9 +414,7 @@ fn native_central_required_worker_enforcement_cannot_be_bypassed_by_preparation(
 #[test]
 fn preparation_stale_or_unauthorised_requests_never_call_central() {
     for stale in [true, false] {
-        let world = World::new();
-        world.start(false);
-        let ctrl = setup(&world, false);
+        let (world, ctrl) = placed_world(false);
         let mut request = prepare_request(&world, &ctrl, "prepare:invalid");
         if stale {
             request["expectedRevision"] = json!(1);
@@ -359,17 +422,18 @@ fn preparation_stale_or_unauthorised_requests_never_call_central() {
             request["authority"]["actionAuthorised"] = json!(false);
         }
         let before = fs::read(world.state()).unwrap();
+        // placed_world's admission pre-allocation is fixture setup; the
+        // refused prepare itself must add no Central call.
+        let setup_calls = central_calls(&world);
         assert!(!world.call("prepare", Some(&request)).status.success());
         assert_eq!(fs::read(world.state()).unwrap(), before);
-        assert_eq!(central_calls(&world), 0);
+        assert_eq!(central_calls(&world), setup_calls);
     }
 }
 
 #[test]
 fn preparation_lost_allocation_response_recovers_same_native_now_without_dispatch() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     fs::write(world.dir.path().join("central-mode"), "lost").unwrap();
     let mut request = prepare_request(&world, &ctrl, "prepare:lost");
     let uncertain = preparation(&world, &request);
@@ -405,9 +469,7 @@ fn preparation_lost_allocation_response_recovers_same_native_now_without_dispatc
 
 #[test]
 fn preparation_foreign_task_receipt_never_becomes_a_ready_checkpoint() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     fs::write(world.dir.path().join("central-mode"), "foreign").unwrap();
     let result = preparation(&world, &prepare_request(&world, &ctrl, "prepare:foreign"));
     assert_eq!(result["needsReconciliation"], true);
@@ -418,9 +480,7 @@ fn preparation_foreign_task_receipt_never_becomes_a_ready_checkpoint() {
 
 #[test]
 fn preparation_has_one_total_transport_deadline() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     fs::write(world.dir.path().join("central-mode"), "slow").unwrap();
     let mut request = prepare_request(&world, &ctrl, "prepare:bounded");
     request["timeoutMs"] = json!(100);
@@ -433,9 +493,7 @@ fn preparation_has_one_total_transport_deadline() {
 
 #[test]
 fn explicit_refresh_crash_invalidates_the_earlier_ready_checkpoint() {
-    let world = World::new();
-    world.start(false);
-    let ctrl = setup(&world, false);
+    let (world, ctrl) = placed_world(false);
     let mut request = prepare_request(&world, &ctrl, "prepare:refresh");
     assert_eq!(preparation(&world, &request)["needsReconciliation"], false);
     fs::write(world.dir.path().join("central-mode"), "pause").unwrap();

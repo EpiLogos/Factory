@@ -1057,6 +1057,7 @@ fn disposition(run: &Run, workflow: &CompiledWorkflow, key: &str) -> SituatedExe
             &unit.reference.to_string(),
             &unit.praxis_refs,
         )),
+        now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
         body: ExecutionBody {
             model_ref: "model:controlled-owner-contract-not-invoked".into(),
             provider_ref: "provider:controlled-owner-contract-not-invoked".into(),

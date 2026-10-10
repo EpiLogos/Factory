@@ -23,6 +23,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "support/praxis_receipt_fixture.rs"]
+mod praxis_receipt_fixture;
+
 const COMPOSED: &str = "expression-development.workflow.ts";
 const JOURNEY: &str = "journey:commission-conduct";
 
@@ -263,6 +266,12 @@ impl World {
             context_refs,
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: Some(praxis_receipt_fixture::resolved_receipt(
+                &unit.reference.to_string(),
+                &unit.praxis_refs,
+            )),
+            now_context_ref: (!unit.praxis_refs.is_empty())
+                .then(|| format!("now:commission-conduct-{key}")),
             body: ExecutionBody {
                 model_ref: "model:commission-conduct".into(),
                 provider_ref: "provider:commission-conduct".into(),
