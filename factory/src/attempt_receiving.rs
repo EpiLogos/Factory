@@ -1512,11 +1512,15 @@ mod capture_consumer_os_tests {
             project: None,
             contract_revision: CENTRAL_CONTRACT_REVISION.into(),
         };
+        // The child prints its marker within milliseconds of spawn and then
+        // sleeps for 2s; the deadline must land between those two events even
+        // under load, so it stays well clear of the spawn cost while still
+        // expiring before the child's own exit.
         let failure = call_observed_bounded(
             &endpoint,
             "central.receiving.read",
             &json!({}),
-            Duration::from_millis(250),
+            Duration::from_millis(1000),
         )
         .unwrap_err();
         let original = failure
