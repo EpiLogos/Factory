@@ -18,6 +18,8 @@ const COMMANDS: &[&str] = &[
     "attempt.decision",
     "attempt.learn",
     "attempt.material",
+    "attempt.delivery",
+    "attempt.readiness",
     "development.attempt.prepare",
     "development.attempt.init",
     "development.attempt.attach",
@@ -31,6 +33,8 @@ const COMMANDS: &[&str] = &[
     "development.attempt.decision",
     "development.attempt.learn",
     "development.attempt.material",
+    "development.attempt.delivery",
+    "development.attempt.readiness",
     "owner",
 ];
 const CONTRACTS: &[&str] = &[
@@ -51,6 +55,9 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_learning::LEARNING_RECEIPT,
     crate::attempt_material::MATERIAL_ACTION,
     crate::attempt_material::MATERIAL_RECEIPT,
+    crate::attempt_delivery::DELIVERY_ACTION,
+    crate::attempt_delivery::DELIVERY_READING,
+    crate::attempt_delivery::DELIVERY_OBSERVATION,
 ];
 
 pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError> {
@@ -78,6 +85,12 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
         _ => None,
     };
     if let Some(args) = attempt_args {
+        if args
+            .first()
+            .is_some_and(|command| matches!(command.as_str(), "delivery" | "readiness"))
+        {
+            return crate::attempt_delivery::execute_cli(args, stdin);
+        }
         if args.first().map(String::as_str) == Some("learn") {
             return crate::attempt_learning::execute_cli(&args[1..], stdin);
         }
@@ -130,8 +143,10 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
                     .map_err(|error| error.to_string())?;
                 let material = crate::attempt_material::execute_cli(&[], None)
                     .map_err(|error| error.to_string())?;
+                let delivery = crate::attempt_delivery::execute_cli(&[], None)
+                    .map_err(|error| error.to_string())?;
                 Ok(format!(
-                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{decision}\n\n{learning}\n\n{preparation}\n\n{material}",
+                    "{base}\n\n{owner}\n\n{}\n\n{receiving}\n\n{decision}\n\n{learning}\n\n{preparation}\n\n{material}\n\n{delivery}",
                     task_help()
                 ))
             }

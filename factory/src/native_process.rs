@@ -232,8 +232,13 @@ fn pipe_read<T: Read>(_pipe: &mut T, _buffer: &mut [u8]) -> io::Result<Option<us
     ))
 }
 
-fn append_capture(bytes: &mut Vec<u8>, truncated: &mut bool, read: &[u8]) -> io::Result<()> {
-    let room = MAX_OWNER_OUTPUT_BYTES as usize - bytes.len();
+fn append_capture(
+    bytes: &mut Vec<u8>,
+    truncated: &mut bool,
+    read: &[u8],
+    limit: u64,
+) -> io::Result<()> {
+    let room = limit as usize - bytes.len();
     bytes.extend_from_slice(&read[..read.len().min(room)]);
     if read.len() > room {
         *truncated = true;
@@ -245,13 +250,66 @@ fn append_capture(bytes: &mut Vec<u8>, truncated: &mut bool, read: &[u8]) -> io:
     Ok(())
 }
 
+#[cfg(unix)]
+fn confirm_group_retired(group: u32, deadline: Instant) -> io::Result<()> {
+    loop {
+        let result = unsafe { libc::kill(-(group as libc::pid_t), 0) };
+        if result == -1 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            return Err(error);
+        }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|d| !d.is_zero())
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "owned reader group retirement unconfirmed within capture budget",
+                )
+            })?;
+        thread::sleep(remaining.min(POLL_INTERVAL));
+    }
+}
+
+#[cfg(unix)]
+fn signal_owned_group(group: u32) -> io::Result<bool> {
+    let result = unsafe { libc::kill(-(group as libc::pid_t), libc::SIGKILL) };
+    if result == 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(false)
+    } else {
+        Err(error)
+    }
+}
+
 fn finish_failure(
     mut child: Child,
     cause: io::Error,
     mut observation: CaptureObservation,
     deadline: Instant,
+    owned_group: Option<u32>,
 ) -> NativeCaptureFailure {
     let mut cleanup_errors = Vec::new();
+    #[cfg(unix)]
+    if !observation.ownership_lost {
+        if let Some(group) = owned_group {
+            // This exact group was established by this capture before exec.
+            // Local transport retirement never proves a remote worker stopped.
+            observation.stop_attempted = true;
+            match signal_owned_group(group) {
+                Ok(requested) => observation.stop_requested |= requested,
+                Err(error) => cleanup_errors.push(error),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = owned_group;
     // Any observed wait error forbids further signaling/reaping. The ordinary
     // Unix Child path assumes exclusive reaping; a hostile external waiter in
     // the interval between a successful check and signal is not atomically
@@ -293,6 +351,14 @@ fn finish_failure(
             }
         }
     }
+    #[cfg(unix)]
+    if !observation.ownership_lost {
+        if let Some(group) = owned_group {
+            if let Err(error) = confirm_group_retired(group, deadline) {
+                cleanup_errors.push(error);
+            }
+        }
+    }
     // No detached wait/reader is created. Unobserved reap remains explicit;
     // neither a successful kill request nor dropping Child proves retirement.
     NativeCaptureFailure {
@@ -302,10 +368,29 @@ fn finish_failure(
     }
 }
 
+#[cfg(test)]
 fn capture_spawned(
+    child: Child,
+    deadline: Instant,
+    capture_deadline: Instant,
+) -> Result<Output, NativeCaptureFailure> {
+    capture_spawned_with_limits(
+        child,
+        deadline,
+        capture_deadline,
+        MAX_OWNER_OUTPUT_BYTES,
+        MAX_OWNER_OUTPUT_BYTES,
+        None,
+    )
+}
+
+fn capture_spawned_with_limits(
     mut child: Child,
     deadline: Instant,
     capture_deadline: Instant,
+    stdout_limit: u64,
+    stderr_limit: u64,
+    owned_group: Option<u32>,
 ) -> Result<Output, NativeCaptureFailure> {
     let mut observation = CaptureObservation {
         process_started: true,
@@ -317,6 +402,7 @@ fn capture_spawned(
             io::Error::other("native owner stdout pipe was absent"),
             observation,
             deadline,
+            owned_group,
         ));
     };
     let Some(mut stderr) = child.stderr.take() else {
@@ -326,12 +412,19 @@ fn capture_spawned(
             io::Error::other("native owner stderr pipe was absent"),
             observation,
             deadline,
+            owned_group,
         ));
     };
     if let Err(error) = prepare_pipe(&stdout).and_then(|()| prepare_pipe(&stderr)) {
         drop(stdout);
         drop(stderr);
-        return Err(finish_failure(child, error, observation, deadline));
+        return Err(finish_failure(
+            child,
+            error,
+            observation,
+            deadline,
+            owned_group,
+        ));
     }
     let mut buffer = [0u8; READ_BYTES];
     let outcome: io::Result<()> = loop {
@@ -352,6 +445,7 @@ fn capture_spawned(
                         &mut observation.stdout,
                         &mut observation.stdout_truncated,
                         &buffer[..count],
+                        stdout_limit,
                     ) {
                         break Err(error);
                     }
@@ -368,6 +462,7 @@ fn capture_spawned(
                         &mut observation.stderr,
                         &mut observation.stderr_truncated,
                         &buffer[..count],
+                        stderr_limit,
                     ) {
                         break Err(error);
                     }
@@ -400,12 +495,36 @@ fn capture_spawned(
     drop(stdout);
     drop(stderr);
     match outcome {
-        Ok(()) => Ok(Output {
-            status: observation.status.expect("actual status observed"),
-            stdout: observation.stdout,
-            stderr: observation.stderr,
-        }),
-        Err(cause) => Err(finish_failure(child, cause, observation, deadline)),
+        Ok(()) => {
+            #[cfg(unix)]
+            if let Some(group) = owned_group {
+                // A successful read owns no lasting background process, even
+                // when a child closed inherited output descriptors early.
+                let retired =
+                    signal_owned_group(group).and_then(|_| confirm_group_retired(group, deadline));
+                if let Err(cause) = retired {
+                    return Err(finish_failure(
+                        child,
+                        cause,
+                        observation,
+                        deadline,
+                        owned_group,
+                    ));
+                }
+            }
+            Ok(Output {
+                status: observation.status.expect("actual status observed"),
+                stdout: observation.stdout,
+                stderr: observation.stderr,
+            })
+        }
+        Err(cause) => Err(finish_failure(
+            child,
+            cause,
+            observation,
+            deadline,
+            owned_group,
+        )),
     }
 }
 
@@ -418,10 +537,48 @@ pub fn capture_output(
     command: &mut Command,
     timeout: Duration,
 ) -> Result<Output, NativeCaptureFailure> {
-    if timeout.is_zero() {
+    capture_output_with_limits(
+        command,
+        timeout,
+        Stdio::null(),
+        MAX_OWNER_OUTPUT_BYTES,
+        MAX_OWNER_OUTPUT_BYTES,
+        false,
+    )
+}
+
+/// The same capture engine for native read transports with an explicit input
+/// file and response bounds. Defaults above remain unchanged. On Unix an
+/// explicitly owned group includes inherited-pipe descendants in cleanup.
+pub(crate) fn capture_output_with_limits(
+    command: &mut Command,
+    timeout: Duration,
+    stdin: Stdio,
+    stdout_limit: u64,
+    stderr_limit: u64,
+    own_group: bool,
+) -> Result<Output, NativeCaptureFailure> {
+    if timeout.is_zero()
+        || stdout_limit == 0
+        || stderr_limit == 0
+        || stdout_limit > 16 * 1024 * 1024
+        || stderr_limit > 16 * 1024 * 1024
+    {
         return Err(NativeCaptureFailure::before_spawn(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "native owner transport timeout must be positive",
+            "native owner transport requires positive finite time and byte limits",
+        )));
+    }
+    #[cfg(unix)]
+    if own_group {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    if own_group {
+        return Err(NativeCaptureFailure::before_spawn(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "owned reader process-group cleanup is unavailable on this target",
         )));
     }
     let started = Instant::now();
@@ -434,12 +591,20 @@ pub fn capture_output(
     let reserve = MAX_CLEANUP_RESERVE.min(timeout / 4);
     let capture_deadline = deadline.checked_sub(reserve).unwrap_or(deadline);
     let child = command
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(NativeCaptureFailure::before_spawn)?;
-    capture_spawned(child, deadline, capture_deadline)
+    let group = own_group.then(|| child.id());
+    capture_spawned_with_limits(
+        child,
+        deadline,
+        capture_deadline,
+        stdout_limit,
+        stderr_limit,
+        group,
+    )
 }
 
 /// Legacy API/Output ABI preserved. Complete actual nonzero exits remain Output.

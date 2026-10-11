@@ -31,6 +31,8 @@ factory attempt return <native-state> <run-ref> <attempt-ref> [--json]
 factory attempt receiving <native-state> <request-json|-> --json
 factory attempt learn <native-state> <request-json|-> --json
 factory attempt material <native-state> <request-json|-> --json
+factory attempt delivery <native-state> <request-json|-> [--json]
+factory attempt readiness <native-state> <run-ref> <attempt-ref> [--json]
 ```
 
 `factory development attempt ...` projects the same operations. The existing
@@ -56,6 +58,79 @@ AgentSession and SessionSpace. A valid receipt from another conversation is not
 the body for this attempt. The ordinary ranked selection path remains available.
 Neither receipt is dispatch, an authority grant, a loaded-Skill claim or a model
 result; current native task/authority checks still run before the actual send.
+
+## Exact-revision delivery
+
+Factory #280 extends these same attempts through focused verification,
+distinct selected-input review, one admitted task-branch publisher, hosted CI,
+bounded repair and reviewed correction. `factory.attempt-delivery-action/v1`
+selects the existing Run/change with its intent, base and candidate commits,
+verification-plan and source revisions, required checks, publication target
+and finite bounds. Candidate fingerprints use the observed immutable Git tree:
+`git-tree:<tree-sha>`. The operation retains each failure, correction and
+publication observation in the existing attempt history.
+
+The native Subject revision remains the selected workflow unit's source basis.
+The candidate Git revision belongs to `Verification.sourceRevision` and the
+delivery plan's candidate revision and tree fingerprint. Updating the candidate
+does not rewrite the Subject's authored basis.
+
+Reserve publication before its remote effect. The admitted publisher compares
+the expected remote head, pushes only the selected branch and reconciles the
+exact retained publication intent by readback. An uncertain effect fences
+selection and retry until reconciliation. A changed candidate invalidates
+affected verification, Return and dependent reviewer evidence. A correction
+needs its own distinct review and fresh required checks.
+
+After a settled publication, native retry also requires re-resolution evidence
+that retains the published effect references, prior failure and current workflow
+basis. This preserves repair commits and the original publication history.
+Workflow graph independence and reviewer independence have different meanings:
+the review consumes the candidate as a selected input, while Execution
+Intelligence requires a distinct reviewer execution, AgentSession and Agency.
+
+`factory attempt readiness` performs fresh bounded hosted observation and
+returns `factory.attempt-delivery-reading/v1` through both human and JSON
+surfaces. Required check enumeration, run/attempt identity, head and immutable
+tree must agree. Pending, missing, stale, unreadable or incompletely enumerated
+results remain unready. A PR declaration supplies no verification evidence.
+Retained-history SDK projections remain distinguishable from this fresh read.
+
+This route uses Factory's native execution and publication operation rather
+than competing with no-mistakes' agent/Git driver. The pinned upstream CI and
+resume algorithms inform its bounded repair, exact-result and recovery checks.
+Its selected provider and GitHub execution still need observed live receipts;
+controlled orchestration regressions alone do not establish those observations.
+The existing O:I cross-product workflow supplies focused exact-cut owner proof,
+alongside each repository's own gate.
+
+An optional `crossOwnerVerification` plan binds the exact AIKit and Factory
+commits and trees to the O:I workflow revision, run and attempt. When material
+execution selects Workcell, its optional `workcell` value carries that owner's
+repository, commit and tree too. Once enrolled, the Workcell obligation cannot
+be removed by a repair. The reader requires the canonical workflow path,
+complete required jobs, immutable hosted commit trees and the executed
+source/build witness from bounded job logs, then rereads the Factory head.
+Selected Workcell proof also requires its full compiled revision stamp,
+source revision, binary version and lock/binary hashes. This hosted proof does
+not establish a physical Workcell execution or provider inference; those need
+their own correlated native material and body receipts.
+
+An exact completed failed job may retain a source-bound negative proof before
+its binaries were produced. It can authorise a finite repair, never readiness.
+Changed source material requires a retained bounded code repair, native Retry
+and re-resolution carrying the immediate predecessor's failed proof, settled
+effects and complete successor source fingerprint. A bounded environment retry
+may instead select a fresh run or attempt for the identical full source
+fingerprint. It requires the same native Retry, exact settled predecessor
+failure and explicit repair/re-resolution, and cannot hide a source change.
+Each Retry renews its run binding once. Ordinary selection edits, pending,
+missing and stale observations cannot renew it. The new attempt still needs
+fresh verification and distinct selected-input review before readiness.
+
+An O:I run's own head is never substituted for the Factory candidate revision.
+Human and JSON readiness expose the same enrolled owner basis and unresolved
+obligations.
 
 ## Native preparation and fresh dispatch
 

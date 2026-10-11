@@ -202,6 +202,14 @@ pub(super) fn validate_response(
             .flatten()
     });
     if let Some(expected) = expected {
+        if receipt.phase == crate::attempt_runtime::OwnerOperationPhase::ReconciledNoReplay
+            && receipt.payload["schema"] == "factory.aikit-no-delivery-reconciliation/v1"
+            && receipt.payload.get("expectedTask") == Some(expected)
+            && receipt.payload["deliveryRef"] == delivery
+        {
+            // Exact no-effect observation, not a synthetic delivery record.
+            return Ok(());
+        }
         if crate::native_owner::locate_delivery(&receipt.payload)
             .and_then(|v| v.pointer("/request/submission/turn/expected_task"))
             != Some(expected)

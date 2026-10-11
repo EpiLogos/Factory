@@ -6,7 +6,7 @@ use crate::developmental_read::FactoryDevelopmentalState;
 use crate::sensing::{Coverage, CoverageState, Interval, Observation, Policy, Source};
 use chrono::DateTime;
 use serde_json::{json, Value};
-use std::io::{Read, Write};
+use std::io::{Seek, SeekFrom, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -18,77 +18,110 @@ pub fn now_ms() -> i64 {
 /// Read-only/native owner transport. Pipe readers drain concurrently, including
 /// failures, so full GitHub pages cannot deadlock the collector.
 pub fn owner_json(program: &str, args: &[String], input: Option<&Value>) -> Result<Value, String> {
-    let mut child = Command::new(program)
-        .args(args)
-        .stdin(if input.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("{program}: {e}"))?;
-    let out = child.stdout.take();
-    let err = child.stderr.take();
-    let stdout = std::thread::spawn(move || match out {
-        Some(pipe) => drain_bounded(pipe, 16 * 1024 * 1024 + 1),
-        None => Ok(vec![]),
-    });
-    let stderr = std::thread::spawn(move || {
-        err.map(|pipe| drain_bounded(pipe, 1024 * 1024).unwrap_or_default())
-            .unwrap_or_default()
-    });
-    if let Some(input) = input {
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(input.to_string().as_bytes())
-                .map_err(|e| e.to_string())?;
-        }
+    owner_json_with_timeout(program, args, input, Duration::from_secs(60))
+}
+
+/// The same bounded owner reader with a caller's finite remaining wall budget.
+/// Existing sensing callers retain their original 60-second default.
+pub fn owner_json_with_timeout(
+    program: &str,
+    args: &[String],
+    input: Option<&Value>,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let bytes = owner_output_with_timeout(program, args, input, timeout)?;
+    serde_json::from_slice(&bytes).map_err(|e| format!("{program}: invalid owner JSON: {e}"))
+}
+
+/// Exact job logs use the same finite owner transport; invalid UTF-8 cannot be
+/// silently transformed into verification evidence.
+pub(crate) fn owner_text_with_timeout(
+    program: &str,
+    args: &[String],
+    timeout: Duration,
+) -> Result<String, String> {
+    String::from_utf8(owner_output_with_timeout(program, args, None, timeout)?)
+        .map_err(|e| format!("{program}: invalid owner UTF-8: {e}"))
+}
+
+fn owner_output_with_timeout(
+    program: &str,
+    args: &[String],
+    input: Option<&Value>,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
+    if timeout.is_zero() || timeout > Duration::from_secs(60) {
+        return Err("owner read requires finite timeout in (0,60s]".into());
     }
     let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            break status;
+    // A regular private input file cannot block on a non-reading child's pipe.
+    // It is transport scratch only and removed on every result; no workflow or
+    // evidence state is stored here.
+    struct InputFile(std::path::PathBuf);
+    impl Drop for InputFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
         }
-        if start.elapsed() > Duration::from_secs(60) {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = stdout.join();
-            let _ = stderr.join();
-            return Err(format!("{program}: owner read timed out after 60s"));
+    }
+    let mut input_file = None;
+    let stdin = if let Some(input) = input {
+        let bytes = serde_json::to_vec(input).map_err(|e| e.to_string())?;
+        if bytes.len() > 1024 * 1024 {
+            return Err("owner input exceeded 1 MiB".into());
         }
-        std::thread::sleep(Duration::from_millis(20));
+        let path =
+            std::env::temp_dir().join(format!("factory-owner-input-{}.json", ulid::Ulid::new()));
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true).write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&path)
+            .map_err(|e| format!("owner input: {e}"))?;
+        input_file = Some(InputFile(path));
+        file.write_all(&bytes)
+            .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .map_err(|e| e.to_string())?;
+        Stdio::from(file)
+    } else {
+        Stdio::null()
     };
-    let bytes = stdout.join().map_err(|_| "owner stdout reader failed")??;
-    let errors = stderr.join().map_err(|_| "owner stderr reader failed")?;
-    if !status.success() {
+    let remaining = timeout
+        .checked_sub(start.elapsed())
+        .ok_or_else(|| format!("{program}: owner read timed out while preparing input"))?;
+    let output = crate::native_process::capture_output_with_limits(
+        Command::new(program).args(args),
+        remaining,
+        stdin,
+        16 * 1024 * 1024,
+        1024 * 1024,
+        cfg!(unix),
+    )
+    .map_err(|failure| {
+        format!(
+            "{program}: owner read {}: {failure}",
+            if failure.timed_out() {
+                "timed out"
+            } else {
+                "failed"
+            }
+        )
+    })?;
+    drop(input_file);
+    if !output.status.success() {
         return Err(format!(
-            "{program} exited {status}: {}",
-            String::from_utf8_lossy(&errors)
+            "{program} exited {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
                 .chars()
                 .take(400)
                 .collect::<String>()
         ));
     }
-    if bytes.len() > 16 * 1024 * 1024 {
-        return Err("owner response exceeded 16 MiB; coverage is partial".into());
-    }
-    serde_json::from_slice(&bytes).map_err(|e| format!("{program}: invalid owner JSON: {e}"))
-}
-
-fn drain_bounded(mut reader: impl Read, limit: usize) -> Result<Vec<u8>, String> {
-    let mut data = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        let read = reader.read(&mut chunk).map_err(|e| e.to_string())?;
-        if read == 0 {
-            break;
-        }
-        let keep = read.min(limit.saturating_sub(data.len()));
-        data.extend_from_slice(&chunk[..keep]);
-    }
-    Ok(data)
+    Ok(output.stdout)
 }
 
 pub fn read(

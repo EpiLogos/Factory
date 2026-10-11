@@ -25,6 +25,8 @@ use std::sync::Arc;
 
 pub const FACTORY_ATTEMPT_OWNER_ACTION: &str = "factory.attempt-owner-action/v1";
 pub const FACTORY_ATTEMPT_OWNER_RECEIPT: &str = "factory.attempt-owner-receipt/v1";
+#[path = "attempt_owner_absence.rs"]
+mod absence;
 #[path = "attempt_task_dispatch.rs"]
 mod task_dispatch;
 pub use task_dispatch::AIKIT_TASK_CONTRACT_REVISION;
@@ -457,11 +459,12 @@ fn invocation_failure(
     intent: OwnerOperationReceipt,
     failure: NativeOwnerError,
 ) -> AttemptOwnerError {
+    let native_failure = failure.public_failure_reading();
     let primary = invocation_error(failure);
     let uncertain = stamp(
         intent,
         OwnerOperationPhase::Uncertain,
-        json!({"failure":primary.to_string(),"instruction":"inspect original delivery, do not resend"}),
+        json!({"failure":primary.to_string(),"nativeFailure":native_failure,"instruction":"inspect original delivery, do not resend"}),
     );
     let retention_failure = retain(
         store,
@@ -612,9 +615,9 @@ pub fn execute_attempt_owner_action(
     let delivery =
         match action {
             "send" => packet.pointer("/turn/delivery_ref"),
-            "delivery" => packet.get("delivery_ref"),
+            "delivery" | "reconcile-no-delivery" => packet.get("delivery_ref"),
             _ => return Err(error(
-                "attempt owner Action supports send/delivery, not a guessed cancellation operation",
+                "attempt owner Action supports send/delivery/exact no-delivery reconciliation, not a guessed cancellation operation",
             )),
         }
         .and_then(Value::as_str)
@@ -654,6 +657,7 @@ pub fn execute_attempt_owner_action(
     let dispatch_started = std::time::Instant::now();
     let mut effective_packet = packet.clone();
     let mut task_admission = None;
+    let mut absence_request = None;
     if action == "send" {
         let leg = reading
             .legs
@@ -731,15 +735,25 @@ pub fn execute_attempt_owner_action(
     } else {
         let sent = prior_send
             .ok_or_else(|| error("delivery read must name this attempt's retained send intent"))?;
+        let mut original_transport = sent.payload.get("transport").cloned();
+        if action == "reconcile-no-delivery" {
+            // An additive, read-only client may observe the same original
+            // owner socket/home/Task. It cannot issue the retained Send.
+            if let Some(identity) = &mut original_transport {
+                identity["binary"] = json!(binary);
+            }
+        }
         if sent.payload["executionRef"].as_str() != Some(request.execution_ref.as_str())
-            || sent
-                .payload
-                .get("transport")
+            || original_transport
+                .as_ref()
                 .is_some_and(|identity| identity != &transport_identity)
         {
             return Err(error(
                 "delivery recovery cannot silently replace its original transport or Execution",
             ));
+        }
+        if action == "reconcile-no-delivery" {
+            absence_request = Some(absence::validate(packet, &request, sent).map_err(error)?);
         }
         // Older v1 intents did not retain transport configuration. Their exact
         // native delivery/session still remains mandatory for compatible reads.
@@ -823,7 +837,12 @@ pub fn execute_attempt_owner_action(
             },
         ))
         .map_err(native_error)?;
-    let owner = match invoke_native_owner_bounded(&invocation, timeout_ms) {
+    let observation = if let Some(recovery) = &absence_request {
+        absence::observe(attempt, recovery, &request.invocation, timeout_ms)
+    } else {
+        invoke_native_owner_bounded(&invocation, timeout_ms)
+    };
+    let owner = match observation {
         Ok(owner) => owner,
         Err(failure) => {
             return Err(invocation_failure(&mut store, &request, intent, failure));
@@ -878,6 +897,8 @@ pub fn execute_attempt_owner_action(
         calls.sort_by_key(|receipt| receipt.operation_ref == intent.operation_ref);
         let phase = if pending(owner.phase) {
             OwnerOperationPhase::Uncertain
+        } else if owner.phase == OwnerOperationPhase::ReconciledNoReplay {
+            OwnerOperationPhase::ReconciledNoReplay
         } else {
             OwnerOperationPhase::Observed
         };

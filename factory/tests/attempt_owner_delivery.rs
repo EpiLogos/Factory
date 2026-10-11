@@ -353,14 +353,14 @@ fn success(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 // Inherited protocol-double coverage only. Ordinary failed-owner output is a
-// nonzero CLI status and body-free summary; read its retained uncertainty from
-// the same native attempt instead of exporting private failure evidence.
+// nonzero CLI status and body-free summary plus the actual retained result
+// under --json. Private native output stays outside that result.
 fn failed_owner_call(world: &World, request_ref: &str, output: Output) {
     assert_eq!(output.status.code(), Some(2));
-    assert!(
-        output.stdout.is_empty(),
-        "ordinary failure exported a result"
-    );
+    let returned: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(returned["requestRef"], request_ref);
+    assert_eq!(returned["needsReconciliation"], true);
+    assert!(returned["ownerReceipt"].is_null());
     let diagnostic = std::str::from_utf8(&output.stderr).unwrap();
     let expected = format!(
         "factory: factory.attempt-owner-receipt/v1\nRun: {RUN}\nAttempt: {ATTEMPT}\nRequest: {request_ref}\nReplayed: false\nNeeds reconciliation: true\nOwner phase: Uncertain\n"
@@ -672,3 +672,6 @@ fn a_praxis_unit_that_names_no_now_context_fails_admission_with_the_named_law() 
 
 #[path = "support/attempt_central_cases.rs"]
 mod central_cases;
+
+#[path = "support/attempt_absence_cases.rs"]
+mod absence_cases;

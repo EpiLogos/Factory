@@ -760,6 +760,12 @@ pub(crate) fn apply_operation_with_source_currency(
                     "native receiving admission is retained only by the canonical live-owner transaction".into(),
                 ));
             }
+            crate::attempt_delivery::validate_native_observation(
+                state,
+                &engine,
+                &attempt_ref,
+                &receipt,
+            )?;
             let record = attempt_mut(state, &attempt_ref)?;
             if receipt.owner_ref == "factory"
                 && receipt.contract == "factory.attempt-owner-transport/v1"
@@ -789,6 +795,33 @@ pub(crate) fn apply_operation_with_source_currency(
                     .get_or_insert_with(factory_admission_time);
             }
             record.observations.push(receipt);
+            if (crate::attempt_delivery::failed_ci(record)
+                || !crate::attempt_delivery::verification_current(record))
+                && engine.leg(&record.workflow_unit_ref).is_some_and(|leg| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && record.execution_ref.as_deref() == Some(leg.execution_ref.as_str())
+                })
+            {
+                let observed = record.observations.last().unwrap();
+                record
+                    .failure_evidence_refs
+                    .extend(observed.evidence_refs.clone());
+                record
+                    .failure_evidence_refs
+                    .insert(observed.receipt_ref.clone());
+                record
+                    .failure_recorded_at
+                    .get_or_insert_with(factory_admission_time);
+                let rejected_unit = record.workflow_unit_ref.clone();
+                let cause_ref = observed.receipt_ref.clone();
+                engine.reject_return(&rejected_unit,"exact selected candidate verification invalidated; bounded repair requires new native attempt".into())?;
+                attempt_refs.extend(invalidate_selected_returns(
+                    state,
+                    &mut engine,
+                    &rejected_unit,
+                    &cause_ref,
+                )?);
+            }
             attempt_refs.push(attempt_ref);
             "record-observation"
         }
@@ -928,6 +961,11 @@ pub(crate) fn apply_operation_with_source_currency(
             place_grant,
         } => {
             let prior = current_attempt_for_unit(state, &engine, &workflow_unit_ref)?;
+            if crate::attempt_delivery::unresolved_task_publication(state, &prior.task_ref) {
+                return Err(FactoryAttemptError::InvalidOperation(
+                    "reconcile retained publication before retrying consequential execution".into(),
+                ));
+            }
             let grant = engine.retry_grant(&grant_ref).cloned().ok_or_else(|| {
                 FactoryAttemptError::InvalidOperation("unknown retry grant".into())
             })?;
@@ -967,6 +1005,11 @@ pub(crate) fn apply_operation_with_source_currency(
                 if !has_passing_verification(record) {
                     return Err(FactoryAttemptError::VerificationIncomplete(
                         attempt_ref.clone(),
+                    ));
+                }
+                if !crate::attempt_delivery::return_material_current(record, &artifact) {
+                    return Err(FactoryAttemptError::InvalidOperation(
+                        "Return differs from enrolled exact candidate material".into(),
                     ));
                 }
                 let execution_ref = record.execution_ref.as_deref().ok_or_else(|| {
@@ -1256,7 +1299,7 @@ fn prepare_start(
             execution_ref: None,
             disposition: start.disposition.clone(),
             dispatch: None,
-            observations: Vec::new(),
+            observations: crate::attempt_delivery::inherited_selection(prior),
             verifications: Vec::new(),
             verification_recorded_at: BTreeMap::new(),
             tracking: start.tracking.clone(),
@@ -1562,14 +1605,57 @@ fn ensure_retry_protection(
     Ok(())
 }
 
+/// Delivery corrections reopen returned work that actually selected the rejected
+/// producer. Historical artifacts and review facts remain attached; a fresh
+/// review still spends its original finite native retry grant.
+fn invalidate_selected_returns(
+    state: &mut StoredAttemptState,
+    engine: &mut ExecutableOrchestration,
+    producer: &WorkflowUnitRef,
+    cause_ref: &str,
+) -> Result<Vec<String>, FactoryAttemptError> {
+    let mut frontier = BTreeSet::from([producer.clone()]);
+    let mut changed = Vec::new();
+    while !frontier.is_empty() {
+        let affected = state
+            .attempts
+            .values()
+            .filter(|record| {
+                engine.leg(&record.workflow_unit_ref).is_some_and(|leg| {
+                    leg.status == crate::orchestration::LegStatus::Returned
+                        && record.execution_ref.as_deref() == Some(leg.execution_ref.as_str())
+                }) && record
+                    .disposition
+                    .selected_inputs
+                    .iter()
+                    .any(|input| frontier.contains(&input.predecessor))
+            })
+            .map(|record| (record.attempt_ref.clone(), record.workflow_unit_ref.clone()))
+            .collect::<Vec<_>>();
+        frontier.clear();
+        for (reference, unit) in affected {
+            engine.reject_return(&unit,"selected predecessor verification invalidated; renewed verification and independent review required".into())?;
+            let record = state.attempts.get_mut(&reference).unwrap();
+            record.failure_evidence_refs.insert(cause_ref.into());
+            record
+                .failure_recorded_at
+                .get_or_insert_with(factory_admission_time);
+            frontier.insert(unit);
+            changed.push(reference);
+        }
+    }
+    Ok(changed)
+}
+
 pub(crate) fn has_passing_verification(record: &FactoryAttemptRecord) -> bool {
-    record.verifications.last().is_some_and(|verification| {
-        verification.outcome == VerificationOutcome::Passed
-            && verification
-                .obligations
-                .is_superset(&record.disposition.verification_obligations)
-            && !verification.evidence_refs.is_empty()
-    })
+    crate::attempt_delivery::verification_current(record)
+        && record.verifications.last().is_some_and(|verification| {
+            verification.outcome == VerificationOutcome::Passed
+                && verification
+                    .obligations
+                    .is_superset(&record.disposition.verification_obligations)
+                && !verification.evidence_refs.is_empty()
+        })
 }
 
 fn validate_owner_receipt(receipt: &OwnerOperationReceipt) -> Result<(), FactoryAttemptError> {

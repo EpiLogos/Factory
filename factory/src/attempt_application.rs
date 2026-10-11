@@ -33,6 +33,7 @@ pub(crate) fn validate_native_action(
     request: &FactoryAttemptActionRequest,
 ) -> Result<(), FactoryAttemptError> {
     validate_reading(reading)?;
+    crate::attempt_delivery::validate_publisher(reading, request)?;
     if reading.revision != request.expected_revision {
         return Err(FactoryAttemptError::RevisionConflict {
             expected: request.expected_revision,
