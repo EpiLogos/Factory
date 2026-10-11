@@ -167,8 +167,14 @@ impl Missing {
             context_refs: BTreeSet::new(),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
-            praxis_receipt: None,
-            now_context_ref: None,
+            praxis_receipt: (!unit.praxis_refs.is_empty()).then(|| {
+                super::praxis_receipt_fixture::resolved_receipt(
+                    &unit.reference.to_string(),
+                    &unit.praxis_refs,
+                )
+            }),
+            now_context_ref: (!unit.praxis_refs.is_empty())
+                .then(|| placement.now_ref.clone()),
             body: ExecutionBody {
                 model_ref: selected.model_ref,
                 provider_ref: selected.provider_ref,
