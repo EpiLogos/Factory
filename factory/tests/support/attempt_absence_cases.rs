@@ -173,8 +173,7 @@ impl Missing {
                     &unit.praxis_refs,
                 )
             }),
-            now_context_ref: (!unit.praxis_refs.is_empty())
-                .then(|| placement.now_ref.clone()),
+            now_context_ref: (!unit.praxis_refs.is_empty()).then(|| placement.now_ref.clone()),
             body: ExecutionBody {
                 model_ref: selected.model_ref,
                 provider_ref: selected.provider_ref,
