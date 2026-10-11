@@ -98,8 +98,20 @@ fn native_central_return_keeps_the_allocated_now_without_including_the_document(
         std::env::var_os("FACTORY_TEST_CTRL").expect("native ctrl is required, no protocol double");
     let binary = std::path::PathBuf::from(binary);
     let world = World::new();
-    world.start(false);
     setup(&world, false);
+    // A unit demanding praxisRefs names its prepared NOW context at admission,
+    // so the NOW is allocated through the real ctrl first and the disposition
+    // carries the identity `attempt prepare` re-allocates idempotently.
+    let now_context_ref = pre_allocate(&world, &binary);
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    world.start_with_receipt_in(
+        false,
+        Some(praxis_receipt_fixture::resolved_receipt(
+            &unit.reference.to_string(),
+            &unit.praxis_refs,
+        )),
+        Some(Some(now_context_ref)),
+    );
     let agent_ref = world.reading().attempts[0]
         .disposition
         .participant
