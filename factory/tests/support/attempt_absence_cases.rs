@@ -167,6 +167,8 @@ impl Missing {
             context_refs: BTreeSet::new(),
             praxis_refs: unit.praxis_refs.clone(),
             capability_refs: unit.capability_refs.clone(),
+            praxis_receipt: None,
+            now_context_ref: None,
             body: ExecutionBody {
                 model_ref: selected.model_ref,
                 provider_ref: selected.provider_ref,

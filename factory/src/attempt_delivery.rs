@@ -334,12 +334,10 @@ fn validate_cross_transition(
         ));
     }
     let changed = cross_owner_material_ref(before) != cross_owner_material_ref(selected);
-    if changed {
-        if prior.run_id.is_some() && next.run_id == prior.run_id {
-            return Err(invalid(
-                "changed candidate requires a new cross-owner workflow run proof",
-            ));
-        }
+    if changed && prior.run_id.is_some() && next.run_id == prior.run_id {
+        return Err(invalid(
+            "changed candidate requires a new cross-owner workflow run proof",
+        ));
     }
     // Rebinding unchanged source material is admitted only by the locked native
     // Retry/repair guard below. Structural validation alone cannot authorise it.
@@ -2125,7 +2123,7 @@ pub fn execute(
                     && i.artifacts.iter().any(|a| {
                         a.subject_ref == selected.subject_ref
                             && a.subject_revision == selected.subject_revision
-                            && material_evidence_current(&a.evidence_refs, &selected)
+                            && material_evidence_current(&a.evidence_refs, selected)
                     })
             }) {
                 return Err(invalid(
