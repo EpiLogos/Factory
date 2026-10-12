@@ -1,0 +1,358 @@
+{
+  "attention": [
+    {
+      "branch": "feat/ci-repair-delivery-280",
+      "kind": "unattributed_worktree",
+      "path": "/Users/admin/Central/worktrees/env-1/factory",
+      "repo": "Work/Factory"
+    },
+    {
+      "kind": "detached_head",
+      "path": "/Users/admin/Central/worktrees/env-2/factory",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": null,
+      "kind": "unattributed_worktree",
+      "path": "/Users/admin/Central/worktrees/env-2/factory",
+      "repo": "Work/Factory"
+    },
+    {
+      "kind": "detached_head",
+      "path": "/Users/admin/Central/worktrees/env-3/factory",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": null,
+      "kind": "unattributed_worktree",
+      "path": "/Users/admin/Central/worktrees/env-3/factory",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "backup/primary-pre-convergence-20260929",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "backup/primary-pre-convergence-20260929",
+      "days_idle": 14,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "factory-sensing-20260924",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "factory-sensing-20260924",
+      "days_idle": 14,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "feat/ci-repair-delivery-280",
+      "checked_out": true,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "feat/expression-acts-workflow-fixture-20260926",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "fix/factory-return-barriers-20260930",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "fix/inhabitation-current-work-now",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "fix/inhabitation-current-work-now",
+      "days_idle": 14,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "fix/oi203-factory-native-lifecycle",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "help/task-oriented-frontdoor",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "inhabit/current-carries-run-20260924",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "inhabit/current-carries-run-20260924",
+      "days_idle": 14,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "record-state/fold-20261008",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "repair/65-native-project-bootstrap",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "repair/65-native-project-bootstrap",
+      "days_idle": 15,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "ui/factory-desk-fixes",
+      "checked_out": false,
+      "kind": "local_only_branch",
+      "repo": "Work/Factory"
+    },
+    {
+      "branch": "ui/factory-desk-fixes",
+      "days_idle": 15,
+      "kind": "stale_branch",
+      "repo": "Work/Factory"
+    }
+  ],
+  "generated_at": "2026-10-08T23:00:41.486457+00:00",
+  "repos": [
+    {
+      "bare": false,
+      "branches": [
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-24T23:29:42+01:00",
+          "local_only": true,
+          "name": "backup/primary-pre-convergence-20260929",
+          "upstream": null
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-24T11:45:45+01:00",
+          "local_only": true,
+          "name": "factory-sensing-20260924",
+          "upstream": "origin/factory-sensing-20260924"
+        },
+        {
+          "ahead": 6,
+          "behind": null,
+          "checked_out_in": [
+            "/Users/admin/Central/worktrees/env-1/factory"
+          ],
+          "last_commit_at": "2026-10-08T08:22:29+01:00",
+          "local_only": true,
+          "name": "feat/ci-repair-delivery-280",
+          "upstream": "origin/main"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-26T21:07:56+01:00",
+          "local_only": true,
+          "name": "feat/expression-acts-workflow-fixture-20260926",
+          "upstream": null
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-10-02T06:11:14+01:00",
+          "local_only": true,
+          "name": "fix/factory-return-barriers-20260930",
+          "upstream": "origin/fix/factory-return-barriers-20260930"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-24T18:57:18+01:00",
+          "local_only": true,
+          "name": "fix/inhabitation-current-work-now",
+          "upstream": "origin/fix/inhabitation-current-work-now"
+        },
+        {
+          "ahead": 10,
+          "behind": 2,
+          "checked_out_in": [],
+          "last_commit_at": "2026-10-04T03:08:10+01:00",
+          "local_only": true,
+          "name": "fix/oi203-factory-native-lifecycle",
+          "upstream": "origin/main"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-27T14:05:52+01:00",
+          "local_only": true,
+          "name": "help/task-oriented-frontdoor",
+          "upstream": "origin/help/task-oriented-frontdoor"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-24T23:29:42+01:00",
+          "local_only": true,
+          "name": "inhabit/current-carries-run-20260924",
+          "upstream": "origin/inhabit/current-carries-run-20260924"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [
+            "/Users/admin/Central/Work/Factory"
+          ],
+          "last_commit_at": "2026-10-06T18:22:21+01:00",
+          "local_only": false,
+          "name": "main",
+          "upstream": "origin/main"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-10-08T10:21:40+01:00",
+          "local_only": true,
+          "name": "record-state/fold-20261008",
+          "upstream": null
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-23T00:10:57+01:00",
+          "local_only": true,
+          "name": "repair/65-native-project-bootstrap",
+          "upstream": "origin/repair/65-native-project-bootstrap"
+        },
+        {
+          "ahead": null,
+          "behind": null,
+          "checked_out_in": [],
+          "last_commit_at": "2026-09-23T01:12:43+01:00",
+          "local_only": true,
+          "name": "ui/factory-desk-fixes",
+          "upstream": "origin/ui/factory-desk-fixes"
+        }
+      ],
+      "default_branch": "main",
+      "dirty_paths": null,
+      "head_branch": "main",
+      "head_sha": "3aa01632e9f2868c5e2b974388de0986499113ac",
+      "remote": "https://github.com/EpiLogos/Factory.git",
+      "repo": "Work/Factory",
+      "repo_root": "/Users/admin/Central/Work/Factory",
+      "unborn": false,
+      "unmerged_tips": [
+        "backup/primary-pre-convergence-20260929",
+        "factory-sensing-20260924",
+        "feat/ci-repair-delivery-280",
+        "feat/expression-acts-workflow-fixture-20260926",
+        "fix/factory-return-barriers-20260930",
+        "fix/inhabitation-current-work-now",
+        "fix/oi203-factory-native-lifecycle",
+        "help/task-oriented-frontdoor",
+        "inhabit/current-carries-run-20260924",
+        "record-state/fold-20261008",
+        "repair/65-native-project-bootstrap",
+        "ui/factory-desk-fixes"
+      ],
+      "worktrees": [
+        {
+          "ahead": null,
+          "bare": false,
+          "behind": null,
+          "branch": "main",
+          "detached": false,
+          "dirty_files": null,
+          "lane": "unattributed",
+          "last_commit_at": "2026-10-06T18:22:21+01:00",
+          "locked": false,
+          "path": "/Users/admin/Central/Work/Factory",
+          "prunable": false
+        },
+        {
+          "ahead": 6,
+          "bare": false,
+          "behind": null,
+          "branch": "feat/ci-repair-delivery-280",
+          "detached": false,
+          "dirty_files": null,
+          "lane": "unattributed",
+          "last_commit_at": "2026-10-08T08:22:29+01:00",
+          "locked": false,
+          "path": "/Users/admin/Central/worktrees/env-1/factory",
+          "prunable": false
+        },
+        {
+          "ahead": null,
+          "bare": false,
+          "behind": null,
+          "branch": null,
+          "detached": true,
+          "dirty_files": null,
+          "lane": "unattributed",
+          "last_commit_at": "2026-10-05T09:43:58+01:00",
+          "locked": false,
+          "path": "/Users/admin/Central/worktrees/env-2/factory",
+          "prunable": false
+        },
+        {
+          "ahead": null,
+          "bare": false,
+          "behind": null,
+          "branch": null,
+          "detached": true,
+          "dirty_files": null,
+          "lane": "unattributed",
+          "last_commit_at": "2026-10-05T09:43:58+01:00",
+          "locked": false,
+          "path": "/Users/admin/Central/worktrees/env-3/factory",
+          "prunable": false
+        }
+      ]
+    }
+  ],
+  "schema": "central.git-census/v1",
+  "scope": [
+    "Work/Factory"
+  ],
+  "summary": {
+    "attention_items": 23,
+    "branches": 13,
+    "local_only_branches": 12,
+    "repos_censused": 1,
+    "repos_errored": 0,
+    "unattributed_worktrees": 3,
+    "worktrees": 4
+  }
+}
