@@ -517,20 +517,45 @@ pub(crate) fn validate_publisher(
     Ok(())
 }
 
+/// GitHub runs no `pull_request` workflow on a PR that conflicts with its base,
+/// so a conflicted PR's required checks never appear and delivery would wait on
+/// "required check missing" for ever (no-mistakes treats a conflict as an issue
+/// of its own). Only a definite answer counts: `mergeable` is null while GitHub
+/// is still computing it.
+fn pull_request_conflict(pr: &Value) -> Option<String> {
+    let state = pr["mergeable_state"].as_str();
+    (pr["mergeable"].as_bool() == Some(false) || state == Some("dirty")).then(|| {
+        format!(
+            "PR conflicts with its base ({}): GitHub runs no workflows on a conflicted PR; \
+             merge the base into the task branch and publish again",
+            state.unwrap_or("not mergeable")
+        )
+    })
+}
+
 fn check_failures(plan: &DeliveryPlan, observation: &HostedObservation) -> Vec<String> {
     let mut failures = Vec::new();
-    if !observation.enumerated {
-        failures.push("hosted check enumeration incomplete".into());
-    }
+    // The reader's own refusal names why the enumeration stopped (a PR in
+    // conflict with its base, a moved remote), so it leads and becomes the
+    // next action, ahead of the generic incomplete-enumeration failure.
     if let Some(error) = &observation.error {
         failures.push(error.clone());
+    }
+    if !observation.enumerated {
+        failures.push("hosted check enumeration incomplete".into());
     }
     if observation.candidate_revision != plan.candidate_revision
         || observation.remote_head != plan.candidate_revision
     {
         failures.push("hosted/remote head differs from selected candidate".into());
     }
-    for name in &plan.required_checks {
+    // Checks that were never enumerated are unknown, not missing: the
+    // refusal above already says why the reader stopped.
+    for name in plan
+        .required_checks
+        .iter()
+        .filter(|_| observation.enumerated)
+    {
         let checks = observation
             .checks
             .iter()
@@ -1808,6 +1833,9 @@ fn observe_github(binary: &str, selected: &DeliveryPlan) -> HostedObservation {
         {
             return Err("PR target/head differs from selected task branch/candidate".into());
         }
+        if let Some(conflict) = pull_request_conflict(&pr) {
+            return Err(conflict);
+        }
         observation.remote_head = remote_head(binary, selected, deadline)?;
         if observation.remote_head != selected.candidate_revision {
             return Err("remote moved after candidate selection".into());
@@ -2324,5 +2352,30 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
         serde_json::to_string_pretty(&reading).map_err(CliError::from_native)
     } else {
         Ok(human(&reading))
+    }
+}
+
+#[cfg(test)]
+mod conflict_tests {
+    use super::pull_request_conflict;
+    use serde_json::json;
+
+    #[test]
+    fn only_a_definite_conflict_counts() {
+        assert!(
+            pull_request_conflict(&json!({"mergeable": false, "mergeable_state": "dirty"}))
+                .unwrap()
+                .starts_with("PR conflicts with its base (dirty)")
+        );
+        assert!(pull_request_conflict(&json!({"mergeable_state": "dirty"})).is_some());
+        assert!(
+            pull_request_conflict(&json!({"mergeable": null, "mergeable_state": "unknown"}))
+                .is_none()
+        );
+        assert!(
+            pull_request_conflict(&json!({"mergeable": true, "mergeable_state": "blocked"}))
+                .is_none()
+        );
+        assert!(pull_request_conflict(&json!({})).is_none());
     }
 }

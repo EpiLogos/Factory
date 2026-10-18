@@ -1971,6 +1971,69 @@ fn delivery_hosted_rerun_cannot_relabel_old_green_check_as_current_attempt() {
         .any(|f| f.as_str().unwrap().contains("superseded workflow attempt")));
 }
 
+#[cfg(unix)]
+#[test]
+fn delivery_names_a_pull_request_in_conflict_instead_of_waiting_on_missing_checks() {
+    use epilogos_factory::attempt_delivery::*;
+    use std::os::unix::fs::PermissionsExt;
+    let world = delivery_world();
+    // GitHub runs no pull_request workflow on a PR that conflicts with its
+    // base: its checks never appear, so the reader must name the conflict.
+    let reader = world.dir.path().join("conflicted-reader");
+    fs::write(
+        &reader,
+        "#!/usr/bin/python3\nimport json,sys\ne=sys.argv[-1];s='b'*40\n\
+if '/git/matching-refs/' in e:r=[{'ref':'refs/heads/feat/controlled-delivery','object':{'sha':s}}]\n\
+elif '/pulls/' in e:r={'head':{'ref':'feat/controlled-delivery','sha':s},'mergeable':False,'mergeable_state':'dirty'}\n\
+elif '/commits/' in e and '/check-runs?' not in e:r={'sha':s,'commit':{'tree':{'sha':'d'*40}}}\n\
+else:raise RuntimeError(e)\nprint(json.dumps(r))\n",
+    )
+    .unwrap();
+    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    let observed: Value = serde_json::from_slice(
+        &success(delivery_invoke(
+            &world,
+            &delivery_request(
+                &world,
+                "conflicted",
+                DeliveryOperation::ObserveGithub {
+                    gh_binary: reader.to_str().unwrap().into(),
+                },
+            ),
+        ))
+        .stdout,
+    )
+    .unwrap();
+    assert_eq!(observed["ready"], false);
+    let failures: Vec<&str> = observed["failures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f.as_str().unwrap())
+        .collect();
+    let conflict = failures
+        .iter()
+        .position(|f| f.starts_with("PR conflicts with its base (dirty)"))
+        .unwrap_or_else(|| panic!("the conflict is named: {observed:#}"));
+    let incomplete = failures
+        .iter()
+        .position(|f| *f == "hosted check enumeration incomplete")
+        .unwrap();
+    assert!(
+        conflict < incomplete,
+        "the conflict leads the hosted failures: {failures:?}"
+    );
+    // Not the misleading wait it replaces: no check is reported missing.
+    assert!(
+        !observed["failures"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("required check missing")),
+        "{observed:#}"
+    );
+}
+
 #[test]
 fn delivery_native_review_publication_interruption_and_fresh_readiness() {
     use epilogos_factory::attempt_delivery::*;
