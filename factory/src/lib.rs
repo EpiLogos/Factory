@@ -21,6 +21,8 @@ pub mod attempt_praxis_receipt;
 pub mod attempt_receiving;
 pub mod attempt_runtime;
 pub mod attempt_task;
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod attempt_task_binding_tests;
 pub mod authority;
 pub mod build;
 pub mod build_cognitive;

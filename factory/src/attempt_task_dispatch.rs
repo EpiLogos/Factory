@@ -19,7 +19,7 @@ pub const AIKIT_TASK_CONTRACT_REVISION: &str = "8804866fb49ec5072aaedcfcf032c7a0
 
 /// Factory's observation that the dispatched attempt was (or could not be)
 /// recorded on the session's bound AIKit task.
-pub(super) const TASK_BINDING_CONTRACT: &str = "factory.aikit-task-attempt-binding/v1";
+pub(crate) const TASK_BINDING_CONTRACT: &str = "factory.aikit-task-attempt-binding/v1";
 const TASK_BINDING_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) fn prepare(
