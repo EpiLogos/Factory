@@ -29,6 +29,7 @@ factory attempt owner-action <native-state> <request-json|-> --json
 factory attempt task <native-state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]
 factory attempt return <native-state> <run-ref> <attempt-ref> [--json]
 factory attempt receiving <native-state> <request-json|-> --json
+factory attempt admission [--json]
 factory attempt learn <native-state> <request-json|-> --json
 factory attempt material <native-state> <request-json|-> --json
 factory attempt delivery <native-state> <request-json|-> [--json]
@@ -307,6 +308,28 @@ uncertainty remains blocked for explicit owner reconciliation. Post-effect
 retention failure returns actual owner output and an error, with null readback
 when current state is unavailable, rather than a fabricated rollback or replay.
 
+### The dispatched attempt, recorded on the session's AIKit task
+
+A protected or writing attempt is dispatched through AIKit's task contract, and
+the attempt names the session it serves (`disposition.body.agent_session_ref`).
+The session could not name the attempt back. Once the attempt is bound to its
+dispatch, Factory records it on the session's bound AIKit task
+(`aikit session-space encounter-task-attempts --agent-session S --request-json
+{"attempt": {task_ref, attempt_ref, run_ref, state_path, workflow_unit,
+execution_ref, delivery_ref, recorded_by}}`), so a reader asks AIKit which
+attempts, in which Factory state, a session's task serves and reads each in
+Factory.
+
+The record is a derived fact, not the dispatch: it is made after the dispatch is
+retained, on the same owner route, and a refusal never undoes the dispatch.
+Factory keeps the owner's answer as an observation on the attempt
+(`factory.aikit-task-attempt-binding/v1`, status `recorded`, `refused` or
+`unavailable`, with the owner's words). A repeat of the dispatch records again;
+AIKit takes an exact replay as a no-op, so the observation is stable. An older
+AIKit without the verb, and a session with no bound task, answer a refusal that
+is kept the same way. Plain encounter deliveries carry no task and record
+nothing.
+
 ## Task, source and telemetry reading
 
 `factory.attempt-task-reading/v1` pages a task's native attempts at a pinned
@@ -403,6 +426,22 @@ separate causes as uncertain; no caller JSON or transport exit creates success.
 This adapter never invokes document mutation, review or inclusion. Pending and
 needs-review contributions remain proposals. Inclusion and human Recognition
 remain separate owner operations.
+
+### What a desktop caller needs: `factory attempt admission`
+
+`factory attempt admission [--json]` reads `factory.attempt-admission/v1`: the
+desktop caller Factory expects on the attempt Actions (`oi:desktop`, a
+`desktop-human` projection whose lineage ends at itself), the native owner and
+capability they carry, the Central contract revision the receiving path demands,
+and each action a person takes on an attempt with the native action, scope and
+actor kind the host's grant must carry. For `attempt-receiving` that is
+`central.receiving.submit` over `project:Factory` as a `human` principal.
+
+It is a reading, not a grant. The grant is the owner's, in
+`Control/user/native-action-authority.json`; the host resolves which principal
+carries the action with its own token, which never travels in JSON. A desktop
+reads this disclosure, then presents the caller, the capability and the
+authority ref it resolved, so it invents none of them.
 
 ## Existing development/learning intake
 
