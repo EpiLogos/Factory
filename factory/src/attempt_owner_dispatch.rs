@@ -30,8 +30,10 @@ mod absence;
 #[path = "attempt_task_dispatch.rs"]
 mod task_dispatch;
 pub use task_dispatch::AIKIT_TASK_CONTRACT_REVISION;
+#[cfg(test)]
+pub(crate) use task_dispatch::TASK_BINDING_CONTRACT;
 
-const TRANSPORT_OBSERVATION: &str = "factory.attempt-owner-transport/v1";
+pub(crate) const TRANSPORT_OBSERVATION: &str = "factory.attempt-owner-transport/v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -226,7 +228,7 @@ fn invocation_error(failure: NativeOwnerError) -> AttemptOwnerError {
     }
 }
 
-fn record<'a>(
+pub(crate) fn record<'a>(
     reading: &'a FactoryAttemptReading,
     reference: &str,
 ) -> Result<&'a FactoryAttemptRecord, AttemptOwnerError> {
@@ -236,7 +238,7 @@ fn record<'a>(
         .find(|attempt| attempt.attempt_ref == reference)
         .ok_or_else(|| error("attempt is not retained in this canonical Run"))
 }
-fn intent_ref(request: &FactoryAttemptOwnerRequest) -> String {
+pub(crate) fn intent_ref(request: &FactoryAttemptOwnerRequest) -> String {
     format!("factory-attempt-owner-call:{}", request.request_ref)
 }
 fn is_transport(receipt: &OwnerOperationReceipt) -> bool {
@@ -271,7 +273,7 @@ fn same_delivery(receipt: &OwnerOperationReceipt, session: &str, delivery: &str)
         && receipt.payload["agentSession"].as_str() == Some(session)
         && receipt.payload["deliveryRef"].as_str() == Some(delivery)
 }
-fn action_request(
+pub(crate) fn action_request(
     request: &FactoryAttemptOwnerRequest,
     revision: u64,
     suffix: &str,
@@ -370,7 +372,67 @@ fn retain(
     ))
 }
 
-fn stamp(
+/// Once an attempt is bound to its task dispatch, say so on the session's AIKit
+/// task (`task_dispatch::bind_to_task`) and retain the owner's answer as
+/// Factory's observation. Best effort and repeatable: the dispatch stands
+/// whether or not the task owner takes the record, a replay of the dispatch
+/// records it again, and an exact repeat is the owner's no-op.
+pub(crate) fn record_on_task(
+    store: &mut FileAttemptStore,
+    request: &FactoryAttemptOwnerRequest,
+    state_path: &Path,
+    delivery: &str,
+) {
+    let NativeOwnerInvocation::AikitEncounter {
+        binary,
+        cwd,
+        transport,
+        ..
+    } = &request.invocation
+    else {
+        return;
+    };
+    let Ok(current) = store.reading() else {
+        return;
+    };
+    let Ok(attempt) = record(&current, &request.attempt_ref) else {
+        return;
+    };
+    let task_dispatched = attempt.observations.iter().any(|receipt| {
+        is_transport(receipt)
+            && receipt.payload["action"].as_str() == Some("send")
+            && receipt.payload["deliveryRef"].as_str() == Some(delivery)
+            && !receipt.payload["taskAdmission"].is_null()
+    });
+    if !task_dispatched || attempt.execution_ref.as_deref() != Some(request.execution_ref.as_str())
+    {
+        return;
+    }
+    let Ok(state_path) = state_path.canonicalize() else {
+        return;
+    };
+    let receipt = task_dispatch::bind_to_task(
+        &current,
+        attempt,
+        &state_path,
+        &request.execution_ref,
+        delivery,
+        binary,
+        cwd,
+        transport.as_ref(),
+    );
+    let _ = retain(
+        store,
+        request,
+        &format!("task-binding:{}", receipt.operation_ref),
+        FactoryAttemptOperation::RecordObservation {
+            attempt_ref: request.attempt_ref.clone(),
+            receipt,
+        },
+    );
+}
+
+pub(crate) fn stamp(
     mut receipt: OwnerOperationReceipt,
     phase: OwnerOperationPhase,
     detail: Value,
@@ -584,6 +646,11 @@ pub fn execute_attempt_owner_action(
                 })
                 .cloned()
         };
+        if previous.payload["action"].as_str() == Some("send") {
+            if let Some(delivery) = previous.payload["deliveryRef"].as_str() {
+                record_on_task(&mut store, &request, state_path, delivery);
+            }
+        }
         return result(&store, &request, true, previous.clone(), owner, None);
     }
     if reading.revision != request.expected_revision {
@@ -935,7 +1002,12 @@ pub fn execute_attempt_owner_action(
         Ok(own)
     })();
     match completion {
-        Ok(transport) => result(&store, &request, false, transport, Some(owner), None),
+        Ok(transport) => {
+            if action == "send" {
+                record_on_task(&mut store, &request, state_path, delivery);
+            }
+            result(&store, &request, false, transport, Some(owner), None)
+        }
         Err(failure) => Err(completion_failure(
             &mut store, &request, intent, owner, failure,
         )),

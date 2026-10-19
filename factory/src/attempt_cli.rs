@@ -15,6 +15,7 @@ const COMMANDS: &[&str] = &[
     "attempt.task",
     "attempt.return",
     "attempt.receiving",
+    "attempt.admission",
     "attempt.decision",
     "attempt.learn",
     "attempt.material",
@@ -30,6 +31,7 @@ const COMMANDS: &[&str] = &[
     "development.attempt.task",
     "development.attempt.return",
     "development.attempt.receiving",
+    "development.attempt.admission",
     "development.attempt.decision",
     "development.attempt.learn",
     "development.attempt.material",
@@ -48,6 +50,7 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_task::TASK_LIST_READING,
     crate::attempt_task::TASK_READING,
     crate::attempt_task::RETURN_READING,
+    crate::attempt_admission::ADMISSION_READING,
     crate::attempt_receiving::RECEIVING_ACTION,
     crate::attempt_receiving::RECEIVING_RECEIPT,
     crate::attempt_native_receiving::DECISION_READING,
@@ -106,6 +109,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
         match args.first().map(String::as_str) {
             Some("prepare") => return crate::attempt_central::execute_cli(&args[1..], stdin),
             Some("receiving") => return crate::attempt_receiving::execute_cli(&args[1..], stdin),
+            Some("admission") => return crate::attempt_admission::execute_cli(&args[1..]),
             Some("decision") => {
                 return crate::attempt_native_receiving::execute_cli(&args[1..], stdin)
             }
@@ -191,5 +195,5 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
 }
 
 fn task_help() -> &'static str {
-    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt admission [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
 }

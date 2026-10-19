@@ -1,8 +1,11 @@
 //! Native task-bound AIKit dispatch. A retained configuration is only a preview:
 //! expected_task is enforced by the actual AIKit owner under its operation lock.
-use crate::attempt_runtime::{FactoryAttemptReading, FactoryAttemptRecord};
+use crate::attempt_runtime::{
+    FactoryAttemptReading, FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt,
+};
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeSet,
     path::Path,
     time::{Duration, Instant},
 };
@@ -13,6 +16,11 @@ mod material;
 /// The additive owner contract that first admits exact task/Agency assertions.
 /// This is a contract basis, not proof that an arbitrary binary has these bytes.
 pub const AIKIT_TASK_CONTRACT_REVISION: &str = "8804866fb49ec5072aaedcfcf032c7a078fa585f";
+
+/// Factory's observation that the dispatched attempt was (or could not be)
+/// recorded on the session's bound AIKit task.
+pub(crate) const TASK_BINDING_CONTRACT: &str = "factory.aikit-task-attempt-binding/v1";
+const TASK_BINDING_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub(super) fn prepare(
     reading: &FactoryAttemptReading,
@@ -172,6 +180,95 @@ pub(super) fn prepare(
         admission["nativePreparedMaterial"] = material;
     }
     Ok(admission)
+}
+
+/// Record the dispatched attempt on the session's bound AIKit task, so the
+/// session can say which attempt it serves (`aikit session-space
+/// encounter-task-attempts`). The dispatch is already made and retained; this
+/// is Factory telling the task owner what it dispatched, never a second effect
+/// on the worker. An owner that does not take the record (an older AIKit, no
+/// bound task) answers a refusal, and that refusal is the observation:
+/// `status: "refused"`/`"unavailable"` beside the owner's words. A replay of
+/// the same record is the owner's no-op.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn bind_to_task(
+    reading: &FactoryAttemptReading,
+    attempt: &FactoryAttemptRecord,
+    state_path: &Path,
+    execution_ref: &str,
+    delivery_ref: &str,
+    binary: &Path,
+    cwd: &Path,
+    transport: Option<&crate::native_aikit_route::AikitOwnerTransport>,
+) -> OwnerOperationReceipt {
+    let session = &attempt.disposition.body.agent_session_ref;
+    let run_ref = reading.run_ref.to_string();
+    let record = json!({"attempt": {
+        "task_ref": attempt.task_ref, "attempt_ref": attempt.attempt_ref, "run_ref": run_ref,
+        "state_path": state_path, "workflow_unit": attempt.workflow_unit_ref,
+        "execution_ref": execution_ref, "delivery_ref": delivery_ref, "recorded_by": "factory",
+    }});
+    let asked = crate::native_aikit_route::output(
+        binary,
+        cwd,
+        transport,
+        &[
+            "session-space".into(),
+            "encounter-task-attempts".into(),
+            "--agent-session".into(),
+            session.clone(),
+            "--request-json".into(),
+            record.to_string(),
+        ],
+        TASK_BINDING_TIMEOUT,
+    );
+    let (status, owner) = match asked {
+        Err(failure) => ("unavailable", json!({"refusal": failure.to_string()})),
+        Ok(output) if !output.status.success() => (
+            "refused",
+            json!({"exitCode": output.status.code(), "refusal": bounded_text(&output.stderr)}),
+        ),
+        Ok(output) => match serde_json::from_slice::<Value>(&output.stdout) {
+            Ok(answer)
+                if answer["schema"] == "aikit.encounter-task-attempts/v1"
+                    && answer["attempts"].as_array().is_some_and(|attempts| {
+                        attempts
+                            .iter()
+                            .any(|served| served["attempt_ref"] == attempt.attempt_ref.as_str())
+                    }) =>
+            {
+                ("recorded", json!({"taskRevision": answer["revision"]}))
+            }
+            _ => (
+                "refused",
+                json!({"refusal": format!("AIKit answered without the recorded attempt: {}", bounded_text(&output.stdout))}),
+            ),
+        },
+    };
+    let operation_ref = format!("factory-aikit-task-attempt:{}", attempt.attempt_ref);
+    let payload = json!({"agentSession": session, "taskRef": attempt.task_ref,
+        "attemptRef": attempt.attempt_ref, "runRef": run_ref, "statePath": state_path,
+        "status": status, "owner": owner,
+        "detail": {"meaning": "the attempt Factory dispatched, recorded on the session's bound AIKit task; not worker execution, a Return or a choice"}});
+    let receipt_ref = format!(
+        "factory-aikit-task-binding:{}",
+        blake3::hash(
+            &serde_json::to_vec(&(&operation_ref, OwnerOperationPhase::Observed, &payload))
+                .expect("JSON values serialize")
+        )
+        .to_hex()
+    );
+    OwnerOperationReceipt {
+        owner_ref: "factory".into(),
+        contract: TASK_BINDING_CONTRACT.into(),
+        operation_ref,
+        receipt_ref,
+        source_revision: format!("factory-state:{}", reading.revision),
+        phase: OwnerOperationPhase::Observed,
+        evidence_refs: BTreeSet::new(),
+        partial_effect_refs: BTreeSet::new(),
+        payload,
+    }
 }
 
 fn strings(value: &Value) -> Result<Vec<&str>, String> {
