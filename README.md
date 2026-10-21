@@ -254,7 +254,11 @@ Work is held by stable World Positions (`central:position:<world>:<slug>`, defin
 by Central) through `factory development custody assign|update|list`: durable
 `factory.work-custody/v1` records in the same developmental state, written under
 its lock. Closed custody reopens only with `--reopen`; a hand-off names its
-receiver and creates the successor in the same write. `factory development
+receiver and creates the successor in the same write. An assignment may also set
+how much the holder decides alone (DLW §19.4): `--autonomy suggest|review|auto`,
+`--review-gate diffs|approvals|both` and `--escalate-to <person-ref>`, kept
+verbatim on the record and absent until set; `update` does not change them, and a
+hand-off does not carry them to the receiver. `factory development
 current-work --position P` answers `none`, `one` or `ambiguous` from every
 in-progress custody and every running attempt whose participant names `P` — never
 from a capped list, never the most recent — and refuses to guess when relations
