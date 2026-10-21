@@ -14,6 +14,10 @@ fn main() -> std::process::ExitCode {
     if epilogos_factory::inhabitation_cli::is_inhabitation_command(&args) {
         return epilogos_factory::inhabitation_cli::main(&args);
     }
+    // Prompt pads refuse with a document that carries a code, under --json.
+    if epilogos_factory::prompt_pads::is_pads_command(&args) {
+        return epilogos_factory::prompt_pads::main(&args);
+    }
     match epilogos_factory::attempt_cli::execute(&args, None) {
         Ok(output) => {
             if !output.is_empty() {

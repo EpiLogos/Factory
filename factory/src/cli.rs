@@ -127,6 +127,7 @@ fn help() -> String {
         "Software Factory {} — developmental work through Commissions: commission,\nobserve, Return. The routes below are the exact native spellings; the groups\nsay what each is for.\n\n\
 Developmental work (everyday entry, never execution):\n  factory development commission <state> [request-file|-] [--json]\n                                    submit a Commission through the exact owner contract\n  factory development commission-read <state> <request-ref> [--json]\n                                    read a Commission back\n  factory development current-work [<state>] --position <central:position:...> [--json]\n                                    the work this position is carrying right now\n  factory development mutate <state> [request-file|-] [--json]\n                                    a declared owner effect via the applicable Method/subject action\n  factory development action <state> [request-file|-] [--json]\n                                    one declared Action effect\n  factory development custody assign|update|list ...\n                                    execution coordination over the existing custody facts\n\n\
 Work, history and evidence reads (contextual):\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run <state> <run-ref> [--json]\n  factory development build <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development observe <ledger-root> <run-ref> [request-file|-] [--json]\n                                    write a Return/ledger observation\n  factory development observations <ledger-root> <run-ref> [--json]\n                                    read them back exactly as written\n  factory development routine-continuation <state> <invocation-ref> [--json]\n                                    inspect a recurrence; admission is its own route\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n\n\
+{}\n\n\
 Builds and Actions (contextual):\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n                                    the current build reading (discloses any refresh effect)\n  factory build refresh <state> <project-ref> <run-ref> [--json]\n  factory action list <state> <project-ref> <run-ref> [--json]\n  factory action invoke <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
 Telemetry (contextual inspection):\n  factory telemetry status <state> [--json]\n  factory telemetry inspect <state> <telemetry-ref> [--json]\n  factory telemetry search <state> <query> [--regex] [--limit N] [--aikit <bin>] [--json]\n  factory telemetry stats <state> [--day YYYY-MM-DD | --from-day YYYY-MM-DD --through-day YYYY-MM-DD | --last-days N] [--compare-previous] [--template <name>] [--drill-down] [--json]\n  factory telemetry watch <state> [--interval S] [--max-events N] [--duration S] [--resume <cursor>]\n  factory telemetry compare <original-state> <changed-state> [--json]\n  factory telemetry signals|field|digest|lookback|day <state> [--policy <path>] [--day ...] [--limit N] [--json]\n  factory telemetry signal <state> <signal-ref> [--json]\n\n\
 Telemetry collection and repair (Operator):\n  factory telemetry collect <state> --policy <path> [--day YYYY-MM-DD | --last-days N] [--json]\n  factory telemetry classify|commission|return <state> --request <path> [--policy <path>] [--json]\n  factory telemetry export <state> [--json]\n  factory telemetry doctor <state> [--json]\n  factory telemetry policy <state> [--policy <path>] [--json]\n\n\
@@ -136,6 +137,7 @@ System and configuration:\n  factory system [--json]\n  factory config-contribut
 <state> in build/action/verify accepts a `factory.build-local-provider-state/v1` document or a `factory.developmental-local-provider/v1` developmental state, such as the document `factory conformance developmental-state` writes.\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.\n\nFor attempt/session work: `factory attempt --help`. World inhabitation, custody and current-work detail: `factory development inhabitation|custody|current-work --help`. Workflow authoring: `factory workflow --help`.",
         env!("CARGO_PKG_VERSION"),
+        crate::prompt_pads::help(),
         crate::inhabitation_cli::help()
     )
 }
@@ -165,6 +167,11 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.mutate",
             "development.admit-routine-continuation",
             "development.routine-continuation",
+            "development.pads",
+            "development.pads-write",
+            "development.pads-run",
+            "development.pads-record",
+            "development.pads-due",
             "development.action",
             "development.observe",
             "development.observations",
@@ -220,6 +227,13 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_DEVELOPMENTAL_MUTATION_RECEIPT,
             FACTORY_ROUTINE_CONTINUATION_ADMISSION,
             FACTORY_ROUTINE_CONTINUATION_READING,
+            crate::prompt_pads::PADS_BANK,
+            crate::prompt_pads::PADS_READING,
+            crate::prompt_pads::PADS_WRITE_RECEIPT,
+            crate::prompt_pads::PADS_RUN_BEGIN,
+            crate::prompt_pads::PADS_RUN_RECORD,
+            crate::prompt_pads::PADS_DUE,
+            crate::prompt_pads::PADS_REFUSAL,
             FACTORY_DEVELOPMENTAL_CONFORMANCE_MANIFEST,
             crate::sensing::POLICY_SCHEMA,
             crate::sensing::FIELD_SCHEMA,
@@ -351,6 +365,12 @@ fn development_command(
         // parts; the process entry prints those refusals as documents.
         "custody" | "current-work" | "inhabitation" => {
             return crate::inhabitation_cli::execute(args, json).map_err(CliError::from_native);
+        }
+        // Prompt pads are kept in a state directory, not in a developmental
+        // state document, and refuse with a code a caller can act on.
+        "pads" | "pads-write" | "pads-run" | "pads-record" | "pads-due" => {
+            return crate::prompt_pads::execute(args, json, stdin_override)
+                .map_err(CliError::from_native);
         }
         "observe" => {
             let ledger_root = args
