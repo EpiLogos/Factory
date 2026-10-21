@@ -16,8 +16,9 @@ use crate::inhabitation::inhabitation_reading;
 use crate::journey::JourneyRef;
 use crate::project_development_store::read_developmental_state;
 use crate::work_custody::{
-    self, list_in, state_refusal, validate_position_ref, AssignRequest, CustodyListingFilter,
-    CustodyReceipt, CustodyState, Refusal, UpdateRequest, ASSIGN_USAGE, NOTHING_READ, UPDATE_USAGE,
+    self, list_in, state_refusal, validate_position_ref, AssignRequest, CustodyAutonomy,
+    CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate, UpdateRequest,
+    ASSIGN_USAGE, NOTHING_READ, UPDATE_USAGE,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -169,6 +170,22 @@ impl Parsed {
             .transpose()
     }
 
+    /// A flag whose value is one of the owner's own words.
+    fn choice<T>(
+        &self,
+        flag: &str,
+        parse: fn(&str) -> Option<T>,
+        words: &str,
+    ) -> Result<Option<T>, Refusal> {
+        self.get(flag)
+            .map(|value| {
+                parse(value).ok_or_else(|| {
+                    usage_for(format!("{flag} {value} is not one of {words}"), &self.usage)
+                })
+            })
+            .transpose()
+    }
+
     fn required_position(&self, flag: &str) -> Result<String, Refusal> {
         self.required(flag)?;
         Ok(self.position(flag)?.unwrap_or_default())
@@ -300,6 +317,24 @@ fn receipt_text(receipt: &CustodyReceipt) -> String {
                 .unwrap_or_default()
         ));
     }
+    let settings: Vec<String> = [
+        record
+            .autonomy
+            .map(|level| format!("autonomy {}", level.as_str())),
+        record
+            .review_gate
+            .map(|gate| format!("review gate {}", gate.as_str())),
+        record
+            .escalate_to
+            .as_ref()
+            .map(|person| format!("escalates to {person}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !settings.is_empty() {
+        lines.push(format!("Settings: {}", settings.join(", ")));
+    }
     if let Some(next) = &receipt.successor {
         lines.push(format!(
             "Handed off to: {} as {}",
@@ -326,6 +361,9 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                         "--origin-communique",
                         "--state",
                         "--custody",
+                        "--autonomy",
+                        "--review-gate",
+                        "--escalate-to",
                     ],
                     false,
                     ASSIGN_USAGE,
@@ -340,6 +378,17 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                     origin_communique_ref: parsed.get("--origin-communique").cloned(),
                     initial_state: parsed.custody_state("--state")?,
                     custody_ref: parsed.get("--custody").cloned(),
+                    autonomy: parsed.choice(
+                        "--autonomy",
+                        CustodyAutonomy::parse,
+                        "suggest, review or auto",
+                    )?,
+                    review_gate: parsed.choice(
+                        "--review-gate",
+                        ReviewGate::parse,
+                        "diffs, approvals or both",
+                    )?,
+                    escalate_to: parsed.get("--escalate-to").cloned(),
                 };
                 let receipt = work_custody::assign(&state_path(&parsed)?, request)?;
                 render(&receipt, json, || receipt_text(&receipt))
