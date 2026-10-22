@@ -23,6 +23,8 @@ pub const FACTORY_COMMISSION_REQUEST: &str = "factory.commission-request/v1";
 pub const FACTORY_COMMISSION_CONTRACT: &str = "factory.commission/v1";
 pub const FACTORY_COMMISSION_RECEIPT: &str = "factory.commission-receipt/v1";
 pub const FACTORY_COMMISSION_READING: &str = "factory.commission-reading/v1";
+pub const FACTORY_COMMISSION_DRAFT: &str = "factory.commission-draft/v1";
+pub const FACTORY_COMMISSION_COMPOSITION: &str = "factory.commission-composition/v1";
 pub const FACTORY_DEVELOPMENTAL_MUTATION_REQUEST: &str =
     "factory.developmental-mutation-request/v1";
 pub const FACTORY_DEVELOPMENTAL_MUTATION_RECORD: &str = "factory.developmental-mutation/v1";
@@ -1143,6 +1145,127 @@ fn add_composition_participants(
     Ok(())
 }
 
+/// The root act as a person states it: who carries it, for what, over which scope. Factory names the act and its standing.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryRootActDraft {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act_ref: Option<String>,
+    pub agent_ref: String,
+    pub purpose: String,
+    pub scope_refs: Vec<String>,
+}
+
+/// `factory.commission-draft/v1`: what a person states to commission new work. Everything Factory owns — the request's
+/// identity, its moment, its write owner, the root act's identity and standing — is left for Factory to name; a draft may
+/// carry a request ref and moment of its own (a resubmission), and they are kept verbatim.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCommissionDraft {
+    pub contract: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ref: Option<String>,
+    pub project_key: String,
+    pub purpose: String,
+    pub frontier: String,
+    pub run_destination: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commissioned_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub central_composition: Option<CentralAgentCompositionEvidence>,
+    pub root_act: FactoryRootActDraft,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub participant_requirements: Vec<FactoryParticipantRequirement>,
+}
+
+/// `factory.commission-composition/v1`: the exact `factory.commission-request/v1` a draft becomes, already validated, and
+/// the Project, Journey and Run it would commission. Composing writes nothing: `factory development commission` admits it.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryCommissionComposition {
+    pub contract: String,
+    pub request: FactoryCommissionRequest,
+    pub project_ref: ProjectRef,
+    pub journey_ref: JourneyRef,
+    pub run_ref: RunRef,
+    pub persisted: bool,
+}
+
+/// The words of a purpose as a ref segment: lower-case letters and digits joined by single dashes, at most 48 characters.
+fn purpose_slug(purpose: &str) -> String {
+    let mut slug = String::new();
+    for character in purpose.chars() {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character.to_ascii_lowercase());
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+        if slug.len() >= 48 {
+            break;
+        }
+    }
+    let slug = slug.trim_end_matches('-').to_owned();
+    if slug.is_empty() {
+        "commission".into()
+    } else {
+        slug
+    }
+}
+
+/// Compose one Commission request from a person's draft at `now`: the request ref `commission-request:<purpose>-<moment>`, the
+/// moment, `writeOwner: factory`, the root act's ref `act:<purpose>-<moment>` and its `commissioned-not-executed` standing; then
+/// the request's own validation, and the identities it derives. Nothing is written.
+pub fn compose_commission(
+    draft: FactoryCommissionDraft,
+    now: DateTime<Utc>,
+) -> Result<FactoryCommissionComposition, CommissionError> {
+    if draft.contract != FACTORY_COMMISSION_DRAFT {
+        return Err(CommissionError::Invalid("contract".into()));
+    }
+    let moment = match &draft.commissioned_at {
+        Some(moment) => moment.clone(),
+        None => now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+    };
+    let stamp = timestamp(&moment, "commissionedAt")?
+        .format("%Y%m%dT%H%M%SZ")
+        .to_string();
+    let slug = purpose_slug(&draft.purpose);
+    let request = FactoryCommissionRequest {
+        contract: FACTORY_COMMISSION_REQUEST.into(),
+        request_ref: draft
+            .request_ref
+            .unwrap_or_else(|| format!("commission-request:{slug}-{stamp}")),
+        project_key: draft.project_key,
+        purpose: draft.purpose,
+        frontier: draft.frontier,
+        run_destination: draft.run_destination,
+        write_owner: "factory".into(),
+        commissioned_at: moment,
+        central_composition: draft.central_composition,
+        root_act: BoundedRootAct {
+            act_ref: draft
+                .root_act
+                .act_ref
+                .unwrap_or_else(|| format!("act:{slug}-{stamp}")),
+            agent_ref: draft.root_act.agent_ref,
+            purpose: draft.root_act.purpose,
+            scope_refs: draft.root_act.scope_refs,
+            standing: "commissioned-not-executed".into(),
+        },
+        participant_requirements: draft.participant_requirements,
+    };
+    request.validate()?;
+    let (project_ref, journey_ref, run_ref) = derive_identities(&request)?;
+    Ok(FactoryCommissionComposition {
+        contract: FACTORY_COMMISSION_COMPOSITION.into(),
+        request,
+        project_ref,
+        journey_ref,
+        run_ref,
+        persisted: false,
+    })
+}
+
 fn derive_identities(
     request: &FactoryCommissionRequest,
 ) -> Result<(ProjectRef, JourneyRef, RunRef), CommissionError> {
@@ -1370,6 +1493,118 @@ mod tests {
                 .commission,
             applied.commission
         );
+    }
+
+    fn draft() -> Value {
+        serde_json::json!({
+            "contract": FACTORY_COMMISSION_DRAFT,
+            "projectKey": "factory-programme-195",
+            "purpose": "Run the checks on main, and report what failed!",
+            "frontier": "Commissioned; nothing executed",
+            "runDestination": "factory-programme/checks",
+            "rootAct": {"agentRef": "agent:hermes", "purpose": "Run only the named checks", "scopeRefs": ["product:factory"]},
+            "participantRequirements": [{"ref": "agent:hermes", "description": "Runs the checks",
+                "sourceOwner": "central", "sourceRef": "source:specimen-agent", "sourceRevision": "specimen-v1"}]
+        })
+    }
+
+    fn compose(value: Value) -> Result<FactoryCommissionComposition, CommissionError> {
+        let now = DateTime::parse_from_rfc3339("2026-10-22T08:15:30.250Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        compose_commission(serde_json::from_value(value).unwrap(), now)
+    }
+
+    #[test]
+    fn a_draft_is_composed_into_the_exact_request_commission_admits_and_nothing_is_written() {
+        let composed = compose(draft()).unwrap();
+        assert_eq!(composed.contract, FACTORY_COMMISSION_COMPOSITION);
+        assert!(!composed.persisted);
+        let request = &composed.request;
+        assert_eq!(request.contract, FACTORY_COMMISSION_REQUEST);
+        assert_eq!(
+            request.request_ref,
+            "commission-request:run-the-checks-on-main-and-report-what-failed-20261022T081530Z"
+        );
+        assert_eq!(request.commissioned_at, "2026-10-22T08:15:30Z");
+        assert_eq!(request.write_owner, "factory");
+        assert_eq!(
+            request.root_act.act_ref,
+            "act:run-the-checks-on-main-and-report-what-failed-20261022T081530Z"
+        );
+        assert_eq!(request.root_act.standing, "commissioned-not-executed");
+        request.validate().unwrap();
+
+        // The composition is what `commission` admits, under the identities it named.
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.json");
+        let applied = FactoryDevelopmentalFileProvider::commission(&path, request.clone()).unwrap();
+        assert_eq!(applied.status, FactoryAdmissionStatus::Applied);
+        assert_eq!(applied.commission.project_ref, composed.project_ref);
+        assert_eq!(applied.commission.journey_ref, composed.journey_ref);
+        assert_eq!(applied.commission.run_ref, composed.run_ref);
+
+        // A draft that carries its own request ref and moment keeps them, so a resubmission is the same request.
+        let mut again = draft();
+        again["requestRef"] = serde_json::json!(request.request_ref);
+        again["commissionedAt"] = serde_json::json!(request.commissioned_at);
+        again["rootAct"]["actRef"] = serde_json::json!(request.root_act.act_ref);
+        assert_eq!(compose(again).unwrap(), composed);
+
+        // Through the CLI: no state is named, so there is none to write.
+        let output = execute_cli(
+            &[
+                "development".into(),
+                "commission-compose".into(),
+                "-".into(),
+                "--json".into(),
+            ],
+            Some(&draft().to_string()),
+        )
+        .unwrap();
+        let answered: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(answered["contract"], FACTORY_COMMISSION_COMPOSITION);
+        assert_eq!(answered["persisted"], false);
+        assert!(answered["request"]["requestRef"]
+            .as_str()
+            .unwrap()
+            .starts_with("commission-request:run-the-checks-on-main-and-report-what-failed-"));
+    }
+
+    #[test]
+    fn a_draft_is_refused_where_the_request_would_be() {
+        for (what, change) in [
+            (
+                "another contract",
+                serde_json::json!({"contract": "factory.commission-request/v1"}),
+            ),
+            ("an empty purpose", serde_json::json!({"purpose": " "})),
+            (
+                "a project key with a space",
+                serde_json::json!({"projectKey": "factory programme"}),
+            ),
+            (
+                "a moment that is no moment",
+                serde_json::json!({"commissionedAt": "yesterday"}),
+            ),
+            (
+                "no basis",
+                serde_json::json!({"participantRequirements": []}),
+            ),
+        ] {
+            let mut value = draft();
+            for (key, field) in change.as_object().unwrap() {
+                value[key] = field.clone();
+            }
+            assert!(compose(value).is_err(), "{what} is refused");
+        }
+        // A root act carried by an agent the participants do not name.
+        let mut stranger = draft();
+        stranger["rootAct"]["agentRef"] = serde_json::json!("agent:stranger");
+        assert!(matches!(
+            compose(stranger),
+            Err(CommissionError::Invalid(field)) if field == "rootAct"
+        ));
     }
 
     #[test]

@@ -2138,7 +2138,7 @@ pub fn attempt_cli_main(args: &[String]) -> std::process::ExitCode {
 }
 
 fn attempt_help() -> String {
-    "Factory native attempt operations\n\nUsage:\n  factory attempt init   <state> [seed-file|-] [--json]\n  factory attempt read   <state> [--json]\n  factory attempt action <state> [request-file|-] [--json]\n\nThe durable state revalidates the canonical Run/workflow/snapshot basis on every operation. Owner delivery receipts never imply verification or human acceptance.".into()
+    "Factory native attempt operations\n\nUsage:\n  factory attempt init   <state> [seed-file|-] [--json]\n  factory attempt read   <state> [--json]\n  factory attempt scope  <state> [run-ref] [--attempt <ref>] [--json]\n  factory attempt action <state> [request-file|-] [--json]\n\nThe durable state revalidates the canonical Run/workflow/snapshot basis on every operation. Owner delivery receipts never imply verification or human acceptance.".into()
 }
 
 fn render_reading(

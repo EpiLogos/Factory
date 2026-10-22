@@ -145,6 +145,79 @@ fn unit_decision_survives_fresh_clients_and_role_labels_cannot_resume_it() {
 }
 
 #[test]
+fn an_attempts_scope_is_read_from_its_own_placement_and_names_what_factory_does_not_hold() {
+    let fixture = Fixture::new(source());
+    let workflow = fixture.workflow();
+    let before = std::fs::read(&fixture.state).unwrap();
+    // A Run with no attempt has no scope to read.
+    let scope = |extra: &[&str]| {
+        let mut args = vec![
+            "attempt".to_owned(),
+            "scope".to_owned(),
+            fixture.state.display().to_string(),
+        ];
+        args.extend(extra.iter().map(|value| value.to_string()));
+        args.push("--json".into());
+        run_factory(&args, None)
+    };
+    let empty = scope(&[]);
+    assert_success(&empty);
+    let empty: Value = serde_json::from_slice(&empty.stdout).unwrap();
+    assert_eq!(empty["contract"], "factory.attempt-scope-reading/v1");
+    assert_eq!(empty["scopes"], json!([]));
+
+    fixture
+        .action(FactoryAttemptOperation::StartSerial {
+            attempt_ref: "attempt:scoped".into(),
+            task_ref: "task:scoped".into(),
+            parent_journey_ref: "journey:scoped".into(),
+            workflow_unit_ref: workflow.unit("inspect-source").unwrap().reference.clone(),
+            disposition: disposition(&fixture.run, &workflow, "inspect-source", None),
+            retry_grant: None,
+            tracking: vec![],
+            place_grant: None,
+        })
+        .unwrap();
+    let after_start = std::fs::read(&fixture.state).unwrap();
+    assert_ne!(before, after_start);
+
+    let output = scope(&["--attempt", "attempt:scoped"]);
+    assert_success(&output);
+    let reading: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reading["persisted"], false);
+    assert_eq!(reading["runRef"], RUN);
+    let row = &reading["scopes"][0];
+    assert_eq!(row["attemptRef"], "attempt:scoped");
+    assert_eq!(row["taskRef"], "task:scoped");
+    assert_eq!(
+        row["writes"]["writablePaths"],
+        json!(["factory/src", "factory/tests"])
+    );
+    assert_eq!(row["writes"]["protectedPaths"], json!(["docs/positions"]));
+    assert_eq!(row["writes"]["nowPath"], "/controlled/project/NOW");
+    assert_eq!(
+        row["writes"]["effectiveCoverage"],
+        json!(["single-writer", "source-protection"])
+    );
+    assert_eq!(
+        row["writes"]["writeBoundaryRef"],
+        "workcell-write-boundary:controlled"
+    );
+    assert_eq!(row["basis"]["sourceRevision"], workflow.source.revision);
+    for absent in ["reach", "reads", "writeMode"] {
+        assert!(
+            reading["notHeld"][absent]
+                .as_str()
+                .is_some_and(|why| why.starts_with("No Factory record")),
+            "{absent} is named as not held"
+        );
+    }
+    // Reading writes nothing; an unknown attempt is refused.
+    assert_eq!(std::fs::read(&fixture.state).unwrap(), after_start);
+    assert!(!scope(&["--attempt", "attempt:absent"]).status.success());
+}
+
+#[test]
 fn owner_lifecycle_cannot_complete_from_the_present_subset_of_units() {
     use epilogos_factory::core::run::{RunLifecycle, RunLifecycleCommand};
     let fixture = Fixture::new(source());

@@ -7,6 +7,7 @@
 use crate::attempt_runtime::*;
 use crate::core::run::{Run, WorkflowUnitRef};
 use crate::orchestration::LegStatus;
+use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
@@ -469,6 +470,74 @@ pub fn execute_attempt_cli(
         .iter()
         .filter(|arg| arg.as_str() != "--json")
         .collect::<Vec<_>>();
+    // `factory attempt scope <state> [run-ref] [--attempt <ref>] [--json]`: what each attempt may write, read from its record.
+    if positional.first().map(|value| value.as_str()) == Some("scope") {
+        let rest: Vec<&str> = positional[1..].iter().map(|value| value.as_str()).collect();
+        let mut path = None;
+        let mut run_ref = None;
+        let mut attempt = None;
+        let mut index = 0;
+        while index < rest.len() {
+            match rest[index] {
+                "--attempt" => {
+                    attempt = Some(
+                        *rest
+                            .get(index + 1)
+                            .ok_or_else(|| invalid("--attempt names an attempt ref"))?,
+                    );
+                    index += 2;
+                    continue;
+                }
+                value if path.is_none() => path = Some(value),
+                value if run_ref.is_none() => run_ref = Some(value),
+                value => return Err(invalid(&format!("unexpected argument `{value}`"))),
+            }
+            index += 1;
+        }
+        let path = path.ok_or_else(|| invalid("missing state path"))?;
+        let reading = match run_ref {
+            Some(run_ref) => FileAttemptStore::open_run(
+                Path::new(path),
+                run_ref
+                    .parse::<crate::core::run::RunRef>()
+                    .map_err(|error| invalid(&error.to_string()))?,
+            )?
+            .reading()?,
+            None => read_attempts(Path::new(path))?,
+        };
+        let scope = crate::attempt_scope::scope_reading(&reading, attempt)?;
+        return if args.iter().any(|arg| arg == "--json") {
+            Ok(serde_json::to_string_pretty(&scope)?)
+        } else {
+            let mut output = format!(
+                "{}\nRun: {}",
+                crate::attempt_scope::FACTORY_ATTEMPT_SCOPE_READING,
+                reading.run_ref
+            );
+            for row in scope["scopes"].as_array().into_iter().flatten() {
+                let paths = row["writes"]["writablePaths"]
+                    .as_array()
+                    .map(|paths| {
+                        paths
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_else(|| "nowhere".into());
+                output.push_str(&format!(
+                    "\nAttempt {}: writes {}",
+                    row["attemptRef"].as_str().unwrap_or("?"),
+                    if paths.is_empty() {
+                        "nowhere".into()
+                    } else {
+                        paths
+                    }
+                ));
+            }
+            Ok(output)
+        };
+    }
     if positional.first().map(|value| value.as_str()) != Some("action") {
         if positional.first().map(|value| value.as_str()) == Some("read") {
             let path = positional
