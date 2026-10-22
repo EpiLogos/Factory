@@ -125,7 +125,7 @@ pub fn execute_cli(args: &[String], stdin_override: Option<&str>) -> Result<Stri
 fn help() -> String {
     format!(
         "Software Factory {} — developmental work through Commissions: commission,\nobserve, Return. The routes below are the exact native spellings; the groups\nsay what each is for.\n\n\
-Developmental work (everyday entry, never execution):\n  factory development commission <state> [request-file|-] [--json]\n                                    submit a Commission through the exact owner contract\n  factory development commission-read <state> <request-ref> [--json]\n                                    read a Commission back\n  factory development current-work [<state>] --position <central:position:...> [--json]\n                                    the work this position is carrying right now\n  factory development mutate <state> [request-file|-] [--json]\n                                    a declared owner effect via the applicable Method/subject action\n  factory development action <state> [request-file|-] [--json]\n                                    one declared Action effect\n  factory development custody assign|update|list ...\n                                    execution coordination over the existing custody facts\n\n\
+Developmental work (everyday entry, never execution):\n  factory development commission-compose [draft-file|-] [--json]\n                                    compose a person's draft into the exact Commission request; writes nothing\n  factory development commission <state> [request-file|-] [--json]\n                                    submit a Commission through the exact owner contract\n  factory development commission-read <state> <request-ref> [--json]\n                                    read a Commission back\n  factory development current-work [<state>] --position <central:position:...> [--json]\n                                    the work this position is carrying right now\n  factory development mutate <state> [request-file|-] [--json]\n                                    a declared owner effect via the applicable Method/subject action\n  factory development action <state> [request-file|-] [--json]\n                                    one declared Action effect\n  factory development custody assign|update|list ...\n                                    execution coordination over the existing custody facts\n\n\
 Work, history and evidence reads (contextual):\n  factory development project <state> <project-ref> [--json]\n  factory development journey <state> <journey-ref> [--json]\n  factory development run <state> <run-ref> [--json]\n  factory development build <state> <run-ref> [--json]\n  factory development workflow-units <state> [run-ref] [--json]\n  factory development workflow-unit <state> <workflow-unit-ref> [run-ref] [--json]\n  factory development execution-telemetry <state> <telemetry-ref> [--json]\n  factory development central-project-link <state> <request> [--json]\n  factory development central-project-link-read <state> <central-project-ref> [--json]\n  factory development observe <ledger-root> <run-ref> [request-file|-] [--json]\n                                    write a Return/ledger observation\n  factory development observations <ledger-root> <run-ref> [--json]\n                                    read them back exactly as written\n  factory development routine-continuation <state> <invocation-ref> [--json]\n                                    inspect a recurrence; admission is its own route\n  factory development admit-routine-continuation <state> [request-file|-] [--json]\n\n\
 {}\n\n\
 Builds and Actions (contextual):\n  factory build snapshot <state> <project-ref> <run-ref> [--json]\n                                    the current build reading (discloses any refresh effect)\n  factory build refresh <state> <project-ref> <run-ref> [--json]\n  factory action list <state> <project-ref> <run-ref> [--json]\n  factory action invoke <state> <project-ref> <run-ref> [request-file|-] [--json]\n  factory verify [<state> <project-ref> <run-ref>] [--json]\n\n\
@@ -163,6 +163,7 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.central-project-link",
             "development.central-project-link-read",
             "development.commission",
+            "development.commission-compose",
             "development.commission-read",
             "development.mutate",
             "development.admit-routine-continuation",
@@ -224,6 +225,7 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             FACTORY_EXECUTION_TELEMETRY_READING_CONTRACT,
             FACTORY_COMMISSION_RECEIPT,
             FACTORY_COMMISSION_READING,
+            crate::commission::FACTORY_COMMISSION_COMPOSITION,
             FACTORY_DEVELOPMENTAL_MUTATION_RECEIPT,
             FACTORY_ROUTINE_CONTINUATION_ADMISSION,
             FACTORY_ROUTINE_CONTINUATION_READING,
@@ -397,6 +399,28 @@ fn development_command(
                 .admit_central_project_link(request)
                 .map_err(CliError::from_native)?;
             return serde_json::to_string_pretty(&receipt).map_err(CliError::from);
+        }
+        // A person's draft composed into the exact Commission request, with the identities it would commission. It needs no
+        // state and writes nothing: `commission` admits what it answers.
+        "commission-compose" => {
+            let draft_path = args.get(1).map(String::as_str).unwrap_or("-");
+            let draft: crate::commission::FactoryCommissionDraft =
+                serde_json::from_str(&read_input(draft_path, stdin_override)?)?;
+            let composition =
+                crate::commission::compose_commission(draft, std::time::SystemTime::now().into())
+                    .map_err(CliError::from_native)?;
+            return if json {
+                serde_json::to_string_pretty(&composition).map_err(CliError::from)
+            } else {
+                Ok(format!(
+                    "{}\nRequest: {}\nProject: {}\nJourney: {}\nRun: {}\nNothing is written; submit it with `factory development commission <state> -`.",
+                    composition.contract,
+                    composition.request.request_ref,
+                    composition.project_ref,
+                    composition.journey_ref,
+                    composition.run_ref
+                ))
+            };
         }
         "commission" => {
             let state_path = args

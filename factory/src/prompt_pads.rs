@@ -473,6 +473,9 @@ struct Pad {
     seat: Option<String>,
     runs_at: RunsAt,
     choke: Option<u8>,
+    /// The AIKit Routine that carries this pad's schedule when it runs by itself (manual 19.22, Running alone),
+    /// carried verbatim: the Routine, its proof, its authority and its state are AIKit's. Absent until a person links one.
+    routine_ref: Option<String>,
 }
 
 impl Pad {
@@ -489,6 +492,7 @@ impl Pad {
                 "seat",
                 "runs_at",
                 "choke",
+                "routine_ref",
             ],
             "a pad",
         )?;
@@ -537,11 +541,12 @@ impl Pad {
             seat: parse_seat(object.get("seat"))?,
             runs_at: RunsAt::parse(object.get("runs_at"))?,
             choke: parse_choke(object.get("choke"))?,
+            routine_ref: optional_ref(object, "routine_ref")?,
         })
     }
 
     fn to_json(&self) -> Value {
-        json!({
+        let mut pad = json!({
             "name":self.name,
             "prompt":self.prompt,
             "session":self.session.to_json(),
@@ -550,7 +555,12 @@ impl Pad {
             "seat":self.seat,
             "runs_at":self.runs_at.to_json(),
             "choke":self.choke,
-        })
+        });
+        // Absent until linked, so a bank written before the link existed reads back byte for byte.
+        if let Some(routine_ref) = &self.routine_ref {
+            pad["routine_ref"] = json!(routine_ref);
+        }
+        pad
     }
 }
 
@@ -2321,6 +2331,68 @@ mod tests {
     }
 
     #[test]
+    fn a_pads_routine_link_is_kept_verbatim_and_absent_until_a_person_links_one() {
+        let (_dir, store) = store();
+        let central = FakeCentral::default();
+        let schedule =
+            json!({"kind":"daily","time":"08:00","days":["mon","tue","wed","thu","fri"]});
+        // Unlinked: the pad carries no routine_ref at all, so earlier banks read back unchanged.
+        put(
+            &store,
+            &central,
+            PROJECT,
+            0,
+            json!({"prompt":"Run the checks","runs_at":schedule}),
+        );
+        let unlinked = store.reading(PROJECT, NOW, &central).unwrap();
+        assert!(unlinked["slots"][0]["pad"]
+            .as_object()
+            .unwrap()
+            .get("routine_ref")
+            .is_none());
+
+        // Linked: the AIKit Routine's ref, verbatim, on the write's receipt and on every reading.
+        let written = put(
+            &store,
+            &central,
+            PROJECT,
+            0,
+            json!({"prompt":"Run the checks","runs_at":schedule,"routine_ref":"routine/morning-checks"}),
+        );
+        assert_eq!(written["pad"]["routine_ref"], "routine/morning-checks");
+        assert_eq!(written["changed"], true);
+        let linked = store.reading(PROJECT, NOW, &central).unwrap();
+        assert_eq!(
+            linked["slots"][0]["pad"]["routine_ref"],
+            "routine/morning-checks"
+        );
+        assert_eq!(linked["slots"][0]["pad"]["runs_at"]["kind"], "daily");
+
+        // A begun run keeps the pad as it stood, link included.
+        let begun = press(&store, &central, 0).unwrap();
+        assert_eq!(begun["run"]["pad"]["routine_ref"], "routine/morning-checks");
+
+        // Unlinking is a write without it (null is the same as absent).
+        put(
+            &store,
+            &central,
+            PROJECT,
+            0,
+            json!({"prompt":"Run the checks","runs_at":schedule,"routine_ref":null}),
+        );
+        let again = store.reading(PROJECT, NOW, &central).unwrap();
+        assert!(again["slots"][0]["pad"]
+            .as_object()
+            .unwrap()
+            .get("routine_ref")
+            .is_none());
+        assert_eq!(
+            again["revision"], unlinked["revision"],
+            "the same pad, the same bytes"
+        );
+    }
+
+    #[test]
     fn a_pad_can_be_emptied_and_the_other_slots_stay() {
         let (_dir, store) = store();
         let central = FakeCentral::default();
@@ -2522,6 +2594,21 @@ mod tests {
                 "padded scope",
                 json!({"prompt":"p","scope_ref":" project:O-I "}),
                 "scope_ref",
+            ),
+            (
+                "empty routine",
+                json!({"prompt":"p","routine_ref":""}),
+                "routine_ref",
+            ),
+            (
+                "routine of 513",
+                json!({"prompt":"p","routine_ref":long(513)}),
+                "routine_ref",
+            ),
+            (
+                "routine as an object",
+                json!({"prompt":"p","routine_ref":{"ref":"routine/morning"}}),
+                "routine_ref",
             ),
             (
                 "empty scope",
