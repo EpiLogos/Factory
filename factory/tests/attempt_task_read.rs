@@ -48,15 +48,39 @@ fn success(output: Output) -> Value {
 }
 struct World {
     dir: tempfile::TempDir,
+    state_path: std::path::PathBuf,
     workflow: CompiledWorkflow,
     disposition: SituatedExecutionDisposition,
 }
 impl World {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state.json");
+        Self::at(dir, state, PROJECT)
+    }
+    /// A World whose state is a Project's own placement (`<root>/.factory`),
+    /// as `factory project setup` keeps it: the ground its files lie in.
+    fn placed(key: &str) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let project = epilogos_factory::commission::project_ref_for_key(key)
+            .unwrap()
+            .to_string();
+        std::fs::create_dir_all(dir.path().join(".factory")).unwrap();
+        let state = dir.path().join(".factory/development-state.json");
+        let world = Self::at(dir, state, &project);
+        std::fs::write(
+            world.dir.path().join(".factory/project.json"),
+            json!({"schema":"factory.project-placement/v1","projectKey":key,
+                "factoryProjectRef":project,"stateFile":"development-state.json"})
+            .to_string(),
+        )
+        .unwrap();
+        world
+    }
+    fn at(dir: tempfile::TempDir, state_path: std::path::PathBuf, project: &str) -> Self {
         let run = Run::new(
             RUN.parse::<RunRef>().unwrap(),
-            PROJECT.parse().unwrap(),
+            project.parse().unwrap(),
             "task reading test",
             "factory-test",
         )
@@ -69,7 +93,7 @@ impl World {
         let unit = workflow.unit("inspect-source").unwrap();
         let selection = accept_aikit_selection(
             ExecutionDemand {
-                project_ref: PROJECT.into(),
+                project_ref: project.into(),
                 run_ref: RUN.into(),
                 workflow_unit_ref: Some(unit.reference.to_string()),
                 agency_ref: Some("agency:task-test".into()),
@@ -150,6 +174,7 @@ impl World {
         };
         let world = Self {
             dir,
+            state_path,
             workflow,
             disposition,
         };
@@ -187,7 +212,7 @@ impl World {
         world
     }
     fn state(&self) -> String {
-        self.dir.path().join("state.json").display().to_string()
+        self.state_path.display().to_string()
     }
     fn reading(&self) -> FactoryAttemptReading {
         serde_json::from_value(success(binary(
@@ -247,6 +272,74 @@ impl World {
         ];
         args.extend(extra.iter().map(|value| (*value).into()));
         binary(&args, None)
+    }
+    fn artifacts(&self, attempt: &str, extra: &[&str]) -> Output {
+        let mut args = vec![
+            "attempt".into(),
+            "artifacts".into(),
+            self.state(),
+            RUN.into(),
+            attempt.into(),
+        ];
+        args.extend(extra.iter().map(|value| (*value).into()));
+        binary(&args, None)
+    }
+    /// The attempt verified and returned, its Return naming these refs
+    /// beside the one artifact it returned (`artifact:test`).
+    fn return_with(&self, artifact_refs: &[&str], evidence_refs: &[&str]) {
+        let unit = self.workflow.unit("inspect-source").unwrap();
+        let evidence = BTreeSet::from(["evidence:test-return".to_string()]);
+        self.act(FactoryAttemptOperation::BindDispatch {
+            attempt_ref: "attempt:z-old".into(),
+            execution_ref: "execution:test".into(),
+            receipt: OwnerOperationReceipt {
+                owner_ref: "aikit".into(),
+                contract: "aikit.encounter-delivery/v1".into(),
+                operation_ref: "delivery:test".into(),
+                receipt_ref: "receipt:test-return".into(),
+                source_revision: "owner-r1".into(),
+                phase: OwnerOperationPhase::Returned,
+                evidence_refs: evidence.clone(),
+                partial_effect_refs: BTreeSet::new(),
+                payload: json!({"testOnly":true}),
+            },
+        });
+        self.act(FactoryAttemptOperation::RecordVerification {
+            attempt_ref: "attempt:z-old".into(),
+            verification: VerificationReceipt {
+                verification_ref: "verification:test".into(),
+                owner_ref: "factory".into(),
+                source_revision: "verification-r1".into(),
+                outcome: VerificationOutcome::Passed,
+                obligations: unit.verification_obligations.clone(),
+                evidence_refs: evidence.clone(),
+            },
+        });
+        let mut artifacts = BTreeSet::from(["artifact:test".to_string()]);
+        artifacts.extend(artifact_refs.iter().map(|value| (*value).to_string()));
+        let mut retained = evidence.clone();
+        retained.extend(evidence_refs.iter().map(|value| (*value).to_string()));
+        self.act(FactoryAttemptOperation::ReturnArtifact {
+            attempt_ref: "attempt:z-old".into(),
+            artifact: ReturnedArtifact {
+                artifact_ref: "artifact:test".into(),
+                subject_ref: unit.subject_ref.to_string(),
+                subject_revision: unit.basis_revision.clone(),
+                producing_execution_ref: "execution:test".into(),
+                evidence_refs: evidence,
+                semantic_difference: "Test-only inspected source".into(),
+            },
+            readable_return: ReadableReturn {
+                return_ref: "return:test".into(),
+                summary: "Readable test-only source report".into(),
+                artifact_refs: artifacts,
+                evidence_refs: retained,
+                receiving_ref: None,
+                receiving_source_revision: None,
+                archive_refs: BTreeSet::new(),
+                regression_observation_refs: BTreeSet::new(),
+            },
+        });
     }
     fn retry(&self) {
         self.act(FactoryAttemptOperation::Fail {
@@ -461,6 +554,129 @@ fn readable_return_exposes_evidence_receiving_archive_and_learning_without_recog
     }
 }
 
+/// O-I #759: each ref a Return names resolves through Factory to its file in
+/// the Project's own ground, or to Central's path identity; every other ref
+/// stays named, with Factory's reason.
+#[cfg(unix)]
+#[test]
+fn artifact_read_resolves_returned_files_in_the_projects_ground_and_names_why_the_rest_stay_unopened(
+) {
+    let world = World::placed("control:root");
+    let ground = world.dir.path().canonicalize().unwrap();
+    std::fs::create_dir_all(ground.join("docs")).unwrap();
+    std::fs::write(ground.join("docs/report.md"), "# Report\n").unwrap();
+    std::os::unix::fs::symlink("/etc/hosts", ground.join("docs/linked.md")).unwrap();
+    let file = "central:source:control:root:docs/report.md";
+    let folder = "central:source:control:root:docs";
+    let missing = "central:source:control:root:docs/missing.md";
+    let escape = "central:source:control:root:../outside.md";
+    let linked = "central:source:control:root:docs/linked.md";
+    let foreign = "central:source:central-project:Elsewhere:docs/report.md";
+    let central = "central:path:/ground:docs/report.md";
+    world.return_with(
+        &[file, folder],
+        &[missing, escape, linked, foreign, central],
+    );
+    let before = std::fs::read(world.state()).unwrap();
+
+    let value = success(world.artifacts("attempt:z-old", &["--json"]));
+    assert_eq!(value["contract"], "factory.attempt-artifact-reading/v1");
+    assert_eq!(value["runRef"], RUN);
+    assert_eq!(value["attemptRef"], "attempt:z-old");
+    assert_eq!(value["returnRef"], "return:test");
+    assert_eq!(value["projectKey"], "control:root");
+    assert_eq!(value["projectRoot"], ground.display().to_string());
+    let rows = value["artifacts"].as_array().unwrap();
+    assert_eq!(rows.len(), 9, "every ref the Return names, once: {value}");
+    let row = |reference: &str| {
+        rows.iter()
+            .find(|row| row["ref"] == reference)
+            .unwrap_or_else(|| panic!("{reference} is not listed: {value}"))
+            .clone()
+    };
+    // Resolved: the file in the Project's ground, with its identity.
+    let resolved = row(file);
+    assert_eq!(resolved["state"], "file", "{resolved}");
+    assert_eq!(resolved["roles"], json!(["artifact"]));
+    assert_eq!(resolved["file"]["path"], "docs/report.md");
+    assert_eq!(resolved["file"]["bytes"], 9);
+    assert_eq!(
+        resolved["file"]["contentDigest"],
+        blake3::hash(b"# Report\n").to_hex().to_string()
+    );
+    // A Central path is Central's own identity: Factory carries it there.
+    assert_eq!(row(central)["state"], "central-path");
+    assert_eq!(row(central)["roles"], json!(["evidence"]));
+    // Refused, each with Factory's reason, and no file.
+    for (reference, words) in [
+        (missing, "docs/missing.md"),
+        (escape, "traversal"),
+        (linked, "docs/linked.md is not a regular file"),
+        (folder, "docs is not a regular file"),
+        (foreign, "control:root"),
+        ("artifact:test", "execution:test"),
+        ("evidence:test-return", "no Factory record"),
+    ] {
+        let refused = row(reference);
+        assert_eq!(refused["state"], "refused", "{reference}: {refused}");
+        assert!(
+            refused["reason"].as_str().unwrap().contains(words),
+            "{reference}: {refused}"
+        );
+        assert!(refused.get("file").is_none(), "{reference}: {refused}");
+    }
+    assert_eq!(before, std::fs::read(world.state()).unwrap());
+
+    let output = world.artifacts("attempt:z-old", &[]);
+    assert!(output.status.success());
+    let text = String::from_utf8(output.stdout).unwrap();
+    for required in ["docs/report.md", "refused", "execution:test", "return:test"] {
+        assert!(text.contains(required), "missing {required}: {text}");
+    }
+}
+
+#[test]
+fn artifact_read_without_a_placement_or_a_return_says_so_in_factorys_words() {
+    let world = World::new();
+    let empty = success(world.artifacts("attempt:z-old", &["--json"]));
+    assert_eq!(empty["contract"], "factory.attempt-artifact-reading/v1");
+    assert!(empty["returnRef"].is_null(), "{empty}");
+    assert_eq!(empty["artifacts"], json!([]));
+
+    let file = "central:source:control:root:docs/report.md";
+    world.return_with(&[file], &[]);
+    let value = success(binary(
+        &[
+            "development".into(),
+            "attempt".into(),
+            "artifacts".into(),
+            world.state(),
+            RUN.into(),
+            "attempt:z-old".into(),
+            "--json".into(),
+        ],
+        None,
+    ));
+    assert!(value["projectKey"].is_null(), "{value}");
+    let row = value["artifacts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["ref"] == file)
+        .unwrap()
+        .clone();
+    assert_eq!(row["state"], "refused");
+    assert!(
+        row["reason"].as_str().unwrap().contains("placement"),
+        "{row}"
+    );
+    // An attempt the Run does not retain is refused, never answered empty.
+    assert!(!world
+        .artifacts("attempt:absent", &["--json"])
+        .status
+        .success());
+}
+
 #[test]
 fn foreign_run_and_missing_task_are_not_satisfied_by_another_record() {
     let world = World::new();
@@ -507,6 +723,8 @@ fn native_discovery_advertises_attempt_contracts_once_and_preserves_other_produc
         "attempt.owner-action",
         "attempt.task",
         "attempt.return",
+        "attempt.artifacts",
+        "development.attempt.artifacts",
         "development.attempt.task",
         "development.field.read",
         "development.observe",
@@ -520,11 +738,19 @@ fn native_discovery_advertises_attempt_contracts_once_and_preserves_other_produc
             "{command}"
         );
     }
-    assert!(value["nativeContracts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|value| value == "factory.attempt-task-reading/v1"));
+    for contract in [
+        "factory.attempt-task-reading/v1",
+        "factory.attempt-artifact-reading/v1",
+    ] {
+        assert!(
+            value["nativeContracts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|value| value == contract),
+            "{contract}"
+        );
+    }
 }
 
 #[cfg(unix)]

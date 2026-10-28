@@ -2,7 +2,9 @@
 //! Other commands continue through the Development Field/base CLI unchanged.
 
 use crate::cli::CliError;
-use serde_json::Value;
+use crate::core::run::RunRef;
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 
 const COMMANDS: &[&str] = &[
     "attempt.prepare",
@@ -15,6 +17,7 @@ const COMMANDS: &[&str] = &[
     "attempt.list",
     "attempt.task",
     "attempt.return",
+    "attempt.artifacts",
     "attempt.receiving",
     "attempt.admission",
     "attempt.decision",
@@ -32,6 +35,7 @@ const COMMANDS: &[&str] = &[
     "development.attempt.list",
     "development.attempt.task",
     "development.attempt.return",
+    "development.attempt.artifacts",
     "development.attempt.receiving",
     "development.attempt.admission",
     "development.attempt.decision",
@@ -52,6 +56,7 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_task::TASK_LIST_READING,
     crate::attempt_task::TASK_READING,
     crate::attempt_task::RETURN_READING,
+    ARTIFACT_READING,
     crate::attempt_admission::ADMISSION_READING,
     crate::attempt_receiving::RECEIVING_ACTION,
     crate::attempt_receiving::RECEIVING_RECEIPT,
@@ -112,6 +117,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
                 .map_err(CliError::from_native);
         }
         match args.first().map(String::as_str) {
+            Some("artifacts") => return execute_artifacts_cli(&args[1..]).map_err(CliError::new),
             Some("prepare") => return crate::attempt_central::execute_cli(&args[1..], stdin),
             Some("receiving") => return crate::attempt_receiving::execute_cli(&args[1..], stdin),
             Some("admission") => return crate::attempt_admission::execute_cli(&args[1..]),
@@ -200,5 +206,235 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
 }
 
 fn task_help() -> &'static str {
-    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt admission [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt artifacts <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt admission [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+}
+
+// ---------------------------------------------------------------------------
+// O-I #759: the artifacts a Return names, read through Factory.
+
+/// `factory attempt artifacts <state> <run-ref> <attempt-ref>`: each ref the
+/// attempt's Return names, resolved through Factory to its file or to
+/// Central's path identity, or named with Factory's reason.
+pub const ARTIFACT_READING: &str = "factory.attempt-artifact-reading/v1";
+
+/// The ground grammar Factory itself writes for a Project's file
+/// (`central:source:<project key>:<relative path>`, as Receiving names its
+/// members), and Central's own path identity, which Central resolves.
+const SOURCE_PREFIX: &str = "central:source:";
+const CENTRAL_PATH_PREFIX: &str = "central:path:";
+
+/// Where this state's Project lies, from its own placement
+/// (`<root>/.factory/project.json`, validated as `factory project locate`
+/// validates it): its key and root, or why Factory names no ground.
+fn ground_of(state_path: &Path, project_ref: &str) -> Result<(String, PathBuf), String> {
+    let unplaced = |why: String| {
+        format!("this Factory state has no Project placement, so Factory names no ground its files lie in: {why}")
+    };
+    let state = state_path
+        .canonicalize()
+        .map_err(|error| unplaced(error.to_string()))?;
+    let dir = state
+        .parent()
+        .filter(|dir| dir.file_name().is_some_and(|name| name == ".factory"))
+        .ok_or_else(|| unplaced("it is not kept in a Project's .factory folder".into()))?;
+    let root = dir
+        .parent()
+        .ok_or_else(|| unplaced("its .factory folder has no Project root".into()))?;
+    let located = crate::project_setup::locate(root).map_err(unplaced)?;
+    if located["statePath"].as_str() != Some(&*state.to_string_lossy())
+        || located["projectRef"].as_str() != Some(project_ref)
+    {
+        return Err(unplaced(
+            "the placement names another state or Project".into(),
+        ));
+    }
+    let key = located["projectKey"]
+        .as_str()
+        .ok_or_else(|| unplaced("the placement names no key".into()))?;
+    let root = located["projectRoot"]
+        .as_str()
+        .ok_or_else(|| unplaced("the placement names no root".into()))?;
+    Ok((key.into(), PathBuf::from(root)))
+}
+
+/// One ref, resolved through Factory: its file in the Project's ground,
+/// Central's path identity carried as it is, or refused with the reason.
+fn resolve_ref(
+    reference: &str,
+    ground: &Result<(String, PathBuf), String>,
+    returned: Option<&crate::orchestration::ReturnedArtifact>,
+) -> Value {
+    let refused = |reason: String| json!({"state": "refused", "reason": reason});
+    if reference.starts_with(CENTRAL_PATH_PREFIX) {
+        return json!({"state": "central-path", "centralPath": reference});
+    }
+    if let Some(named) = reference.strip_prefix(SOURCE_PREFIX) {
+        let (key, root) = match ground {
+            Ok(ground) => ground,
+            Err(why) => return refused(why.clone()),
+        };
+        let Some(path) = named
+            .strip_prefix(key.as_str())
+            .and_then(|rest| rest.strip_prefix(':'))
+        else {
+            return refused(format!(
+                "it names another Project's ground; Factory resolves files only in its own Project's ground ({key})"
+            ));
+        };
+        return match crate::artifact_evidence::observe_file(
+            root,
+            Path::new(path),
+            crate::artifact_evidence::ArtifactLimits::default(),
+        ) {
+            Ok((path, entry)) => json!({"state": "file", "file": {
+                "path": path, "bytes": entry.bytes, "contentDigest": entry.content_digest}}),
+            Err(crate::artifact_evidence::ArtifactEvidenceError::Io(error)) => refused(format!(
+                "Factory found no readable file at {path} in {key}'s ground: {error}"
+            )),
+            Err(error) => refused(format!("Factory refuses {path} in {key}'s ground: {error}")),
+        };
+    }
+    match returned {
+        Some(artifact) => refused(format!(
+            "Factory keeps {reference} as the artifact {} returned for {} at revision {}: a record, with no file of its own",
+            artifact.producing_execution_ref, artifact.subject_ref, artifact.subject_revision
+        )),
+        None => refused(format!(
+            "the Return names {reference}, and no Factory record binds it to a file"
+        )),
+    }
+}
+
+/// Read each ref the attempt's Return names. A Run that does not retain the
+/// attempt is refused; an attempt with no Return has nothing to read.
+pub fn read_artifacts(path: &Path, run: &RunRef, attempt_ref: &str) -> Result<Value, String> {
+    let (state, reading) = crate::attempt_task::coherent_read(path, run)?;
+    let attempt = reading
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_ref == attempt_ref)
+        .ok_or_else(|| format!("attempt {attempt_ref} is not retained in {run}"))?;
+    let project_ref = state.build.project().reference().to_string();
+    let ground = ground_of(path, &project_ref);
+    let returned_artifacts = reading
+        .legs
+        .values()
+        .flat_map(|leg| {
+            leg.artifacts.iter().chain(&leg.late_artifacts).chain(
+                leg.attempts
+                    .iter()
+                    .flat_map(|item| item.artifacts.iter().chain(&item.late_artifacts)),
+            )
+        })
+        .filter(|artifact| {
+            attempt.execution_ref.as_deref() == Some(&*artifact.producing_execution_ref)
+        })
+        .collect::<Vec<_>>();
+    let mut rows: Vec<(String, Vec<&str>)> = Vec::new();
+    if let Some(returned) = &attempt.readable_return {
+        for (role, refs) in [
+            ("artifact", &returned.artifact_refs),
+            ("evidence", &returned.evidence_refs),
+        ] {
+            for reference in refs {
+                match rows.iter_mut().find(|(named, _)| named == reference) {
+                    Some((_, roles)) => roles.push(role),
+                    None => rows.push((reference.clone(), vec![role])),
+                }
+            }
+        }
+    }
+    let artifacts = rows
+        .iter()
+        .map(|(reference, roles)| {
+            let returned = returned_artifacts
+                .iter()
+                .find(|artifact| &artifact.artifact_ref == reference)
+                .copied();
+            let mut row = json!({"ref": reference, "roles": roles});
+            if let (Some(row), Value::Object(resolved)) = (
+                row.as_object_mut(),
+                resolve_ref(reference, &ground, returned),
+            ) {
+                row.extend(resolved);
+            }
+            row
+        })
+        .collect::<Vec<_>>();
+    let (key, root) = match &ground {
+        Ok((key, root)) => (Some(key.clone()), Some(root.display().to_string())),
+        Err(_) => (None, None),
+    };
+    Ok(json!({
+        "contract": ARTIFACT_READING,
+        "projectRef": project_ref,
+        "projectKey": key,
+        "projectRoot": root,
+        "runRef": run,
+        "attemptRef": attempt_ref,
+        "revision": reading.revision,
+        "returnRef": attempt.readable_return.as_ref().map(|returned| &returned.return_ref),
+        "artifacts": artifacts,
+    }))
+}
+
+fn render_artifacts(value: &Value) -> String {
+    let text = |value: &Value| value.as_str().unwrap_or("not available").to_owned();
+    let mut lines = vec![format!(
+        "{}\nRun: {}\nAttempt: {}\nReturn: {}\nGround: {}",
+        ARTIFACT_READING,
+        text(&value["runRef"]),
+        text(&value["attemptRef"]),
+        value["returnRef"].as_str().unwrap_or("not recorded"),
+        match (value["projectKey"].as_str(), value["projectRoot"].as_str()) {
+            (Some(key), Some(root)) => format!("{key} at {root}"),
+            _ => "no Project placement".into(),
+        }
+    )];
+    for row in value["artifacts"].as_array().into_iter().flatten() {
+        let roles = row["roles"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        lines.push(match row["state"].as_str() {
+            Some("file") => format!(
+                "{} ({roles}): file {} ({} bytes, blake3 {})",
+                text(&row["ref"]),
+                text(&row["file"]["path"]),
+                row["file"]["bytes"],
+                text(&row["file"]["contentDigest"])
+            ),
+            Some("central-path") => format!(
+                "{} ({roles}): Central's path, which Central resolves",
+                text(&row["ref"])
+            ),
+            _ => format!(
+                "{} ({roles}): refused — {}",
+                text(&row["ref"]),
+                text(&row["reason"])
+            ),
+        });
+    }
+    lines.join("\n")
+}
+
+fn execute_artifacts_cli(args: &[String]) -> Result<String, String> {
+    let usage = "Usage: factory attempt artifacts <state> <run-ref> <attempt-ref> [--json]";
+    let (state, run, attempt, json) = match args {
+        [state, run, attempt] => (state, run, attempt, false),
+        [state, run, attempt, flag] if flag == "--json" => (state, run, attempt, true),
+        _ => return Err(usage.into()),
+    };
+    let run: RunRef = run
+        .parse()
+        .map_err(|error| format!("invalid Run: {error}"))?;
+    let reading = read_artifacts(Path::new(state), &run, attempt)?;
+    if json {
+        serde_json::to_string_pretty(&reading).map_err(|error| error.to_string())
+    } else {
+        Ok(render_artifacts(&reading))
+    }
 }
