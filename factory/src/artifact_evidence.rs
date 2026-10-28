@@ -151,6 +151,36 @@ impl ArtifactSnapshot {
     }
 }
 
+/// One named file, read under the same scope law a capture keeps: a relative
+/// UTF-8 path with no parent traversal, no symlink in any ancestor, a regular
+/// file within the limits, observed twice so a moving file is refused. A
+/// directory is a scope, not a file, and is refused before it is walked. This
+/// reads the file's identity (its digest, size and mode); it admits no
+/// evidence, grants nothing and leaves the file as it is.
+pub fn observe_file(
+    root: &Path,
+    relative: &Path,
+    limits: ArtifactLimits,
+) -> Result<(String, ArtifactEntry), ArtifactEvidenceError> {
+    let root = root.canonicalize()?;
+    let paths = normalize_scope(&[relative.to_path_buf()])?;
+    let key = path_key(&paths[0])?;
+    if !fs::symlink_metadata(root.join(&paths[0]))?.is_file() {
+        return Err(ArtifactEvidenceError::NotAFile(key));
+    }
+    let manifest = scan(&root, &paths, limits)?;
+    if scan(&root, &paths, limits)? != manifest {
+        return Err(ArtifactEvidenceError::ChangedDuringRead);
+    }
+    let entry = manifest
+        .entries
+        .get(&key)
+        .filter(|entry| entry.kind == "file")
+        .cloned()
+        .ok_or_else(|| ArtifactEvidenceError::NotAFile(key.clone()))?;
+    Ok((key, entry))
+}
+
 fn normalize_scope(paths: &[PathBuf]) -> Result<Vec<PathBuf>, ArtifactEvidenceError> {
     if paths.is_empty() {
         return Err(ArtifactEvidenceError::InvalidScope(
@@ -355,6 +385,7 @@ fn same_file(a: &Metadata, b: &Metadata) -> bool {
 pub enum ArtifactEvidenceError {
     InvalidScope(String),
     UnsupportedArtifact(String),
+    NotAFile(String),
     LimitExceeded,
     ChangedDuringRead,
     AssessmentSubjectMismatch,
@@ -377,6 +408,7 @@ impl fmt::Display for ArtifactEvidenceError {
                 f,
                 "unsupported artifact (only regular files/directories are admitted): {path}"
             ),
+            Self::NotAFile(path) => write!(f, "{path} is not a regular file"),
             Self::LimitExceeded => write!(f, "artifact scope exceeds declared limits"),
             Self::ChangedDuringRead => write!(f, "artifact scope changed during observation"),
             Self::AssessmentSubjectMismatch => write!(
