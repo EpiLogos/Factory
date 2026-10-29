@@ -1,0 +1,11 @@
+{
+  "schema": "central.project-now.handoff/v1",
+  "id": "242-merged-and-deployed-to-omarchy-2026-09-15",
+  "provenance": "agent-authored-bounded-return",
+  "actor": "agent:oh-i",
+  "kind": "handoff",
+  "recorded_at_unix_seconds": 1789497218,
+  "subject": "#242 merged and deployed to Omarchy; TM02-R proven the placement contract live at both boundaries; first full commissioned attempt with a grant is the named remaining integration act",
+  "result": "Owner merged #242; Omarchy factory binary rebuilt from main 25634b0 (backup .bak-pre-242). Live during TM02-R: the workcell place-grant document Factory pins was captured live and conformed; release generation proofs and refusals (place-mismatch, stale-binding, exit 7) demonstrated on the real host; the AIKit bind to a commissioned tmux room worked without minting a second world. Bounded gap recorded: a full commissioned attempt carrying the grant through factory action invoke awaits the owners authored state/project/run commission (0.1.0 scaffolding landed today #236); in-attempt wiring stays CI-proven by the 11 fixture tests. Pane-churn finding (grants are generation-scoped; herdr semantic end-of-place act) is live proof of the open question in docs/PLACE-PLACEMENT.md. Receipts: frank:~/tm02r-field-test/receipts/ + root flow tm02r-execution-receipt-2026-09-15-1840",
+  "status": "resolved"
+}
