@@ -643,8 +643,13 @@ impl World {
         let run = &state["state"]["build"]["runs"]["runs"][RUN];
         let mut authority = run["writeAuthority"].clone();
         authority["runRef"] = json!(RUN);
-        json!({"operation":"transition-run","command":{"commandId":format!("native:{lifecycle}:{}",run["revision"]),
-            "expectedRevision":run["revision"],"lifecycle":lifecycle},"authority":authority,"closure":closure})
+        let mut operation = json!({"operation":"transition-run","command":{"commandId":format!("native:{lifecycle}:{}",run["revision"]),
+            "expectedRevision":run["revision"],"lifecycle":lifecycle},"authority":authority,"closure":closure});
+        // An abort names why (O-I #741); no other transition stores one.
+        if lifecycle == "aborted" {
+            operation["closureReason"] = json!({"reason": "canceled"});
+        }
+        operation
     }
 
     fn transition(&self, lifecycle: &str, closure: Option<Value>) {

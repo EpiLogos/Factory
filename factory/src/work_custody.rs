@@ -15,6 +15,20 @@
 //! Every change appends a transition and bumps the record's own revision, which
 //! callers may pin with `--expected-revision`.
 //!
+//! Closure law (OpenRig `packages/daemon/src/domain/hot-potato-enforcer.ts:18-103`,
+//! `validateClosure`, and the admits-map at `queue-repository.ts:2428-2453`): a
+//! custody that closes carries a closure reason, one of OpenRig's own words —
+//! `handed_off_to`, `blocked_on`, `denied`, `canceled`, `no-follow-on`,
+//! `escalation`, `superseded`. `completed` and `released` refuse a close without
+//! one, by name (`factory.custody.missing_closure_reason`); `handed_off_to`,
+//! `blocked_on` and `escalation` also need a target, as does `superseded` (the
+//! successor that replaced the work). A hand-off closes as `handed_off_to` with
+//! the receiving Position as its target, as OpenRig's transactional hand-off
+//! does (`queue-repository.ts:1558`). An open state stores no closure
+//! (`closure_fields_not_admitted`). The closure is kept on the record and on the
+//! transition that closed it, and a reopen clears it from the record. Records
+//! closed before this law carry none and stay valid.
+//!
 //! A custody also carries how much its holder decides alone (DLW §19.4,
 //! "Software Factory owns how much it decides alone: autonomy, the review gate
 //! and what it holds"): its autonomy (suggest | review | auto), its review gate
@@ -44,7 +58,7 @@ pub const FACTORY_WORK_CUSTODY_LISTING: &str = "factory.work-custody-listing/v1"
 pub const FACTORY_REFUSAL: &str = "factory.refusal/v1";
 
 pub const ASSIGN_USAGE: &str = "factory development custody assign [<state>] --position <central:position:…> --work <ref> --reason <text> [--run <run-ref> [--workflow-unit <ref>]] [--journey <ref>] [--origin-communique <ref>] [--state in-progress|blocked] [--custody <factory:custody:…>] [--autonomy suggest|review|auto] [--review-gate diffs|approvals|both] [--escalate-to <person-ref>] [--json]";
-pub const UPDATE_USAGE: &str = "factory development custody update [<state>] --custody <factory:custody:…> --state <in-progress|blocked|released|completed|handed-off> --reason <text> [--reopen] [--to-position <central:position:…>] [--expected-revision N] [--json]";
+pub const UPDATE_USAGE: &str = "factory development custody update [<state>] --custody <factory:custody:…> --state <in-progress|blocked|released|completed|handed-off> --reason <text> [--closure-reason handed_off_to|blocked_on|denied|canceled|no-follow-on|escalation|superseded [--closure-target <ref>]] [--reopen] [--to-position <central:position:…>] [--expected-revision N] [--json]";
 
 const CUSTODY_PREFIX: &str = "factory:custody:";
 
@@ -147,6 +161,91 @@ impl Display for CustodyState {
     }
 }
 
+/// Why a custody closed: OpenRig's closure reasons, spelled exactly as OpenRig
+/// spells them (`hot-potato-enforcer.ts:18-28` `CLOSURE_REASONS`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum ClosureReason {
+    #[serde(rename = "handed_off_to")]
+    HandedOffTo,
+    #[serde(rename = "blocked_on")]
+    BlockedOn,
+    #[serde(rename = "denied")]
+    Denied,
+    #[serde(rename = "canceled")]
+    Canceled,
+    #[serde(rename = "no-follow-on")]
+    NoFollowOn,
+    #[serde(rename = "escalation")]
+    Escalation,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+impl ClosureReason {
+    pub const ALL: [ClosureReason; 7] = [
+        Self::HandedOffTo,
+        Self::BlockedOn,
+        Self::Denied,
+        Self::Canceled,
+        Self::NoFollowOn,
+        Self::Escalation,
+        Self::Superseded,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::HandedOffTo => "handed_off_to",
+            Self::BlockedOn => "blocked_on",
+            Self::Denied => "denied",
+            Self::Canceled => "canceled",
+            Self::NoFollowOn => "no-follow-on",
+            Self::Escalation => "escalation",
+            Self::Superseded => "superseded",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|reason| reason.as_str() == value)
+    }
+
+    /// The valid words, as OpenRig's refusal lists them.
+    pub fn words() -> String {
+        Self::ALL
+            .iter()
+            .map(|reason| reason.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// `handed_off_to`, `blocked_on` and `escalation` name where the work went
+    /// (`hot-potato-enforcer.ts:86-96`); `superseded` names what replaced it
+    /// (`queue-repository.ts:2446-2453`).
+    pub fn requires_target(self) -> bool {
+        matches!(
+            self,
+            Self::HandedOffTo | Self::BlockedOn | Self::Escalation | Self::Superseded
+        )
+    }
+}
+
+impl Display for ClosureReason {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// The closure a closed custody carries: its reason and, where the reason
+/// needs one, its target (OpenRig `closure_reason` / `closure_target`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyClosure {
+    pub reason: ClosureReason,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CustodyOrigin {
@@ -176,6 +275,10 @@ pub struct CustodyTransition {
     /// Position made it (`OI_POSITION_REF` / `OI_OCCUPANT_GENERATION`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<CustodyActor>,
+    /// The closure this change closed the custody with; only on a change into
+    /// a closed state, and absent on changes made before the closure law.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<CustodyClosure>,
 }
 
 /// A body acting on custody from inside a World Position occupancy.
@@ -238,6 +341,10 @@ pub struct FactoryWorkCustody {
     /// "A person"), as the assigner names them; absent until set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub escalate_to: Option<String>,
+    /// Why the custody closed, while it stands closed (the closure law above);
+    /// cleared by a reopen, absent on custody closed before the law.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closure: Option<CustodyClosure>,
 }
 
 impl FactoryWorkCustody {
@@ -387,6 +494,11 @@ pub struct UpdateRequest {
     /// call the generation current. In-process Factory transitions pass
     /// `None`; a missing stamp is not operator authority on the command.
     pub actor: Option<CustodyActor>,
+    /// Why the custody closes (`--closure-reason`); required by `completed`
+    /// and `released`, implied by `handed-off`, refused by an open state.
+    pub closure_reason: Option<ClosureReason>,
+    /// Where the work went or what replaced it (`--closure-target`).
+    pub closure_target: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -537,8 +649,129 @@ pub fn validate_custody_collection(records: &[FactoryWorkCustody]) -> Result<(),
                 "custody {label} hand-off target does not match its state"
             ));
         }
+        if let Some(closure) = &record.closure {
+            validate_closure_record(label, record.state, closure)?;
+            if record.state == CustodyState::HandedOff
+                && (closure.reason != ClosureReason::HandedOffTo
+                    || closure.target.as_deref()
+                        != record
+                            .handed_off_to
+                            .as_ref()
+                            .map(|handoff| handoff.position_ref.as_str()))
+            {
+                return Err(format!(
+                    "custody {label} is handed off but its closure does not name handed_off_to and the receiving Position"
+                ));
+            }
+        }
+        for transition in &record.transitions {
+            if let Some(closure) = &transition.closure {
+                validate_closure_record(label, transition.to, closure)?;
+            }
+        }
     }
     Ok(())
+}
+
+fn validate_closure_record(
+    label: &str,
+    state: CustodyState,
+    closure: &CustodyClosure,
+) -> Result<(), String> {
+    if !state.is_terminal() {
+        return Err(format!(
+            "custody {label} carries a closure on the open state '{state}'"
+        ));
+    }
+    if closure.reason.requires_target()
+        && closure
+            .target
+            .as_deref()
+            .is_none_or(|target| target.trim().is_empty())
+    {
+        return Err(format!(
+            "custody {label} closed as {} without its closure target",
+            closure.reason
+        ));
+    }
+    Ok(())
+}
+
+/// The closure a change into `target` carries, or the refusal by name
+/// (OpenRig `validateClosure`, `hot-potato-enforcer.ts:59-103`, and the
+/// admits-map, `queue-repository.ts:2428-2453`). Raised before any write.
+fn closure_for(
+    current: &FactoryWorkCustody,
+    target: CustodyState,
+    request: &UpdateRequest,
+) -> Result<Option<CustodyClosure>, Refusal> {
+    let reference = &current.custody_ref;
+    let given_target = request
+        .closure_target
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    if !target.is_terminal() {
+        if request.closure_reason.is_some() || request.closure_target.is_some() {
+            return Err(Refusal::unchanged(
+                "factory.custody.closure_fields_not_admitted",
+                format!(
+                    "custody {reference} would move to the open state '{target}'; a closure reason and target persist only on a close (completed, released or handed-off)"
+                ),
+                format!(
+                    "close it instead: factory development custody update <state> --custody {reference} --state completed --closure-reason <reason> --reason <text>; or drop --closure-reason and --closure-target"
+                ),
+            ));
+        }
+        return Ok(None);
+    }
+    if target == CustodyState::HandedOff {
+        if request
+            .closure_reason
+            .is_some_and(|reason| reason != ClosureReason::HandedOffTo)
+            || request.closure_target.is_some()
+        {
+            return Err(Refusal::unchanged(
+                "factory.custody.closure_fields_not_admitted",
+                format!(
+                    "custody {reference} would be handed off; a hand-off closes as handed_off_to, and its target is the receiving Position (--to-position)"
+                ),
+                format!(
+                    "drop --closure-target and any other --closure-reason: factory development custody update <state> --custody {reference} --state handed-off --to-position <central:position:…> --reason <text>"
+                ),
+            ));
+        }
+        return Ok(Some(CustodyClosure {
+            reason: ClosureReason::HandedOffTo,
+            target: request.to_position_ref.clone(),
+        }));
+    }
+    let Some(reason) = request.closure_reason else {
+        return Err(Refusal::unchanged(
+            "factory.custody.missing_closure_reason",
+            format!(
+                "custody {reference} cannot close as '{target}' without a closure reason; valid values: {}",
+                ClosureReason::words()
+            ),
+            format!(
+                "name why it closes: factory development custody update <state> --custody {reference} --state {target} --closure-reason <reason> [--closure-target <ref>] --reason <text>"
+            ),
+        ));
+    };
+    if reason.requires_target() && given_target.is_none() {
+        return Err(Refusal::unchanged(
+            "factory.custody.missing_closure_target",
+            format!("closure_reason={reason} requires closure_target"),
+            format!(
+                "name where the work went (or what replaced it): factory development custody update <state> --custody {reference} --state {target} --closure-reason {reason} --closure-target <ref> --reason <text>"
+            ),
+        ));
+    }
+    Ok(Some(CustodyClosure {
+        reason,
+        target: given_target,
+    }))
 }
 
 /// Assignment references must resolve in this state now. Derivation checks
@@ -688,10 +921,12 @@ pub fn assign_in(
             at_unix_ms: now_unix_ms,
             reopen: false,
             actor: None,
+            closure: None,
         }],
         autonomy: request.autonomy,
         review_gate: request.review_gate,
         escalate_to: request.escalate_to,
+        closure: None,
     };
     if let Some(existing) = state
         .work_custody
@@ -833,6 +1068,7 @@ pub fn update_in(
             usage,
         ));
     }
+    let closure = closure_for(&current, target, &request)?;
     // A retried request for the state the record is already in is a replay.
     // A hand-off replays only toward the same receiver.
     let same_receiver = target != CustodyState::HandedOff
@@ -842,6 +1078,28 @@ pub fn update_in(
                 .as_ref()
                 .map(|handoff| handoff.position_ref.as_str());
     if target == current.state && !request.reopen && same_receiver {
+        if let (Some(recorded), Some(asked)) = (&current.closure, &closure) {
+            if recorded != asked {
+                return Err(Refusal::unchanged(
+                    "factory.custody.invalid_transition",
+                    format!(
+                        "custody {} is already closed as '{}' with closure {}{}; a replay cannot change why it closed",
+                        current.custody_ref,
+                        current.state,
+                        recorded.reason,
+                        recorded
+                            .target
+                            .as_deref()
+                            .map(|target| format!(" → {target}"))
+                            .unwrap_or_default()
+                    ),
+                    format!(
+                        "reopen it first if the closure was wrong: factory development custody update <state> --custody {} --state in-progress --reopen --reason <why>",
+                        current.custody_ref
+                    ),
+                ));
+            }
+        }
         return Ok(CustodyReceipt {
             schema: FACTORY_WORK_CUSTODY_RECEIPT.into(),
             result: "unchanged".into(),
@@ -946,12 +1204,14 @@ pub fn update_in(
                 at_unix_ms: now_unix_ms,
                 reopen: false,
                 actor: None,
+                closure: None,
             }],
             // The receiver's holding is its own: how much it decides alone is
             // not carried over from the Position that handed it off.
             autonomy: None,
             review_gate: None,
             escalate_to: None,
+            closure: None,
         });
     }
     let record = &mut state.work_custody[index];
@@ -964,8 +1224,10 @@ pub fn update_in(
         at_unix_ms: now_unix_ms,
         reopen: request.reopen,
         actor: request.actor.clone(),
+        closure: closure.clone(),
     });
     record.state = target;
+    record.closure = closure;
     record.updated_at_unix_ms = now_unix_ms;
     record.handed_off_to = successor.as_ref().map(|next| CustodyHandoff {
         custody_ref: next.custody_ref.clone(),
@@ -1182,13 +1444,182 @@ mod tests {
         }
     }
 
+    /// A lawful update: a close into `completed` or `released` names why.
     fn update(custody_ref: &str, to: CustodyState) -> UpdateRequest {
         UpdateRequest {
             custody_ref: custody_ref.into(),
             state: Some(to),
             reason: format!("to {to}"),
+            closure_reason: matches!(to, CustodyState::Completed | CustodyState::Released)
+                .then_some(ClosureReason::NoFollowOn),
             ..UpdateRequest::default()
         }
+    }
+
+    #[test]
+    fn a_close_without_a_closure_reason_is_refused_by_name_and_writes_nothing() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let before = state.clone();
+        for to in [CustodyState::Completed, CustodyState::Released] {
+            let mut bare = update(&reference, to);
+            bare.closure_reason = None;
+            let refusal = update_in(&mut state, bare, 2).unwrap_err();
+            assert_eq!(refusal.code, "factory.custody.missing_closure_reason");
+            assert_eq!(refusal.consequence, NOTHING_PERSISTED);
+            // The refusal names every word OpenRig admits.
+            for word in ClosureReason::ALL {
+                assert!(refusal.fact.contains(word.as_str()), "{}", refusal.fact);
+            }
+            assert!(refusal.action.contains("--closure-reason"));
+        }
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn a_reason_that_names_where_the_work_went_needs_its_target() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        for reason in [
+            ClosureReason::HandedOffTo,
+            ClosureReason::BlockedOn,
+            ClosureReason::Escalation,
+            ClosureReason::Superseded,
+        ] {
+            let mut closing = update(&reference, CustodyState::Completed);
+            closing.closure_reason = Some(reason);
+            closing.closure_target = Some("  ".into());
+            assert_eq!(
+                refusal_code(update_in(&mut state, closing, 2)),
+                "factory.custody.missing_closure_target"
+            );
+        }
+        let mut escalated = update(&reference, CustodyState::Completed);
+        escalated.closure_reason = Some(ClosureReason::Escalation);
+        escalated.closure_target = Some("central:person:frank".into());
+        let closed = update_in(&mut state, escalated, 3).unwrap().custody;
+        let closure = CustodyClosure {
+            reason: ClosureReason::Escalation,
+            target: Some("central:person:frank".into()),
+        };
+        assert_eq!(closed.closure.as_ref(), Some(&closure));
+        assert_eq!(
+            closed.transitions.last().unwrap().closure.as_ref(),
+            Some(&closure)
+        );
+        validate_custody_collection(&state.work_custody).unwrap();
+    }
+
+    #[test]
+    fn an_open_state_stores_no_closure_and_a_reopen_clears_it() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let mut parked = update(&reference, CustodyState::Blocked);
+        parked.closure_reason = Some(ClosureReason::Denied);
+        assert_eq!(
+            refusal_code(update_in(&mut state, parked, 2)),
+            "factory.custody.closure_fields_not_admitted"
+        );
+        let mut targeted = update(&reference, CustodyState::Blocked);
+        targeted.closure_target = Some("work:b".into());
+        assert_eq!(
+            refusal_code(update_in(&mut state, targeted, 2)),
+            "factory.custody.closure_fields_not_admitted"
+        );
+        let mut denied = update(&reference, CustodyState::Released);
+        denied.closure_reason = Some(ClosureReason::Denied);
+        let closed = update_in(&mut state, denied, 3).unwrap().custody;
+        assert_eq!(closed.closure.unwrap().reason, ClosureReason::Denied);
+        // A replay that changes why it closed is refused; the same closure replays.
+        assert_eq!(
+            refusal_code(update_in(
+                &mut state,
+                update(&reference, CustodyState::Released),
+                4
+            )),
+            "factory.custody.invalid_transition"
+        );
+        let mut same = update(&reference, CustodyState::Released);
+        same.closure_reason = Some(ClosureReason::Denied);
+        assert_eq!(update_in(&mut state, same, 4).unwrap().result, "unchanged");
+        let mut reopen = update(&reference, CustodyState::InProgress);
+        reopen.reopen = true;
+        let reopened = update_in(&mut state, reopen, 5).unwrap().custody;
+        assert!(reopened.closure.is_none());
+        // The history keeps the closure the close carried.
+        assert_eq!(
+            reopened.transitions[1].closure.as_ref().map(|c| c.reason),
+            Some(ClosureReason::Denied)
+        );
+        validate_custody_collection(&state.work_custody).unwrap();
+    }
+
+    #[test]
+    fn a_hand_off_closes_as_handed_off_to_its_receiver() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let mut wrong = update(&reference, CustodyState::HandedOff);
+        wrong.to_position_ref = Some(Q.into());
+        wrong.closure_reason = Some(ClosureReason::Canceled);
+        assert_eq!(
+            refusal_code(update_in(&mut state, wrong, 2)),
+            "factory.custody.closure_fields_not_admitted"
+        );
+        let mut handoff = update(&reference, CustodyState::HandedOff);
+        handoff.to_position_ref = Some(Q.into());
+        let receipt = update_in(&mut state, handoff, 3).unwrap();
+        assert_eq!(
+            receipt.custody.closure,
+            Some(CustodyClosure {
+                reason: ClosureReason::HandedOffTo,
+                target: Some(Q.into()),
+            })
+        );
+        assert!(receipt.successor.unwrap().closure.is_none());
+        validate_custody_collection(&state.work_custody).unwrap();
+    }
+
+    #[test]
+    fn a_closure_on_an_open_record_or_without_its_target_is_refused_on_read() {
+        let mut state = state();
+        let reference = assign_in(&mut state, request("work:a"), 1)
+            .unwrap()
+            .custody
+            .custody_ref;
+        let mut forged = state.work_custody.clone();
+        forged[0].closure = Some(CustodyClosure {
+            reason: ClosureReason::NoFollowOn,
+            target: None,
+        });
+        assert!(validate_custody_collection(&forged)
+            .unwrap_err()
+            .contains("open state"));
+        update_in(&mut state, update(&reference, CustodyState::Completed), 2).unwrap();
+        let mut untargeted = state.work_custody.clone();
+        untargeted[0].closure = Some(CustodyClosure {
+            reason: ClosureReason::BlockedOn,
+            target: None,
+        });
+        assert!(validate_custody_collection(&untargeted)
+            .unwrap_err()
+            .contains("closure target"));
+        // A custody closed before the closure law carries none and stays valid.
+        let mut historical = state.work_custody.clone();
+        historical[0].closure = None;
+        historical[0].transitions[1].closure = None;
+        validate_custody_collection(&historical).unwrap();
     }
 
     fn refusal_code<T: std::fmt::Debug>(result: Result<T, Refusal>) -> String {

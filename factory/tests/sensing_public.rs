@@ -11,7 +11,7 @@ use epilogos_factory::developmental_read::{FactoryDevelopmentalFileProvider, Fac
 use epilogos_factory::project_development_store::transact_developmental_state;
 use epilogos_factory::sensing::{retain, Observation, WorkRelation};
 use epilogos_factory::work_custody::{
-    assign_in, update_in, AssignRequest, CustodyState, UpdateRequest,
+    assign_in, update_in, AssignRequest, ClosureReason, CustodyState, UpdateRequest,
 };
 use serde_json::{json, Value};
 use std::path::Path;
@@ -774,6 +774,7 @@ fn admitted_return_authority_cannot_substitute_claimed_evidence_for_native_attem
                 custody_ref: custody_ref.clone(),
                 state: Some(CustodyState::Completed),
                 reason: "Owner marked the joined work complete without an Attempt Return".into(),
+                closure_reason: Some(ClosureReason::NoFollowOn),
                 ..Default::default()
             },
             chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now()).timestamp_millis(),

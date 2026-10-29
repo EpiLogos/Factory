@@ -366,6 +366,7 @@ pub(crate) fn completion_verified(view: &StoredAttemptState) -> bool {
             command,
             authority,
             closure: Some(closure),
+            ..
         } = &action.request.operation
         else {
             return false;
@@ -479,6 +480,7 @@ pub(crate) fn prefetch(
             command,
             authority,
             closure: Some(closure),
+            ..
         } => {
             let workflow = crate::workflow::compile_workflow(view.workflow_source.clone())
                 .map_err(|e| e.to_string())?;

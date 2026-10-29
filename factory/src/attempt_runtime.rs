@@ -438,6 +438,17 @@ pub enum FactoryAttemptOperation {
         authority: crate::core::run::RunMutationAuthority,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         closure: Option<crate::run_lifecycle::RunClosureBasis>,
+        /// Why the Run closes when it aborts: one of OpenRig's closure reasons,
+        /// with its target where the reason names one (`work_custody.rs`
+        /// `ClosureReason`; OpenRig `hot-potato-enforcer.ts:18-103`). Required
+        /// by `Aborted` and refused on every other transition; kept verbatim in
+        /// the retained Action receipt.
+        #[serde(
+            default,
+            rename = "closureReason",
+            skip_serializing_if = "Option::is_none"
+        )]
+        closure_reason: Option<crate::work_custody::CustodyClosure>,
     },
     RequestUnitDecision {
         request: crate::run_lifecycle::UnitDecisionRequest,
