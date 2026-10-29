@@ -172,6 +172,11 @@ pub struct FactoryDevelopmentalState {
     /// so those documents round-trip byte-for-byte.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub work_custody: Vec<crate::work_custody::FactoryWorkCustody>,
+    /// Each Run's plan of record: the planning dial of its units and their
+    /// waves (`factory.wave-plan/v1`, OpenRig's planning dial and wave SDLC).
+    /// Absent in states that never planned one, so those round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub wave_plans: Vec<crate::wave_sdlc::FactoryWavePlan>,
     /// Qualified signal/work relations, not a copy of provider telemetry history.
     #[serde(
         default,
@@ -199,6 +204,7 @@ impl FactoryDevelopmentalState {
             central_project_links: BTreeMap::new(),
             central_project_link_relocations: Vec::new(),
             work_custody: Vec::new(),
+            wave_plans: Vec::new(),
             sensing: crate::sensing::SensingState::default(),
         };
         state.validate()?;
@@ -376,6 +382,8 @@ impl FactoryDevelopmentalState {
         }
         crate::work_custody::validate_custody_collection(&self.work_custody)
             .map_err(FactoryDevelopmentalReadError::InvalidWorkCustody)?;
+        crate::wave_sdlc::validate_wave_plans(&self.wave_plans)
+            .map_err(FactoryDevelopmentalReadError::InvalidWavePlan)?;
         self.sensing
             .validate()
             .map_err(FactoryDevelopmentalReadError::InvalidSensing)?;
@@ -3645,6 +3653,7 @@ pub enum FactoryDevelopmentalReadError {
     InvalidCentralProjectLink(String),
     CentralProjectLinkNotFound(String),
     InvalidWorkCustody(String),
+    InvalidWavePlan(String),
     InvalidSensing(String),
     Build(FactoryBuildError),
 }

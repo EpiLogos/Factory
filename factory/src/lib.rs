@@ -76,6 +76,8 @@ pub mod task_activity;
 pub mod telemetry_cli;
 pub mod telemetry_time;
 pub mod vak_orchestration;
+pub mod wave_sdlc;
+pub mod wave_sdlc_cli;
 pub mod work_custody;
 pub mod workflow;
 pub mod workflow_authoring;

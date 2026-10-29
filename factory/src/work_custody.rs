@@ -1341,7 +1341,7 @@ fn actuation_binary() -> PathBuf {
     PathBuf::from("actuation")
 }
 
-fn confirm_current_generation(actor: &CustodyActor) -> Result<(), Refusal> {
+pub(crate) fn confirm_current_generation(actor: &CustodyActor) -> Result<(), Refusal> {
     let generation = actor
         .generation_ref
         .as_deref()
