@@ -29,7 +29,7 @@ factory attempt owner-action <native-state> <request-json|-> --json
 factory attempt task <native-state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]
 factory attempt return <native-state> <run-ref> <attempt-ref> [--json]
 factory attempt receiving <native-state> <request-json|-> --json
-factory attempt admission [--json]
+factory attempt admission [<state>] [--json]
 factory attempt learn <native-state> <request-json|-> --json
 factory attempt material <native-state> <request-json|-> --json
 factory attempt delivery <native-state> <request-json|-> [--json]
@@ -429,13 +429,17 @@ remain separate owner operations.
 
 ### What a desktop caller needs: `factory attempt admission`
 
-`factory attempt admission [--json]` reads `factory.attempt-admission/v1`: the
-desktop caller Factory expects on the attempt Actions (`oi:desktop`, a
+`factory attempt admission [<state>] [--json]` reads `factory.attempt-admission/v1`:
+the desktop caller Factory expects on the attempt Actions (`oi:desktop`, a
 `desktop-human` projection whose lineage ends at itself), the native owner and
 capability they carry, the Central contract revision the receiving path demands,
 and each action a person takes on an attempt with the native action, scope and
 actor kind the host's grant must carry. For `attempt-receiving` that is
-`central.receiving.submit` over `project:Factory` as a `human` principal.
+`central.receiving.submit`, and for `attempt-retry` (Factory's own `retry`
+attempt operation) `factory.attempt.retry`, each as a `human` principal over the
+Run's own project: `project:<id>` of the ProjectCentral manifest beside the
+state's `.factory` folder, or `control:root` for a state at a Central ground's
+own root. Read without a state, each action names that rule and no scope.
 
 It is a reading, not a grant. The grant is the owner's, in
 `Control/user/native-action-authority.json`; the host resolves which principal
