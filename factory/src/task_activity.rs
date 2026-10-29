@@ -43,7 +43,15 @@
 //! AIKit reports closed is Stopped; a session not ready is Queued with AIKit's
 //! reason; a stall is Stalled and lights a retry; working is Running; and where
 //! no evidence decides, no word is drawn.
+//!
+//! How the session's last turn ended (AIKit's status `last_turn.stop`) decides
+//! before the check-ins do, once the lane is idle with the task open: a turn
+//! that failed for a cause a retry clears is Stalled and lights the retry; one
+//! that ended where a retry would repeat it is Stopped, and says what to do
+//! instead. The causes and that rule are Grok Bot's turn runtime's
+//! (`agent_turn.rs`).
 
+use crate::agent_turn::{classify, TurnOutcome};
 use crate::developmental_read::FactoryDevelopmentalState;
 use crate::work_custody::{CustodyClosure, CustodyState, Refusal, NOTHING_READ};
 use serde::{Deserialize, Serialize};
@@ -504,6 +512,10 @@ pub struct TaskStateReading {
     pub parked: Parked,
     pub obligation: Obligation,
     pub last_check_in_unix_ms: Option<i64>,
+    /// How the session's last finished turn ended, when AIKit's status
+    /// reports one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_turn: Option<TurnOutcome>,
     pub adapter: &'static str,
     pub rungs: Vec<RungView>,
 }
@@ -761,6 +773,22 @@ pub fn read_task(
     };
     let age = last_check_in.map(|latest| seconds(now_unix_ms - latest));
     let bound_s = seconds(bound_ms);
+    let last_turn = task
+        .connection
+        .as_ref()
+        .and_then(|connection| connection.pointer("/last_turn/stop"))
+        .and_then(classify);
+    // The last turn is the session's present only while its lane is idle: a
+    // turn in flight is a new one, and the check-ins speak for it.
+    let lane_idle = task
+        .connection
+        .as_ref()
+        .and_then(|connection| connection["state"].as_str())
+        == Some("Resident");
+    let ended_short = last_turn
+        .as_ref()
+        .filter(|outcome| outcome.failed() && lane_idle && arbitrated.needs_input.count == 0);
+    let mut retry = None;
     let (word, why) = if obligation.state == ObligationState::Closed {
         (
             Some(TaskWord::Done),
@@ -795,6 +823,16 @@ pub fn read_task(
                     readiness.owner_state
                 ))
             ),
+        )
+    } else if let Some(outcome) = ended_short {
+        retry = Some(outcome.retryable);
+        (
+            Some(if outcome.retryable {
+                TaskWord::Stalled
+            } else {
+                TaskWord::Stopped
+            }),
+            format!("{} Its task is open.", outcome.words()),
         )
     } else if parked == Parked::Parked {
         let why = if arbitrated.needs_input.count > 0 {
@@ -840,7 +878,7 @@ pub fn read_task(
     TaskStateReading {
         agent_session: task.agent_session.clone(),
         task_ref: task.task_ref.clone(),
-        retry: word == Some(TaskWord::Stalled),
+        retry: retry.unwrap_or(word == Some(TaskWord::Stalled)),
         word,
         why,
         display: derive_display_activity(arbitrated.activity, &arbitrated.needs_input),
@@ -854,6 +892,7 @@ pub fn read_task(
         parked,
         obligation,
         last_check_in_unix_ms: last_check_in,
+        last_turn,
         adapter: inventory
             .map(|inventory| inventory.adapter_id)
             .unwrap_or("undeclared"),
@@ -983,6 +1022,146 @@ mod tests {
 
     fn read(task: &TaskEvidence) -> TaskStateReading {
         read_task(task, None, CHECK_IN_BOUND_MS, NOW)
+    }
+
+    /// AIKit's status with the session's last turn's stop (`last_turn.stop`).
+    fn after_turn(state: &str, stop: Value) -> Option<Value> {
+        let mut connection = status(state, 0).unwrap();
+        connection["last_turn"] = json!({"stop": stop, "interruption": null, "last_sequence": 9});
+        Some(connection)
+    }
+
+    /// Grok Bot's turn runtime: a turn that failed for a cause a retry clears
+    /// lights the retry, with the provider's pace when it named one; a turn
+    /// that ended where a retry repeats it stops the task and says what to do
+    /// instead; an unnamed failure is never offered a retry on a guess.
+    #[test]
+    fn the_last_turn_decides_whether_a_retry_can_help() {
+        let mut overloaded = task();
+        overloaded.connection = after_turn(
+            "Resident",
+            json!({"Failed": {"reason": "529 overloaded_error: Overloaded"}}),
+        );
+        overloaded.check_ins = checked_in(1_000);
+        let reading = read(&overloaded);
+        assert_eq!(reading.word, Some(TaskWord::Stalled), "{}", reading.why);
+        assert!(reading.retry);
+        assert!(reading.why.starts_with("The last turn failed: the model provider was overloaded (529 overloaded_error: Overloaded); a retry can clear it."), "{}", reading.why);
+        let turn = reading.last_turn.as_ref().unwrap();
+        assert_eq!(turn.cause, crate::agent_turn::TurnCause::ProviderOverloaded);
+        assert_eq!(turn.rule, "grok-bot:SAND-E0401");
+
+        let mut paced = task();
+        paced.connection = after_turn(
+            "Resident",
+            json!({"Failed": {"reason": "rate limit reached; retry-after: 30"}}),
+        );
+        let reading = read(&paced);
+        assert!(reading.retry);
+        assert_eq!(
+            reading.last_turn.as_ref().unwrap().retry_after_ms,
+            Some(30_000)
+        );
+        assert!(
+            reading
+                .why
+                .contains("after the 30 s the provider asked for"),
+            "{}",
+            reading.why
+        );
+
+        let mut overflowed = task();
+        overflowed.connection = after_turn(
+            "Resident",
+            json!({"Failed": {"reason": "prompt is too long: 210000 tokens"}}),
+        );
+        overflowed.check_ins = checked_in(CHECK_IN_BOUND_MS * 2);
+        let reading = read(&overflowed);
+        assert_eq!(reading.word, Some(TaskWord::Stopped), "{}", reading.why);
+        assert!(
+            !reading.retry,
+            "a stale check-in must not light a retry a retry cannot clear"
+        );
+        assert!(
+            reading
+                .why
+                .contains("a retry would repeat it, so start a fresh session for the task"),
+            "{}",
+            reading.why
+        );
+
+        let mut unnamed = task();
+        unnamed.connection = after_turn(
+            "Resident",
+            json!({"Failed": {"reason": "Native provider failure"}}),
+        );
+        let reading = read(&unnamed);
+        assert_eq!(reading.word, Some(TaskWord::Stopped));
+        assert!(!reading.retry);
+        assert_eq!(
+            reading.last_turn.as_ref().unwrap().rule,
+            "grok-bot:SAND-E0407"
+        );
+
+        let mut capped = task();
+        capped.connection = after_turn(
+            "Resident",
+            json!({"Completed": {"stop_reason": "max_tokens"}}),
+        );
+        let reading = read(&capped);
+        assert_eq!(reading.word, Some(TaskWord::Stopped));
+        assert!(
+            reading.why.contains("cut at the model's output limit"),
+            "{}",
+            reading.why
+        );
+    }
+
+    #[test]
+    fn a_finished_turn_a_new_turn_and_a_closed_task_leave_the_check_ins_to_decide() {
+        // A turn that completed says nothing about the task: the check-ins do.
+        let mut finished = task();
+        finished.connection = after_turn(
+            "Resident",
+            json!({"Completed": {"stop_reason": "end_turn"}}),
+        );
+        finished.check_ins = checked_in(CHECK_IN_BOUND_MS);
+        let reading = read(&finished);
+        assert_eq!(reading.word, Some(TaskWord::Stalled));
+        assert!(
+            reading.why.contains("No check-in within the 90 s bound"),
+            "{}",
+            reading.why
+        );
+        assert_eq!(
+            reading.last_turn.as_ref().unwrap().cause,
+            crate::agent_turn::TurnCause::Completed
+        );
+
+        // A turn in flight is a new turn: the failed one before it is history.
+        let mut running = task();
+        running.connection = after_turn(
+            "TurnInFlight",
+            json!({"Failed": {"reason": "prompt is too long"}}),
+        );
+        running.check_ins = checked_in(1_000);
+        let reading = read(&running);
+        assert_eq!(reading.word, Some(TaskWord::Running), "{}", reading.why);
+
+        // A session waiting on the person is Stalled for that, not the turn.
+        let mut asking = task();
+        asking.connection =
+            after_turn("Resident", json!({"Failed": {"reason": "read ECONNRESET"}}));
+        asking.connection.as_mut().unwrap()["permissions"] = json!([{"native_request_id": "r0"}]);
+        asking.check_ins = checked_in(1_000);
+        let reading = read(&asking);
+        assert!(reading.why.starts_with("Waits for you"), "{}", reading.why);
+
+        // No last turn reported: the reading carries none.
+        let mut plain = task();
+        plain.connection = status("Resident", 0);
+        let serialized = serde_json::to_value(read(&plain)).unwrap();
+        assert!(serialized.get("last_turn").is_none(), "{serialized}");
     }
 
     #[test]
