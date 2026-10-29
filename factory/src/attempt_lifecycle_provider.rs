@@ -15,6 +15,39 @@ use crate::run_lifecycle::{
 };
 use std::collections::BTreeSet;
 
+/// A Run that aborts names why (OpenRig `validateClosure`,
+/// `hot-potato-enforcer.ts:59-103`): `closureReason` is required by `Aborted`,
+/// with its target where the reason names one, and stored by no other
+/// transition (`queue-repository.ts:2440-2445`). Refused before any write.
+pub(crate) fn validate_run_closure_reason(
+    lifecycle: RunLifecycle,
+    closure: Option<&crate::work_custody::CustodyClosure>,
+) -> Result<(), FactoryAttemptError> {
+    use crate::work_custody::ClosureReason;
+    match (lifecycle, closure) {
+        (RunLifecycle::Aborted, None) => Err(invalid(&format!(
+            "factory.run.missing_closure_reason: a Run cannot abort without closureReason; valid values: {}",
+            ClosureReason::words()
+        ))),
+        (RunLifecycle::Aborted, Some(closure))
+            if closure.reason.requires_target()
+                && closure
+                    .target
+                    .as_deref()
+                    .is_none_or(|target| target.trim().is_empty()) =>
+        {
+            Err(invalid(&format!(
+                "factory.run.missing_closure_target: closureReason {} requires its target",
+                closure.reason
+            )))
+        }
+        (RunLifecycle::Aborted, Some(_)) | (_, None) => Ok(()),
+        (_, Some(_)) => Err(invalid(
+            "factory.run.closure_reason_not_admitted: closureReason is stored only when a Run aborts; drop it from this transition",
+        )),
+    }
+}
+
 fn invalid(message: &str) -> FactoryAttemptError {
     FactoryAttemptError::InvalidOperation(message.into())
 }
@@ -55,7 +88,9 @@ pub(crate) fn apply(
             command,
             authority,
             closure,
+            closure_reason,
         } => {
+            validate_run_closure_reason(command.lifecycle, closure_reason.as_ref())?;
             match command.lifecycle {
                 RunLifecycle::Finishing => {
                     if !pending.is_empty() {

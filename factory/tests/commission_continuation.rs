@@ -30,6 +30,7 @@ use epilogos_factory::project_development_store::read_developmental_state;
 use epilogos_factory::run_lifecycle::{
     UnitDecisionBasis, UnitDecisionOutcome, UnitDecisionRequest, UnitDecisionResponse,
 };
+use epilogos_factory::work_custody::{ClosureReason, CustodyClosure};
 use epilogos_factory::workflow::{compile_workflow, workflow_source_digest, WorkflowSource};
 use epilogos_factory::workflow_authoring::load_workflow;
 use std::collections::BTreeSet;
@@ -229,6 +230,11 @@ impl World {
                 },
                 authority: current.mutation_authority(),
                 closure: None,
+                // An abort names why (O-I #741): the predecessor is withdrawn.
+                closure_reason: (lifecycle == RunLifecycle::Aborted).then_some(CustodyClosure {
+                    reason: ClosureReason::Canceled,
+                    target: None,
+                }),
             },
         )
     }

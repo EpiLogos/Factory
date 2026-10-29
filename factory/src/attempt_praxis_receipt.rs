@@ -641,7 +641,6 @@ mod tests {
     mod inspect {
         use super::*;
         use std::fs;
-        use std::os::unix::fs::PermissionsExt;
 
         const UNIT_REF: &str = "workflow-unit:01ARZ3NDEKTSV4RRFFQ69G5FAY";
         const PARTICIPANT: &str = "agent:praxis-worker";
@@ -676,6 +675,37 @@ case "$mode" in
 esac
 "#;
 
+        /// Install the double's script so this process never holds a writable
+        /// descriptor to it: a child shell writes it and makes it executable.
+        /// Written here instead, the write handle is inherited by any child a
+        /// parallel test forks in that instant and stays open until that child
+        /// execs; exec of the script then fails with ETXTBSY (os error 26,
+        /// `ExecutableFileBusy`) — measured on Linux at 49-66 of 2400 execs
+        /// under six spawning threads, 0 written through a child. Writing to a
+        /// staged name and renaming it into place does not help (the inode,
+        /// and its open write handle, stay the same). The data files beside it
+        /// are never executed and are written in-process.
+        fn install_script(path: &Path, script: &str) {
+            use std::io::Write;
+            let mut child = std::process::Command::new("/bin/sh")
+                .args(["-c", "umask 077 && cat > \"$1\" && chmod 700 \"$1\"", "sh"])
+                .arg(path)
+                .stdin(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(script.as_bytes())
+                .unwrap();
+            assert!(
+                child.wait().unwrap().success(),
+                "the double's script was not installed at {}",
+                path.display()
+            );
+        }
+
         /// One scripted owner answer: the served envelope is built by the
         /// test, so the double stays a transport double and never mints a
         /// contract of its own.
@@ -697,8 +727,7 @@ esac
             fn new(answer: Answer) -> Self {
                 let dir = tempfile::tempdir().unwrap();
                 let binary = dir.path().join("aikit-inspect.sh");
-                fs::write(&binary, INSPECT).unwrap();
-                fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+                install_script(&binary, INSPECT);
                 match answer {
                     Answer::Serve(data) => {
                         fs::write(dir.path().join("mode"), "serve").unwrap();

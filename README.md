@@ -14,7 +14,7 @@ Factory stores everything as JSON files in the project, with no database. A proj
 - **Typed workflows.** You author a workflow as restricted TypeScript data: units, barriers and nesting. Each unit declares what it must change, its permitted effects, its verification obligations and where its result returns. `factory workflow check | compile` parses and compiles it without executing any source. `factory workflow commission` attaches the compiled workflow to a Run. `factory workflow sdk <dir>` writes the type package.
 - **Attempts.** `factory attempt prepare | list | task | return | material | receiving | learn` records each attempt at a workflow unit as an immutable record; a retry is a new record, never a replacement. Factory records its intent before it hands work to the owning product. It hands agent tasks to AIKit, agent delivery to Actuation's gateway, and workspaces and places to Workcell.
 - **Results for review.** `factory attempt receiving` submits a finished attempt's result to Central's review queue through `ctrl`. A person reviews it in Central. Factory records the outcome as a correlation and does not decide it.
-- **Custody of work.** `factory development custody assign | update | list` records which World Position (a Central address such as `central:position:project:Factory:factory-sensing-guardian`) currently carries which piece of work. `factory development current-work --position P` answers none, one or ambiguous, and never guesses.
+- **Custody of work.** `factory development custody assign | update | list` records which World Position (a Central address such as `central:position:project:Factory:factory-sensing-guardian`) currently carries which piece of work, and why it closed when it closes (`--closure-reason`, OpenRig's closure words). `factory development current-work --position P` answers none, one or ambiguous, and never guesses. `factory development task-activity` reads how a task stands from its owners' evidence.
 - **Telemetry.** `factory telemetry status | stats | signals | digest | lookback | day | watch | search` reads Factory's own state together with the GitHub issues and workflow runs named in the project's sensing policy, grouped by civil day. Collecting signals never starts coding work by itself.
 - **Disclosure to O:I.** `factory system`, `factory config-contribution` and `factory capabilities`.
 
@@ -253,8 +253,17 @@ work—no Agency, Execution, Activity or Return is inferred. See
 Work is held by stable World Positions (`central:position:<world>:<slug>`, defined
 by Central) through `factory development custody assign|update|list`: durable
 `factory.work-custody/v1` records in the same developmental state, written under
-its lock. Closed custody reopens only with `--reopen`; a hand-off names its
-receiver and creates the successor in the same write. An assignment may also set
+its lock. A close carries its reason, in OpenRig's closure words:
+`--closure-reason handed_off_to | blocked_on | denied | canceled | no-follow-on |
+escalation | superseded`, with `--closure-target <ref>` for the four that name
+where the work went or what replaced it (`handed_off_to`, `blocked_on`,
+`escalation`, `superseded`). `completed` and `released` refuse a close without one
+by name (`factory.custody.missing_closure_reason`); a hand-off closes as
+`handed_off_to` its receiving Position. The closure stays on the record and on
+the transition that closed it. A Run that aborts names its reason the same way
+(`closureReason` on its `transition-run` Action). Closed custody reopens only with
+`--reopen`, which clears the record's closure; a hand-off names its receiver and
+creates the successor in the same write. An assignment may also set
 how much the holder decides alone (DLW §19.4): `--autonomy suggest|review|auto`,
 `--review-gate diffs|approvals|both` and `--escalate-to <person-ref>`, kept
 verbatim on the record and absent until set; `update` does not change them, and a

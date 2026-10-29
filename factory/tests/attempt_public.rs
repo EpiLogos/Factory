@@ -52,6 +52,7 @@ fn unit_decision_survives_fresh_clients_and_role_labels_cannot_resume_it() {
             },
             authority: run.mutation_authority(),
             closure: None,
+            closure_reason: None,
         })
         .unwrap();
     fixture
@@ -252,6 +253,7 @@ fn owner_lifecycle_cannot_complete_from_the_present_subset_of_units() {
             },
             authority: run.mutation_authority(),
             closure: None,
+            closure_reason: None,
         })
         .unwrap();
     let current = read_developmental_state(&fixture.state).unwrap();
@@ -265,7 +267,8 @@ fn owner_lifecycle_cannot_complete_from_the_present_subset_of_units() {
                 lifecycle: RunLifecycle::Finishing,
             },
             authority: run.mutation_authority(),
-            closure: None
+            closure: None,
+            closure_reason: None,
         })
         .is_err());
     assert_eq!(
@@ -508,6 +511,12 @@ fn owner_transition(
         },
         authority: run.mutation_authority(),
         closure,
+        // An abort names why (O-I #741); no other transition stores one.
+        closure_reason: (lifecycle == epilogos_factory::core::run::RunLifecycle::Aborted)
+            .then_some(epilogos_factory::work_custody::CustodyClosure {
+                reason: epilogos_factory::work_custody::ClosureReason::Canceled,
+                target: None,
+            }),
     })
 }
 
@@ -1051,6 +1060,90 @@ fn seeded_finished_history_and_archived_returned_legs_do_not_create_completion_a
     );
     assert_eq!(reading.required_units, reading.current_returned_units);
     assert!(!reading.completion_verified);
+}
+
+/// O-I #741: a Run that aborts names why, in OpenRig's closure words
+/// (`hot-potato-enforcer.ts:18-103`), and no other transition stores one.
+#[test]
+fn a_run_aborts_only_with_a_closure_reason_and_keeps_it_in_its_receipt() {
+    use epilogos_factory::core::run::{RunLifecycle, RunLifecycleCommand};
+    use epilogos_factory::work_custody::{ClosureReason, CustodyClosure};
+    let fixture = Fixture::new(source());
+    owner_transition(&fixture, "abort-activate", RunLifecycle::Active, None).unwrap();
+    let transition = |id: &str, lifecycle: RunLifecycle, closure_reason: Option<CustodyClosure>| {
+        let state = read_developmental_state(&fixture.state).unwrap();
+        let run = state.build.run(fixture.run.reference()).unwrap();
+        fixture.action(FactoryAttemptOperation::TransitionRun {
+            command: RunLifecycleCommand {
+                command_id: id.into(),
+                expected_revision: run.revision(),
+                lifecycle,
+            },
+            authority: run.mutation_authority(),
+            closure: None,
+            closure_reason,
+        })
+    };
+    let closure = |reason, target: Option<&str>| CustodyClosure {
+        reason,
+        target: target.map(str::to_owned),
+    };
+    let before = std::fs::read(&fixture.state).unwrap();
+    let bare = transition("bare-abort", RunLifecycle::Aborted, None).unwrap_err();
+    assert!(
+        bare.contains("factory.run.missing_closure_reason"),
+        "{bare}"
+    );
+    assert!(
+        bare.contains("no-follow-on") && bare.contains("superseded"),
+        "{bare}"
+    );
+    let untargeted = transition(
+        "escalated-abort",
+        RunLifecycle::Aborted,
+        Some(closure(ClosureReason::Escalation, None)),
+    )
+    .unwrap_err();
+    assert!(
+        untargeted.contains("factory.run.missing_closure_target"),
+        "{untargeted}"
+    );
+    let misplaced = transition(
+        "reasoned-suspend",
+        RunLifecycle::Suspended,
+        Some(closure(ClosureReason::Canceled, None)),
+    )
+    .unwrap_err();
+    assert!(
+        misplaced.contains("factory.run.closure_reason_not_admitted"),
+        "{misplaced}"
+    );
+    assert_eq!(
+        std::fs::read(&fixture.state).unwrap(),
+        before,
+        "a refused close writes nothing"
+    );
+    transition(
+        "superseded-abort",
+        RunLifecycle::Aborted,
+        Some(closure(ClosureReason::Superseded, Some("run:successor"))),
+    )
+    .unwrap();
+    assert_eq!(fixture.reading().lifecycle, RunLifecycle::Aborted);
+    // Kept verbatim in the retained Action receipt of the developmental state.
+    let state: Value = serde_json::from_slice(&std::fs::read(&fixture.state).unwrap()).unwrap();
+    let kept = state["state"]["attemptStates"][fixture.run.reference().to_string()]
+        ["actionReceipts"]
+        .as_object()
+        .unwrap()
+        .values()
+        .find(|saved| saved["request"]["operation"]["command"]["commandId"] == "superseded-abort")
+        .expect("the abort's receipt is retained")["request"]["operation"]["closureReason"]
+        .clone();
+    assert_eq!(
+        kept,
+        serde_json::json!({"reason": "superseded", "target": "run:successor"})
+    );
 }
 
 #[test]
