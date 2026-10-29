@@ -133,12 +133,13 @@ Telemetry (contextual inspection):\n  factory telemetry status <state> [--json]\
 Telemetry collection and repair (Operator):\n  factory telemetry collect <state> --policy <path> [--day YYYY-MM-DD | --last-days N] [--json]\n  factory telemetry classify|commission|return <state> --request <path> [--policy <path>] [--json]\n  factory telemetry export <state> [--json]\n  factory telemetry doctor <state> [--json]\n  factory telemetry policy <state> [--policy <path>] [--json]\n\n\
 Binding and specimen (Operator):\n  factory project setup <root> <native-project-key> [--central-source <project.json>] [--json]\n  factory project setup-central <root> <central-project-ref> <project.json> [--json]\n  factory project locate <root> [--json]\n                                    Contextual discovery of an existing binding\n  factory conformance developmental-state <output> [--json]\n                                    test specimen; never ordinary work creation\n\n\
 System and configuration:\n  factory system [--json]\n  factory config-contribution [--json]\n  factory config validate --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config plan --setting <setting-ref> [--scope <kind>:<ref>] (--value <json>|--value-file <path|->) [--json]\n  factory config apply --plan-file <path|-> [--changeset <id>] [--json]\n  factory config reset --setting <setting-ref> [--scope <kind>:<ref>] [--changeset <id>] [--json]\n  factory capabilities [--json]\n  factory --version\n\n\
-{}\n\n\
+{}\n\n{}\n\n\
 <state> in build/action/verify accepts a `factory.build-local-provider-state/v1` document or a `factory.developmental-local-provider/v1` developmental state, such as the document `factory conformance developmental-state` writes.\n\n\
 The command projects Factory-owned Build/read/Action contracts; canonical state and mutation remain in the native Factory provider.\n\nFor attempt/session work: `factory attempt --help`. World inhabitation, custody and current-work detail: `factory development inhabitation|custody|current-work --help`. Workflow authoring: `factory workflow --help`.",
         env!("CARGO_PKG_VERSION"),
         crate::prompt_pads::help(),
-        crate::inhabitation_cli::help()
+        crate::inhabitation_cli::help(),
+        crate::wave_sdlc_cli::help()
     )
 }
 fn capabilities() -> FactoryCliCapabilities<'static> {
@@ -181,6 +182,8 @@ fn capabilities() -> FactoryCliCapabilities<'static> {
             "development.custody.list",
             "development.current-work",
             "development.inhabitation",
+            "development.wave.act",
+            "development.wave.read",
             "action.list",
             "action.invoke",
             "system",
@@ -367,6 +370,10 @@ fn development_command(
         // parts; the process entry prints those refusals as documents.
         "custody" | "current-work" | "inhabitation" => {
             return crate::inhabitation_cli::execute(args, json).map_err(CliError::from_native);
+        }
+        // The planning dial and waves refuse in three parts, like custody.
+        "wave" => {
+            return crate::wave_sdlc_cli::execute(args, json).map_err(CliError::from_native);
         }
         // Prompt pads are kept in a state directory, not in a developmental
         // state document, and refuse with a code a caller can act on.
