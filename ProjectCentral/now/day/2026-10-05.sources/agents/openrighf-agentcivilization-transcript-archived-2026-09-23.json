@@ -1,0 +1,24 @@
+{
+  "schema": "central.project-now.handoff/v1",
+  "id": "openrighf-agentcivilization-transcript-archived-2026-09-23",
+  "provenance": "agent-authored-bounded-return",
+  "actor": "agent:hermes-nara",
+  "kind": "note",
+  "recorded_at_unix_seconds": 1790187496,
+  "subject": "OpenRig/HF agent-civilization transcript archived as transcripts/05",
+  "result": "Fetched https://youtu.be/AL-PQuB2wy0 (OPENRIG channel, 2026-09-18, I Run an AI Civilization in Herdr) via youtube-transcript-api; saved verbatim with provenance header at Work/Factory/transcripts/05-openrig-ai-civilization-herdr.txt (23KB). Source is a Fleet owner operating a persistent multi-machine agent population; catalogues coordination pathologies (bureaucracy/check-accumulation, recursive proof loops, moonbase scope creep, just-following-orders, mind viruses) and their mitigations (Refocus intent-chain reminders, distributed context topology, epidemiology rig, Agent Productivity Monitoring with ceremony-vs-progress sensors). Also repaired Factory ProjectCentral scaffolding (reproject.apply stamped agents/governance + relations, additive-only) so now.* actions work here. User wants the telos angle surfaced in chat; no telos write without his adoption (telos is human ground).",
+  "status": "carried",
+  "carried_from_days": [
+    "2026-09-23",
+    "2026-09-24",
+    "2026-09-26",
+    "2026-09-27",
+    "2026-09-28",
+    "2026-09-29",
+    "2026-09-30",
+    "2026-10-01",
+    "2026-10-02",
+    "2026-10-03",
+    "2026-10-04"
+  ]
+}

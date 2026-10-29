@@ -1,0 +1,11 @@
+{
+  "schema": "central.project-now.handoff/v1",
+  "id": "room-placement-landed-as-pr-242-2026-09-15",
+  "provenance": "agent-authored-bounded-return",
+  "actor": "agent:oh-i",
+  "kind": "handoff",
+  "recorded_at_unix_seconds": 1789491534,
+  "subject": "Room placement landed as PR #242: a commissioned attempt can be given a persistent place through Workcell, recorded strictly as provenance, never identity",
+  "result": "Branch agent/attempt-place, commits 53a5fba+1dd2fc0, pushed, PR EpiLogos/Factory#242 open for owner review. factory::attempt_place requests (herdr first, tmux fallback via Workcell auto policy) and releases rooms under pinned workcell.place-grant/v1 with the bounded explicit-argv native-owner discipline; refusals surface verbatim once, never retried. Grants enter only through authored start-serial/retry ops, validated at the boundary, stored as optional placeGrant provenance on the attempt record; place-less attempts serialize byte-identically (test-pinned). Canon held: no run/attempt identity derives from a place (03-AGENTIC-EXECUTION-BODY.md:868/:910/:925), retries never inherit a room, place survival is never read as run survival — all asserted by test. Absent grant optionals are omitted on store so receipts stay byte-faithful to the Workcell document; a live-captured grant document is embedded as a cross-repo conformance tripwire. Suite green: 362 passed, fmt+clippy clean. Open (docs/PLACE-PLACEMENT.md): census-driven placement decisions, long-term home of the semantic end-of-place act. Next: owner merges #242 with Workcell #83; commissioned re-test per root flow tm02r-commissioned-session-runbook-2026-09-15-1758",
+  "status": "active"
+}
