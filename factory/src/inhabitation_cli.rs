@@ -1,4 +1,4 @@
-//! `factory development custody|current-work|inhabitation`.
+//! `factory development custody|current-work|inhabitation|task-activity`.
 //!
 //! The developmental state is the optional first positional argument, as for
 //! every other `factory development` verb. When it is omitted the command
@@ -15,10 +15,11 @@ use crate::current_work::{derive_current_work, CurrentWorkOutcome};
 use crate::inhabitation::inhabitation_reading;
 use crate::journey::JourneyRef;
 use crate::project_development_store::read_developmental_state;
+use crate::task_activity::{parse_request, read_task_activity, TASK_ACTIVITY_USAGE};
 use crate::work_custody::{
-    self, list_in, state_refusal, validate_position_ref, AssignRequest, CustodyAutonomy,
-    CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate, UpdateRequest,
-    ASSIGN_USAGE, NOTHING_READ, UPDATE_USAGE,
+    self, list_in, state_refusal, validate_position_ref, AssignRequest, ClosureReason,
+    CustodyAutonomy, CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate,
+    UpdateRequest, ASSIGN_USAGE, NOTHING_READ, UPDATE_USAGE,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,7 @@ pub const INHABITATION_USAGE: &str = "factory development inhabitation [<state>]
 
 pub fn help() -> String {
     format!(
-        "World inhabitation (Position custody, current work, occupant relations):\n  {ASSIGN_USAGE}\n  {UPDATE_USAGE}\n  {LIST_USAGE}\n  {CURRENT_WORK_USAGE}\n  {INHABITATION_USAGE}\nWithout <state>, the nearest Factory project placement above the working directory is used."
+        "World inhabitation (Position custody, current work, occupant relations):\n  {ASSIGN_USAGE}\n  {UPDATE_USAGE}\n  {LIST_USAGE}\n  {CURRENT_WORK_USAGE}\n  {INHABITATION_USAGE}\n  {TASK_ACTIVITY_USAGE}\n                                    how each task stands, read from its owners' evidence; custody is read only from a named <state>\nWithout <state>, the nearest Factory project placement above the working directory is used (task-activity reads none)."
     )
 }
 
@@ -40,7 +41,7 @@ pub fn is_inhabitation_command(args: &[String]) -> bool {
     args.first().map(String::as_str) == Some("development")
         && matches!(
             args.get(1).map(String::as_str),
-            Some("custody" | "current-work" | "inhabitation")
+            Some("custody" | "current-work" | "inhabitation" | "task-activity")
         )
 }
 
@@ -317,6 +318,17 @@ fn receipt_text(receipt: &CustodyReceipt) -> String {
                 .unwrap_or_default()
         ));
     }
+    if let Some(closure) = &record.closure {
+        lines.push(format!(
+            "Closure: {}{}",
+            closure.reason,
+            closure
+                .target
+                .as_deref()
+                .map(|target| format!(" → {target}"))
+                .unwrap_or_default()
+        ));
+    }
     let settings: Vec<String> = [
         record
             .autonomy
@@ -402,10 +414,30 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                         "--reason",
                         "--to-position",
                         "--expected-revision",
+                        "--closure-reason",
+                        "--closure-target",
                     ],
                     true,
                     UPDATE_USAGE,
                 )?;
+                // A closure word OpenRig does not own is refused by name before
+                // anything else is read (`hot-potato-enforcer.ts:77-84`).
+                let closure_reason = parsed
+                    .get("--closure-reason")
+                    .map(|word| {
+                        ClosureReason::parse(word).ok_or_else(|| {
+                            Refusal::new(
+                                "factory.custody.invalid_closure_reason",
+                                format!(
+                                    "closure_reason={word} is not valid; valid values: {}",
+                                    ClosureReason::words()
+                                ),
+                                DID_NOT_RUN,
+                                format!("run: {UPDATE_USAGE}"),
+                            )
+                        })
+                    })
+                    .transpose()?;
                 parsed.required("--state")?;
                 let actor = work_custody::CustodyActor::from_env().ok_or_else(|| {
                     work_custody::Refusal::unchanged(
@@ -448,6 +480,8 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                         })
                         .transpose()?,
                     actor: Some(actor),
+                    closure_reason,
+                    closure_target: parsed.get("--closure-target").cloned(),
                 };
                 let receipt = work_custody::update(&state_path(&parsed)?, request)?;
                 render(&receipt, json, || receipt_text(&receipt))
@@ -488,6 +522,51 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                 &help(),
             )),
         },
+        Some("task-activity") => {
+            let parsed = parse(&args[1..], &["--request"], false, TASK_ACTIVITY_USAGE)?;
+            let source = parsed.required("--request")?;
+            let text = if source == "-" {
+                std::io::read_to_string(std::io::stdin())
+            } else {
+                std::fs::read_to_string(&source)
+            }
+            .map_err(|error| {
+                Refusal::new(
+                    "factory.task_activity.request",
+                    format!("the request {source} could not be read: {error}"),
+                    NOTHING_READ,
+                    format!("run: {TASK_ACTIVITY_USAGE}"),
+                )
+            })?;
+            let request = parse_request(&text)?;
+            // Custody is read only from a state the caller names: a reading
+            // asked from anywhere never locates one on its own.
+            let state = match parsed.positional.first() {
+                Some(path) => Some(read_state(Path::new(path))?),
+                None => None,
+            };
+            let reading = read_task_activity(&request, state.as_ref(), now_unix_ms())?;
+            render(&reading, json, || {
+                let mut lines = vec![format!(
+                    "{} (bound {} s, {})",
+                    reading.schema,
+                    reading.bound_ms / 1000,
+                    reading.custody_scope
+                )];
+                lines.extend(reading.tasks.iter().map(|task| {
+                    format!(
+                        "{} {}: {}",
+                        task.agent_session,
+                        task.word
+                            .and_then(|word| serde_json::to_value(word).ok())
+                            .and_then(|value| value.as_str().map(str::to_owned))
+                            .unwrap_or_else(|| "(none)".into()),
+                        task.why
+                    )
+                }));
+                lines.join("\n")
+            })
+        }
         Some("current-work") => {
             let parsed = parse(&args[1..], &["--position"], false, CURRENT_WORK_USAGE)?;
             let position = parsed.required_position("--position")?;
@@ -548,8 +627,15 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
             })
         }
         _ => Err(usage_for(
-            "expected custody, current-work or inhabitation",
+            "expected custody, current-work, inhabitation or task-activity",
             &help(),
         )),
     }
+}
+
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }

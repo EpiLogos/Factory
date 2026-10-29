@@ -14,7 +14,9 @@ use epilogos_factory::execution_intelligence::{
 use epilogos_factory::orchestration::RetryGrant;
 use epilogos_factory::project_development_store::transact_developmental_state;
 use epilogos_factory::sensing::{self, Observation, Signal, WorkRelation};
-use epilogos_factory::work_custody::{self, AssignRequest, CustodyState, UpdateRequest};
+use epilogos_factory::work_custody::{
+    self, AssignRequest, ClosureReason, CustodyState, UpdateRequest,
+};
 use epilogos_factory::workflow::{compile_workflow, CompiledWorkflow, WorkflowSource};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -892,7 +894,32 @@ fn refusals_are_three_part_and_leave_the_state_untouched() {
         all.push("--json");
         factory(&all, None, None)
     };
-    ok(update(&["--state", "completed", "--reason", "done"]));
+    // A close names why, by OpenRig's own words, or is refused by name.
+    let bare = refused(
+        update(&["--state", "completed", "--reason", "done"]),
+        "factory.custody.missing_closure_reason",
+    );
+    assert!(bare["fact"].as_str().unwrap().contains("no-follow-on"));
+    refused(
+        update(&[
+            "--state",
+            "completed",
+            "--closure-reason",
+            "finished",
+            "--reason",
+            "done",
+        ]),
+        "factory.custody.invalid_closure_reason",
+    );
+    let closed = ok(update(&[
+        "--state",
+        "completed",
+        "--closure-reason",
+        "no-follow-on",
+        "--reason",
+        "done",
+    ]));
+    assert_eq!(closed["custody"]["closure"]["reason"], "no-follow-on");
     let refusal = refused(
         update(&["--state", "in-progress", "--reason", "again"]),
         "factory.custody.reopen_required",
@@ -982,6 +1009,7 @@ fn current_work_reads_every_relation_not_a_capped_page() {
                     custody_ref: reference,
                     state: Some(CustodyState::Completed),
                     reason: "done".into(),
+                    closure_reason: Some(ClosureReason::NoFollowOn),
                     ..UpdateRequest::default()
                 },
             )
@@ -1139,5 +1167,98 @@ fn the_state_is_located_from_the_project_placement_when_omitted() {
             None,
         ),
         "factory.state.not_located",
+    );
+}
+
+/// `factory development task-activity`: AIKit's readings in, how the task
+/// stands out, with Factory's custody of the task read from a named state.
+#[test]
+fn task_activity_reads_the_owners_evidence_and_the_custody_closure() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = conformance_state(dir.path());
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let request = |latest: i64| {
+        json!({
+            "schema": "factory.task-activity-request/v1",
+            "tasks": [{
+                "agent_session": "agency/session-a", "task_ref": "task:fixtures", "bound": true,
+                "connection": {"state": "TurnInFlight", "error": null, "permissions": []},
+                "connection_read_at_unix_ms": now,
+                "check_ins": {"source_ref": "aikit:temporal-events", "count": 3,
+                    "latest_unix_ms": latest, "read_at_unix_ms": now}
+            }]
+        })
+    };
+    let ask = |state: Option<&str>, body: Value| {
+        let mut args = vec!["development", "task-activity"];
+        args.extend(state);
+        args.extend(["--request", "-", "--json"]);
+        factory(&args, None, Some(body))
+    };
+    // No check-in within the bound: Stalled, and the track lights a retry.
+    let stalled = ok(ask(None, request(now - 600_000)));
+    assert_eq!(stalled["schema"], "factory.task-activity/v1");
+    assert_eq!(stalled["tasks"][0]["word"], "stalled");
+    assert_eq!(stalled["tasks"][0]["retry"], true);
+    assert_eq!(stalled["tasks"][0]["decided_by"], "window-sampling");
+    assert!(stalled["custody_scope"]
+        .as_str()
+        .unwrap()
+        .contains("not read"));
+    assert_eq!(
+        ok(ask(None, request(now - 1_000)))["tasks"][0]["word"],
+        "running"
+    );
+    // Closed custody of the task's work: Done, with its closure reason.
+    let custody = assign(
+        &state,
+        &[
+            "--position",
+            P,
+            "--work",
+            "task:fixtures",
+            "--reason",
+            "fixtures",
+        ],
+    );
+    let reference = custody["custody"]["custody_ref"].as_str().unwrap();
+    ok(factory(
+        &[
+            "development",
+            "custody",
+            "update",
+            &state,
+            "--custody",
+            reference,
+            "--state",
+            "released",
+            "--closure-reason",
+            "superseded",
+            "--closure-target",
+            "task:fixtures-2",
+            "--reason",
+            "replaced",
+            "--json",
+        ],
+        None,
+        None,
+    ));
+    let done = ok(ask(Some(&state), request(now - 600_000)));
+    assert_eq!(done["tasks"][0]["word"], "done");
+    assert_eq!(
+        done["tasks"][0]["obligation"]["custody"][0]["closure"],
+        json!({"reason": "superseded", "target": "task:fixtures-2"})
+    );
+    assert_eq!(
+        done["tasks"][0]["why"],
+        "Closed: released superseded → task:fixtures-2."
+    );
+    // A malformed request is refused whole, three-part.
+    refused(
+        ask(None, json!({"schema": "factory.task-activity-request/v1"})),
+        "factory.task_activity.request",
     );
 }

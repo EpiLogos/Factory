@@ -71,6 +71,7 @@ pub mod sensing_cli;
 pub mod sensing_sources;
 pub mod structural_ground;
 pub mod system;
+pub mod task_activity;
 pub mod telemetry_cli;
 pub mod telemetry_time;
 pub mod vak_orchestration;

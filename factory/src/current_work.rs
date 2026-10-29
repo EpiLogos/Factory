@@ -424,6 +424,9 @@ mod tests {
                 custody_ref: custody_ref.into(),
                 state: Some(to),
                 reason: format!("move to {to}"),
+                closure_reason: to
+                    .is_terminal()
+                    .then_some(crate::work_custody::ClosureReason::NoFollowOn),
                 ..UpdateRequest::default()
             },
             2,
