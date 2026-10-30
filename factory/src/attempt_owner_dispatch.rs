@@ -1599,8 +1599,7 @@ mod native_failure_tests {
         );
         let source = format!("#!{}\nimport array,os,signal,socket\nos.write(1,{:?}.encode())\nos.write(2,{:?}.encode())\ns=socket.socket(fileno={})\ns.sendmsg([b'P'],[(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[1,2]))])\ns.close()\nwhile True: signal.pause()\n",
             python.display(), std::str::from_utf8(CANARY).unwrap(), std::str::from_utf8(CANARY).unwrap(), child_socket.as_raw_fd());
-        fs::write(&script, source).unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+        crate::test_executable::write_executable(&script, source);
         let invocation = NativeOwnerInvocation::AikitEncounter {
             binary: script,
             cwd: directory.to_path_buf(),

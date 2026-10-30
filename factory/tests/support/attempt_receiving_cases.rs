@@ -1,7 +1,10 @@
 //! Owner protocol doubles exist only in the test world. Production calls ctrl.
 use super::*;
 use epilogos_factory::attempt_receiving::CENTRAL_CONTRACT_REVISION;
-use std::os::unix::fs::PermissionsExt;
+
+#[path = "executable.rs"]
+mod executable;
+use executable::write_executable;
 
 const CTRL: &str = r#"#!/usr/bin/env python3
 import hashlib, json, os, pathlib, sys
@@ -119,12 +122,7 @@ impl World {
         });
     }
     fn central_setup(&self, mode: &str) {
-        std::fs::write(self.dir.path().join("ctrl-test.py"), CTRL).unwrap();
-        std::fs::set_permissions(
-            self.dir.path().join("ctrl-test.py"),
-            std::fs::Permissions::from_mode(0o700),
-        )
-        .unwrap();
+        write_executable(self.dir.path().join("ctrl-test.py"), CTRL);
         std::fs::write(self.dir.path().join("central-mode"), mode).unwrap();
         std::fs::write(
             self.dir.path().join("producer-ref"),

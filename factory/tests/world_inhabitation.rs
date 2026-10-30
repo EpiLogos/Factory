@@ -32,14 +32,14 @@ const OTHER: &str = "central:position:project:O-I:reviewer";
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
 
+#[path = "support/executable.rs"]
+mod executable;
+use executable::write_executable;
+
 fn occupancy_stub() -> PathBuf {
     let path = std::env::temp_dir().join("factory-test-occupancy-ok");
     if !path.exists() {
-        std::fs::write(&path, "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true}'\n").unwrap();
-        let mut permissions = std::fs::metadata(&path).unwrap().permissions();
-        use std::os::unix::fs::PermissionsExt;
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&path, permissions).unwrap();
+        write_executable(&path, "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true}'\n");
     }
     path
 }

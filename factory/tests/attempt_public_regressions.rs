@@ -212,7 +212,6 @@ fn delivery_cross_basis(
 /// source-cut parser and immutable commit checks. It is not GitHub live proof.
 #[cfg(unix)]
 fn delivery_cross_reader(world: &World, provider: &std::path::Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let reader = world.dir.path().join("controlled-cross-owner-reader");
     let script = r#"#!/usr/bin/python3
 import json,sys
@@ -274,7 +273,7 @@ elif '/check-runs?' in e:r={'total_count':1,'check_runs':[{'id':1,'name':'factor
 else:raise RuntimeError(e)
 print(json.dumps(r))
 "#;
-    fs::write(
+    write_executable(
         &reader,
         script
             .replace(
@@ -282,9 +281,7 @@ print(json.dumps(r))
                 &serde_json::to_string(provider.to_str().unwrap()).unwrap(),
             )
             .replace("JOB", &serde_json::to_string(CROSS_JOB).unwrap()),
-    )
-    .unwrap();
-    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     reader
 }
 
@@ -1798,7 +1795,6 @@ fn delivery_unavailable_hosted_reader_retains_exact_open_live_obligation() {
 #[test]
 fn delivery_hosted_read_deadline_stops_owned_reader_and_retains_failure() {
     use epilogos_factory::attempt_delivery::*;
-    use std::os::unix::fs::PermissionsExt;
     let world = World::new();
     world.start("producer");
     world.bind("producer", OwnerOperationPhase::Returned);
@@ -1810,8 +1806,7 @@ fn delivery_hosted_read_deadline_stops_owned_reader_and_retains_failure() {
     ));
     let reader = world.dir.path().join("slow-owned-reader");
     let pid = world.dir.path().join("reader.pid");
-    fs::write(&reader,format!("#!/usr/bin/python3\nimport os,time\nopen({:?},'w').write(str(os.getpid()))\ntime.sleep(30)\n",pid.to_str().unwrap())).unwrap();
-    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&reader,format!("#!/usr/bin/python3\nimport os,time\nopen({:?},'w').write(str(os.getpid()))\ntime.sleep(30)\n",pid.to_str().unwrap()));
     let output = success(delivery_invoke(
         &world,
         &delivery_request(
@@ -1920,13 +1915,11 @@ fn delivery_owner_capture_bounds_inherited_pipes_and_nonreading_stdin() {
 #[test]
 fn delivery_hosted_rerun_cannot_relabel_old_green_check_as_current_attempt() {
     use epilogos_factory::attempt_delivery::*;
-    use std::os::unix::fs::PermissionsExt;
     let world = delivery_world();
     let state = world.dir.path().join("controlled-rerun.json");
     fs::write(&state, "1").unwrap();
     let reader = world.dir.path().join("controlled-rerun-reader");
-    fs::write(&reader,format!("#!/usr/bin/python3\nimport json,sys\ni=json.load(open({:?}));e=sys.argv[-1];s='b'*40\nif '/git/matching-refs/' in e:r=[{{'ref':'refs/heads/feat/controlled-delivery','object':{{'sha':s}}}}]\nelif '/pulls/' in e:r={{'head':{{'ref':'feat/controlled-delivery','sha':s}}}}\nelif '/commits/' in e and '/check-runs?' not in e:r={{'sha':s,'commit':{{'tree':{{'sha':('e' if s=='c'*40 else 'd')*40}}}}}}\nelif '/check-runs?' in e:r={{'total_count':1,'check_runs':[{{'id':i,'name':'factory-owner-check','head_sha':s,'status':'completed','conclusion':'success','url':'controlled:check/'+str(i),'details_url':'https://github.com/EpiLogos/Factory/actions/runs/2/job/9'}}]}}\nelif '/attempts/2/jobs?' in e:r={{'total_count':1,'jobs':[{{'check_run_url':'controlled:check-runs/2'}}]}}\nelif '/actions/runs/2' in e:r={{'head_sha':s,'run_attempt':2}}\nelse:raise RuntimeError(e)\nprint(json.dumps(r))\n",state.to_str().unwrap())).unwrap();
-    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&reader,format!("#!/usr/bin/python3\nimport json,sys\ni=json.load(open({:?}));e=sys.argv[-1];s='b'*40\nif '/git/matching-refs/' in e:r=[{{'ref':'refs/heads/feat/controlled-delivery','object':{{'sha':s}}}}]\nelif '/pulls/' in e:r={{'head':{{'ref':'feat/controlled-delivery','sha':s}}}}\nelif '/commits/' in e and '/check-runs?' not in e:r={{'sha':s,'commit':{{'tree':{{'sha':('e' if s=='c'*40 else 'd')*40}}}}}}\nelif '/check-runs?' in e:r={{'total_count':1,'check_runs':[{{'id':i,'name':'factory-owner-check','head_sha':s,'status':'completed','conclusion':'success','url':'controlled:check/'+str(i),'details_url':'https://github.com/EpiLogos/Factory/actions/runs/2/job/9'}}]}}\nelif '/attempts/2/jobs?' in e:r={{'total_count':1,'jobs':[{{'check_run_url':'controlled:check-runs/2'}}]}}\nelif '/actions/runs/2' in e:r={{'head_sha':s,'run_attempt':2}}\nelse:raise RuntimeError(e)\nprint(json.dumps(r))\n",state.to_str().unwrap()));
     let observed: Value = serde_json::from_slice(
         &success(delivery_invoke(
             &world,
@@ -1975,21 +1968,18 @@ fn delivery_hosted_rerun_cannot_relabel_old_green_check_as_current_attempt() {
 #[test]
 fn delivery_names_a_pull_request_in_conflict_instead_of_waiting_on_missing_checks() {
     use epilogos_factory::attempt_delivery::*;
-    use std::os::unix::fs::PermissionsExt;
     let world = delivery_world();
     // GitHub runs no pull_request workflow on a PR that conflicts with its
     // base: its checks never appear, so the reader must name the conflict.
     let reader = world.dir.path().join("conflicted-reader");
-    fs::write(
+    write_executable(
         &reader,
         "#!/usr/bin/python3\nimport json,sys\ne=sys.argv[-1];s='b'*40\n\
 if '/git/matching-refs/' in e:r=[{'ref':'refs/heads/feat/controlled-delivery','object':{'sha':s}}]\n\
 elif '/pulls/' in e:r={'head':{'ref':'feat/controlled-delivery','sha':s},'mergeable':False,'mergeable_state':'dirty'}\n\
 elif '/commits/' in e and '/check-runs?' not in e:r={'sha':s,'commit':{'tree':{'sha':'d'*40}}}\n\
 else:raise RuntimeError(e)\nprint(json.dumps(r))\n",
-    )
-    .unwrap();
-    fs::set_permissions(&reader, fs::Permissions::from_mode(0o700)).unwrap();
+    );
     let observed: Value = serde_json::from_slice(
         &success(delivery_invoke(
             &world,
@@ -2423,6 +2413,12 @@ fn delivery_native_review_publication_interruption_and_fresh_readiness() {
 
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
+
+#[cfg(unix)]
+#[path = "support/executable.rs"]
+mod executable;
+#[cfg(unix)]
+use executable::write_executable;
 
 struct World {
     dir: tempfile::TempDir,

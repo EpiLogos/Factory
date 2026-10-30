@@ -218,12 +218,10 @@ fn digest_covers_actual_scope_and_permissions_and_leaves_unselected_material_out
     );
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            root.path().join("artifact/source.txt"),
-            fs::Permissions::from_mode(0o700),
-        )
-        .unwrap();
+        let source = root.path().join("artifact/source.txt");
+        let mut readonly = fs::metadata(&source).unwrap().permissions();
+        readonly.set_readonly(true);
+        fs::set_permissions(&source, readonly).unwrap();
         assert!(matches!(
             snapshot.validate_current(
                 snapshot.subject_state(),

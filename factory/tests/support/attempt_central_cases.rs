@@ -84,27 +84,7 @@ fn setup(world: &World, native: bool) -> std::path::PathBuf {
         "treatment":"projectcentral-user","recognition":"controlled-test-fixture-not-personal-adoption","recorded_at_unix_seconds":1}]}).to_string()).unwrap();
     fs::write(root.join("central-mode"), "normal").unwrap();
     let double = root.join("ctrl-double.py");
-    // A child shell writes the double, so this test never holds a write handle a parallel test's fork could
-    // inherit; exec'ing it then fails with ETXTBSY (os error 26) on Linux (as in #292's praxis-receipt double).
-    {
-        use std::io::Write;
-        let mut child = std::process::Command::new("/bin/sh")
-            .args(["-c", "umask 077 && cat > \"$1\" && chmod 700 \"$1\"", "sh"])
-            .arg(&double)
-            .stdin(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(CTRL.as_bytes())
-            .unwrap();
-        assert!(
-            child.wait().unwrap().success(),
-            "the ctrl double was not written"
-        );
-    }
+    write_executable(&double, CTRL);
     if native {
         if let Some(binary) = std::env::var_os("FACTORY_TEST_CTRL") {
             let binary = std::path::PathBuf::from(binary);

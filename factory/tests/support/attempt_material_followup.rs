@@ -198,7 +198,7 @@ fn a_swapped_world_receipt_is_rejected_before_the_first_owner_call() {
 fn post_effect_retention_failure_returns_actual_owner_output_not_a_stale_reading() {
     let world = World::new();
     let script = fs::read_to_string(world.owner()).unwrap();
-    fs::write(world.owner(), script.replace("value['ok'] = True", "(root/'state.json').write_text('interrupted unrelated publication')\nvalue['ok'] = True")).unwrap();
+    write_executable(world.owner(), script.replace("value['ok'] = True", "(root/'state.json').write_text('interrupted unrelated publication')\nvalue['ok'] = True"));
     let response = success(
         world.invoke(&world.request("inspect:retention-failed", WorkcellWorldOperation::Inspect)),
     );
@@ -255,11 +255,10 @@ fn unknown_release_dispositions_remain_uncertain_and_prevent_material_reuse() {
     let script = fs::read_to_string(world.owner()).unwrap();
     let old = "else 'released','changed'";
     assert_eq!(script.matches(old).count(), 1);
-    fs::write(
+    write_executable(
         world.owner(),
         script.replace(old, "else 'unrecognized','changed'"),
-    )
-    .unwrap();
+    );
     let response =
         success(world.invoke(&world.request("release:unknown", WorkcellWorldOperation::Release)));
     assert_eq!(response["needsReconciliation"], true);

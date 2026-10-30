@@ -44,6 +44,9 @@ pub mod flow_association;
 pub mod git_development;
 pub mod inhabitation;
 pub mod inhabitation_cli;
+#[cfg(test)]
+#[path = "../tests/support/executable.rs"]
+pub(crate) mod test_executable;
 // JourneyRef implements the standard AsRef trait below. Keep the legacy inherent
 // accessor during this additive contract tranche without weakening any other lint.
 #[allow(clippy::should_implement_trait)]

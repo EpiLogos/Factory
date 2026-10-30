@@ -216,7 +216,6 @@ fn unknown_stored_fields_are_not_silently_dropped_by_an_action() {
 #[cfg(unix)]
 #[test]
 fn real_temporary_publication_failure_keeps_bytes_and_cached_state() {
-    use std::os::unix::fs::PermissionsExt;
     struct Restore(std::path::PathBuf, fs::Permissions);
     impl Drop for Restore {
         fn drop(&mut self) {
@@ -233,7 +232,10 @@ fn real_temporary_publication_failure_keeps_bytes_and_cached_state() {
         dir.path().to_owned(),
         fs::metadata(dir.path()).unwrap().permissions(),
     );
-    fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
+    // Read-only, keeping the search bit the reads below need.
+    let mut readonly = restore.1.clone();
+    readonly.set_readonly(true);
+    fs::set_permissions(dir.path(), readonly).unwrap();
     let error = provider
         .execute_action(&invocation("candidate:first"), &authority())
         .unwrap_err();
