@@ -159,7 +159,7 @@ impl Missing {
             native.to_string(),
         )
         .unwrap();
-        fs::write(world.dir.path().join("owner.py"), CONTROLLED_OWNER).unwrap();
+        write_executable(world.dir.path().join("owner.py"), CONTROLLED_OWNER);
         let disposition = SituatedExecutionDisposition {
             selection,
             participant,
@@ -271,7 +271,10 @@ fn semantic_refusal_and_exact_absence_reconcile_without_execution_or_resend() {
         .exists());
     let mut request = fixture.recover("read:exact-absent");
     let observer = fixture.world.dir.path().join("observer.py");
-    fs::copy(fixture.world.dir.path().join("owner.py"), &observer).unwrap();
+    write_executable(
+        &observer,
+        fs::read(fixture.world.dir.path().join("owner.py")).unwrap(),
+    );
     request["invocation"]["binary"] = json!(observer);
     let result = success(fixture.world.owner(&request));
     assert_eq!(result["needsReconciliation"], false);

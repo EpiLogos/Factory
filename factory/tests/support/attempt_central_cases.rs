@@ -84,8 +84,7 @@ fn setup(world: &World, native: bool) -> std::path::PathBuf {
         "treatment":"projectcentral-user","recognition":"controlled-test-fixture-not-personal-adoption","recorded_at_unix_seconds":1}]}).to_string()).unwrap();
     fs::write(root.join("central-mode"), "normal").unwrap();
     let double = root.join("ctrl-double.py");
-    fs::write(&double, CTRL).unwrap();
-    fs::set_permissions(&double, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&double, CTRL);
     if native {
         if let Some(binary) = std::env::var_os("FACTORY_TEST_CTRL") {
             let binary = std::path::PathBuf::from(binary);

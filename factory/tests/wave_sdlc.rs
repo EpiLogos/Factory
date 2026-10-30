@@ -16,27 +16,15 @@ const BUILDER_B: &str = "central:position:project:O-I:builder-b";
 const REVIEWER_1: &str = "central:position:project:O-I:reviewer-1";
 const REVIEWER_2: &str = "central:position:project:O-I:reviewer-2";
 
+#[path = "support/executable.rs"]
+mod executable;
+use executable::write_executable;
+
 fn occupancy_stub() -> PathBuf {
     static STUB: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     STUB.get_or_init(|| {
         let path = std::env::temp_dir().join("factory-test-wave-occupancy-ok");
-        // A child shell writes the script, so this test never holds a write
-        // handle a parallel fork could inherit (ETXTBSY, Factory#292).
-        let mut child = Command::new("/bin/sh")
-            .arg("-c")
-            .arg("t=\"$1.$$\"; cat > \"$t\" && chmod 755 \"$t\" && mv \"$t\" \"$1\"")
-            .arg("sh")
-            .arg(&path)
-            .stdin(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(b"#!/bin/sh\nprintf '%s\\n' '{\"ok\":true}'\n")
-            .unwrap();
-        assert!(child.wait().unwrap().success());
+        write_executable(&path, "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true}'\n");
         path
     })
     .clone()

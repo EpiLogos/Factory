@@ -20,7 +20,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -33,6 +32,10 @@ const WORKCELL: &str = "workcell:material-test";
 
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
+
+#[path = "support/executable.rs"]
+mod executable;
+use executable::write_executable;
 
 fn binary(args: &[String], body: Option<Value>) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_factory"))
@@ -194,8 +197,7 @@ print(json.dumps(value))
             run = json!(RUN),
             attempt = json!(ATTEMPT)
         );
-        fs::write(world.owner(), script).unwrap();
-        fs::set_permissions(world.owner(), fs::Permissions::from_mode(0o700)).unwrap();
+        write_executable(world.owner(), script);
         world
     }
     fn state(&self) -> String {

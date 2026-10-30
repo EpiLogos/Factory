@@ -172,12 +172,15 @@ pub(crate) fn validate_closure(
         reviewer_executions.insert(execution.clone());
         reviewed.extend(reviewer.review_of.iter().cloned());
     }
+    // A member of a closed First step whose return the step did not keep produced nothing the Run closes on.
+    let released = engine.released_members();
     let required_producers = engine
         .workflow()
         .units
         .values()
         .map(|unit| unit.reference.clone())
         .filter(|unit| unit != &final_attempt.workflow_unit_ref && !reviewer_units.contains(unit))
+        .filter(|unit| !released.contains(unit))
         .collect::<BTreeSet<_>>();
     if reviewed.is_empty() || !required_producers.is_subset(&reviewed) {
         return Err(invalid(
@@ -215,11 +218,11 @@ fn synthesis_is_current(
     else {
         return false;
     };
-    if !barrier.required_units.is_subset(&reviewer.review_of) {
+    if !barrier.joined_units.is_subset(&reviewer.review_of) {
         return false;
     }
     let mut artifacts = std::collections::BTreeMap::new();
-    for unit in &barrier.required_units {
+    for unit in &barrier.joined_units {
         let Some(leg) = engine.leg(unit) else {
             return false;
         };

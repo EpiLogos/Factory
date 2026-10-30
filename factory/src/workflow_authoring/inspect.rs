@@ -214,7 +214,11 @@ pub fn inspect(
     }).collect::<BTreeMap<_,_>>();
     let barriers=all_barriers.iter().skip(offset).take(limit).map(|b|{
         let missing=b.waits_for.iter().filter(|u|!reading.legs.get(*u).is_some_and(|l|l.status==crate::orchestration::LegStatus::Returned)).collect::<Vec<_>>();
-        json!({"key":b.key,"waitsFor":b.waits_for,"releases":b.releases,"notReturned":missing,"complete":missing.is_empty()})
+        // Whether the step is complete is the owner's reading: a team step that kept First closes on its first return (O-I #684).
+        let owner=reading.barriers.iter().find(|r|r.key==b.key);
+        let complete=owner.map_or(missing.is_empty(),|r|r.state==crate::orchestration::BarrierState::Complete);
+        json!({"key":b.key,"waitsFor":b.waits_for,"releases":b.releases,"notReturned":missing,"complete":complete,
+            "join":owner.map(|r|r.join),"agentSetRef":owner.and_then(|r|r.agent_set_ref.as_ref())})
     }).collect::<Vec<_>>();
     let telemetry=correlations.iter().skip(offset).take(limit).map(|c|json!({"telemetryRef":c.telemetry_ref,
         "workflowUnitRef":c.workflow_unit_ref,"executionRef":c.execution_ref,"command":"development.execution-telemetry"})).collect::<Vec<_>>();

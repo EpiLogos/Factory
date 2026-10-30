@@ -25,7 +25,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 
@@ -35,6 +34,10 @@ const TIMEOUT_MS: u64 = 5_000;
 
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
+
+#[path = "support/executable.rs"]
+mod executable;
+use executable::write_executable;
 
 fn tmux_grant_json() -> String {
     json!({
@@ -105,8 +108,7 @@ impl FakeWorkcell {
     fn new(grant: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let binary = dir.path().join("workcell.py");
-        fs::write(&binary, FAKE_WORKCELL).unwrap();
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o700)).unwrap();
+        write_executable(&binary, FAKE_WORKCELL);
         let workcell = Self { dir, binary };
         workcell.set_grant(grant);
         workcell

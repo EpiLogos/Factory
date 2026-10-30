@@ -294,12 +294,26 @@ impl FileAttemptStore {
         path: impl Into<PathBuf>,
         seed: FactoryAttemptSeed,
     ) -> Result<Self, FactoryAttemptError> {
+        Self::initialize_reading_joins(path, seed, None)
+    }
+
+    /// Initialize, reading each team step's join from its Central set as the Run starts and keeping it with the Run
+    /// (O-I #684). A join no barrier can combine by, or a Central that cannot be asked, refuses the start and writes
+    /// nothing. Without a source the team steps keep the barrier's own rule, All.
+    pub fn initialize_reading_joins(
+        path: impl Into<PathBuf>,
+        seed: FactoryAttemptSeed,
+        joins: Option<&dyn crate::orchestration::StepJoinSource>,
+    ) -> Result<Self, FactoryAttemptError> {
         let path = path.into();
         if path.exists() {
             return Err(FactoryAttemptError::AlreadyExists(path));
         }
         let workflow = compile_workflow(seed.workflow_source.clone())?;
-        let engine = ExecutableOrchestration::new(workflow, seed.run)?;
+        let mut engine = ExecutableOrchestration::new(workflow, seed.run)?;
+        if let Some(joins) = joins {
+            engine.read_step_joins(joins)?;
+        }
         let run_ref = engine.run().reference().clone();
         let build = FactoryBuildState::new(
             Project::new(engine.run().project_ref().clone()),
@@ -346,6 +360,16 @@ impl FileAttemptStore {
         run_ref: RunRef,
         source_ref: &str,
     ) -> Result<Self, FactoryAttemptError> {
+        Self::attach_reading_joins(path, run_ref, source_ref, None)
+    }
+
+    /// Attach, reading each team step's join from its Central set as the coordinator starts on the Run (O-I #684).
+    pub fn attach_reading_joins(
+        path: impl Into<PathBuf>,
+        run_ref: RunRef,
+        source_ref: &str,
+        joins: Option<&dyn crate::orchestration::StepJoinSource>,
+    ) -> Result<Self, FactoryAttemptError> {
         let path = path.into();
         transact_developmental_state(&path, |native| {
             (|| -> Result<(), FactoryAttemptError> {
@@ -378,8 +402,11 @@ impl FileAttemptStore {
                             "attached source's authored compositions do not derive conduct plans: {error}"
                         ))
                     })?;
-                let engine =
+                let mut engine =
                     ExecutableOrchestration::new(compiled, run.clone())?;
+                if let Some(joins) = joins {
+                    engine.read_step_joins(joins)?;
+                }
                 native
                     .build
                     .replace_attempt_run(run.revision(), engine.run().clone())

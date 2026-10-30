@@ -182,6 +182,116 @@ pub struct BarrierReading {
     pub returned_units: BTreeSet<WorkflowUnitRef>,
     pub missing_units: BTreeSet<WorkflowUnitRef>,
     pub failed_units: BTreeSet<WorkflowUnitRef>,
+    /// How the step combines its members' returns: the join the Run kept from its team's Central set at its start, else
+    /// All, the barrier's own rule.
+    #[serde(default = "BarrierJoin::all")]
+    pub join: BarrierJoin,
+    /// The members whose returns the step keeps: every member under All, the one whose return closed it under First.
+    #[serde(default)]
+    pub joined_units: BTreeSet<WorkflowUnitRef>,
+    /// Under First, the member whose return closed the step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_by: Option<WorkflowUnitRef>,
+    /// The Central agent set the step's members are drawn from, when they are one set's team.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_set_ref: Option<String>,
+    /// The set's revision the Run read its join at; absent when no join was read at the start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_set_revision: Option<String>,
+}
+
+/// How a team step's members' returns combine: Central's agent set `join` (`central.agent-set/v1`), which the Agentset
+/// rack reads and saves (DLW manual §19.15). Factory's barrier honours All and First; a single member's None is its one
+/// return. Quorum and Weighted have no count and no weights in the manual or in Central's set, so no run starts on them.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BarrierJoin {
+    None,
+    All,
+    First,
+    Quorum,
+    Weighted,
+}
+
+impl BarrierJoin {
+    fn all() -> Self {
+        Self::All
+    }
+}
+
+/// Central's answer, at the Run's start, for the set a team step's members are drawn from (`central.agent-set.read`):
+/// the set, its revision, and the join it names (absent: the set names none, and the step waits for every member).
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetJoinReading {
+    pub agent_set_ref: String,
+    pub revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub join: Option<BarrierJoin>,
+}
+
+/// A team step's join as the Run keeps it from its start, and under First the member whose return closed the step.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StepJoinRecord {
+    pub read: SetJoinReading,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed_by: Option<WorkflowUnitRef>,
+}
+
+/// Where a Run reads its team steps' joins at its start: Central's agent sets. `Ok(None)`: Central keeps no set of that
+/// ref, so the step keeps the barrier's own rule (All). An error refuses the start: the join cannot be fixed unread.
+pub trait StepJoinSource {
+    fn read_set_join(&self, agent_set_ref: &str) -> Result<Option<SetJoinReading>, String>;
+}
+
+/// The steps of a workflow that gather one Central set's team: every unit the barrier waits for draws its agents from
+/// that one set (`agentRequirements.agentSetRefs`). Keyed by barrier, valued by the set's ref.
+pub fn team_steps(workflow: &CompiledWorkflow) -> BTreeMap<String, String> {
+    workflow
+        .barriers
+        .iter()
+        .filter_map(|barrier| {
+            let mut shared: Option<BTreeSet<String>> = None;
+            for reference in &barrier.waits_for {
+                let unit = workflow
+                    .units
+                    .values()
+                    .find(|unit| &unit.reference == reference)?;
+                let sets = &unit.agent_requirements.agent_set_refs;
+                shared = Some(match shared {
+                    None => sets.clone(),
+                    Some(shared) => shared.intersection(sets).cloned().collect(),
+                });
+            }
+            let shared = shared?;
+            if shared.len() != 1 {
+                return None;
+            }
+            shared
+                .into_iter()
+                .next()
+                .map(|set| (barrier.key.clone(), set))
+        })
+        .collect()
+}
+
+/// Why Factory cannot start a step on a join, or None where its barrier honours it.
+fn join_refusal(join: Option<BarrierJoin>, members: usize) -> Option<String> {
+    let honoured = "Factory's barrier combines by All or First";
+    match join {
+        None | Some(BarrierJoin::All | BarrierJoin::First) => None,
+        Some(BarrierJoin::None) if members <= 1 => None,
+        Some(BarrierJoin::None) => Some(format!(
+            "None keeps one return, and this step gathers {members} members' returns: {honoured}"
+        )),
+        Some(BarrierJoin::Quorum) => Some(format!(
+            "Quorum commits when enough members agree, and neither the manual (§19.15) nor Central's set names that count: {honoured}"
+        )),
+        Some(BarrierJoin::Weighted) => Some(format!(
+            "Weighted counts each return by its member's weight, and no member of a Central set carries a weight: {honoured}"
+        )),
+    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
@@ -304,6 +414,29 @@ pub enum OrchestrationError {
     ConcatenationRejected(String),
     SynthesisAlreadyExists(String),
     InvalidSnapshot(String),
+    /// The barrier's members are not drawn from one Central set, so it has no team's join.
+    NotATeamStep(String),
+    /// A join read for another set than the one the step's members are drawn from.
+    JoinOfAnotherSet {
+        step: String,
+        agent_set_ref: String,
+    },
+    /// The Run already kept another join for this step from its start.
+    JoinAlreadyRecorded(String),
+    /// A member of the step has started: its join was fixed when the Run started.
+    JoinAfterStart(String),
+    /// A join Factory's barrier cannot combine by, with the reason.
+    JoinNotHonoured {
+        step: String,
+        join: BarrierJoin,
+        reason: String,
+    },
+    /// Central could not be asked for a team step's set at the Run's start.
+    JoinUnread {
+        step: String,
+        agent_set_ref: String,
+        reason: String,
+    },
 }
 
 impl Display for OrchestrationError {
@@ -401,6 +534,7 @@ pub struct ExecutableOrchestration {
     owner_observations: BTreeMap<String, OwnerArchitectureObservationReceipt>,
     concatenation_attempts: BTreeSet<String>,
     self_review_attempts: BTreeSet<String>,
+    step_joins: BTreeMap<String, StepJoinRecord>,
 }
 
 impl ExecutableOrchestration {
@@ -431,7 +565,146 @@ impl ExecutableOrchestration {
             owner_observations: BTreeMap::new(),
             concatenation_attempts: BTreeSet::new(),
             self_review_attempts: BTreeSet::new(),
+            step_joins: BTreeMap::new(),
         })
+    }
+
+    /// This workflow's team steps, by barrier, with the Central set each gathers.
+    pub fn team_steps(&self) -> BTreeMap<String, String> {
+        team_steps(&self.workflow)
+    }
+
+    /// The joins the Run kept for its team steps at its start.
+    pub fn step_joins(&self) -> &BTreeMap<String, StepJoinRecord> {
+        &self.step_joins
+    }
+
+    /// Keep a team step's join, as Central's set named it when the Run started. Only before any member of the step has
+    /// started, never replaced, and never a join the barrier cannot combine by: a later change to the set leaves a running
+    /// step as it began.
+    pub fn record_step_join(
+        &mut self,
+        step: &str,
+        read: SetJoinReading,
+    ) -> Result<(), OrchestrationError> {
+        let barrier = self
+            .workflow
+            .barriers
+            .iter()
+            .find(|barrier| barrier.key == step)
+            .ok_or_else(|| OrchestrationError::UnknownBarrier(step.into()))?;
+        let team = team_steps(&self.workflow)
+            .remove(step)
+            .ok_or_else(|| OrchestrationError::NotATeamStep(step.into()))?;
+        if read.agent_set_ref != team {
+            return Err(OrchestrationError::JoinOfAnotherSet {
+                step: step.into(),
+                agent_set_ref: read.agent_set_ref,
+            });
+        }
+        if read.revision.trim().is_empty() {
+            return Err(OrchestrationError::EmptyField("revision"));
+        }
+        if let Some(kept) = self.step_joins.get(step) {
+            return if kept.read == read {
+                Ok(())
+            } else {
+                Err(OrchestrationError::JoinAlreadyRecorded(step.into()))
+            };
+        }
+        if barrier
+            .waits_for
+            .iter()
+            .any(|unit| self.legs.contains_key(unit))
+        {
+            return Err(OrchestrationError::JoinAfterStart(step.into()));
+        }
+        if let Some(reason) = join_refusal(read.join, barrier.waits_for.len()) {
+            return Err(OrchestrationError::JoinNotHonoured {
+                step: step.into(),
+                join: read.join.unwrap_or(BarrierJoin::All),
+                reason,
+            });
+        }
+        self.step_joins.insert(
+            step.into(),
+            StepJoinRecord {
+                read,
+                closed_by: None,
+            },
+        );
+        Ok(())
+    }
+
+    /// Read every team step's join from its Central set, as the Run starts, and keep it. All or nothing: a refused or
+    /// unread join leaves no join kept.
+    pub fn read_step_joins(
+        &mut self,
+        source: &dyn StepJoinSource,
+    ) -> Result<(), OrchestrationError> {
+        let mut staged = self.clone();
+        for (step, set) in team_steps(&self.workflow) {
+            let read =
+                source
+                    .read_set_join(&set)
+                    .map_err(|reason| OrchestrationError::JoinUnread {
+                        step: step.clone(),
+                        agent_set_ref: set.clone(),
+                        reason,
+                    })?;
+            if let Some(read) = read {
+                staged.record_step_join(&step, read)?;
+            }
+        }
+        *self = staged;
+        Ok(())
+    }
+
+    /// Members of a closed First step whose returns the step does not keep: nothing waits on them any more.
+    pub fn released_members(&self) -> BTreeSet<WorkflowUnitRef> {
+        self.workflow
+            .barriers
+            .iter()
+            .filter_map(|barrier| self.barrier_reading(&barrier.key).ok())
+            .filter(|reading| {
+                reading.join == BarrierJoin::First && reading.state == BarrierState::Complete
+            })
+            .flat_map(|reading| {
+                reading
+                    .required_units
+                    .difference(&reading.joined_units)
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// A current return closes each open First step the unit is a member of.
+    fn close_first_steps(&mut self, unit: &WorkflowUnitRef) {
+        if !self.is_current_return(unit) {
+            return;
+        }
+        let open = self
+            .workflow
+            .barriers
+            .iter()
+            .filter(|barrier| barrier.waits_for.contains(unit))
+            .filter(|barrier| {
+                self.step_joins.get(&barrier.key).is_some_and(|kept| {
+                    kept.read.join == Some(BarrierJoin::First)
+                        && kept
+                            .closed_by
+                            .as_ref()
+                            .is_none_or(|closer| !self.is_current_return(closer))
+                })
+            })
+            .map(|barrier| barrier.key.clone())
+            .collect::<Vec<_>>();
+        for key in open {
+            if let Some(kept) = self.step_joins.get_mut(&key) {
+                kept.closed_by = Some(unit.clone());
+            }
+        }
     }
 
     pub fn contract(&self) -> &'static str {
@@ -1038,7 +1311,9 @@ impl ExecutableOrchestration {
         set_current_status(leg, LegStatus::Returned);
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
         self.release_writer(unit);
-        self.set_unit_state(unit, NodeState::Returned)
+        self.set_unit_state(unit, NodeState::Returned)?;
+        self.close_first_steps(unit);
+        Ok(())
     }
 
     /// A canonical source successor makes this Return historical even when the
@@ -1190,7 +1465,9 @@ impl ExecutableOrchestration {
         set_current_status(leg, LegStatus::Returned);
         leg.attempts.last_mut().unwrap().artifacts.push(artifact);
         self.release_writer(unit);
-        self.set_unit_state(unit, NodeState::Returned)
+        self.set_unit_state(unit, NodeState::Returned)?;
+        self.close_first_steps(unit);
+        Ok(())
     }
 
     pub fn advance_subject(&mut self, subject_ref: impl Into<String>, revision: impl Into<String>) {
@@ -1310,12 +1587,32 @@ impl ExecutableOrchestration {
                 }
             }
         }
-        let state = if !failed_units.is_empty() {
-            BarrierState::Failed
-        } else if missing_units.is_empty() {
-            BarrierState::Complete
+        let kept = self.step_joins.get(key);
+        let join = kept
+            .and_then(|kept| kept.read.join)
+            .unwrap_or(BarrierJoin::All);
+        let (state, joined_units, closed_by) = if join == BarrierJoin::First {
+            // The first acceptable return closes the step; it fails only when every member failed.
+            let closer = kept
+                .and_then(|kept| kept.closed_by.clone())
+                .filter(|closer| self.is_current_return(closer));
+            let state = if closer.is_some() {
+                BarrierState::Complete
+            } else if failed_units == barrier.waits_for {
+                BarrierState::Failed
+            } else {
+                BarrierState::Pending
+            };
+            (state, closer.iter().cloned().collect(), closer)
         } else {
-            BarrierState::Pending
+            let state = if !failed_units.is_empty() {
+                BarrierState::Failed
+            } else if missing_units.is_empty() {
+                BarrierState::Complete
+            } else {
+                BarrierState::Pending
+            };
+            (state, barrier.waits_for.clone(), None)
         };
         Ok(BarrierReading {
             key: key.into(),
@@ -1324,13 +1621,22 @@ impl ExecutableOrchestration {
             returned_units,
             missing_units,
             failed_units,
+            join,
+            joined_units,
+            closed_by,
+            agent_set_ref: team_steps(&self.workflow).remove(key),
+            agent_set_revision: kept.map(|kept| kept.read.revision.clone()),
         })
     }
 
     pub fn whole_run_state(&self) -> WholeRunState {
         let mut failed = false;
         let mut complete = self.unaccounted_units().is_empty();
+        let released = self.released_members();
         for unit in self.workflow.units.values() {
+            if released.contains(&unit.reference) {
+                continue;
+            }
             match self.legs.get(&unit.reference).map(|leg| leg.status) {
                 Some(LegStatus::Returned) if self.is_current_return(&unit.reference) => {}
                 Some(
@@ -1430,7 +1736,8 @@ impl ExecutableOrchestration {
         let reviewer = self.reviewers.get(reviewer_execution_ref).ok_or_else(|| {
             OrchestrationError::ReviewerNotIndependent(reviewer_execution_ref.into())
         })?;
-        if !barrier.required_units.is_subset(&reviewer.review_of) {
+        // The returns the step keeps: every member's under All, the closing member's under First.
+        if !barrier.joined_units.is_subset(&reviewer.review_of) {
             return Err(OrchestrationError::ReviewerNotIndependent(
                 reviewer_execution_ref.into(),
             ));
@@ -1438,7 +1745,7 @@ impl ExecutableOrchestration {
         let mut available_artifacts = BTreeMap::new();
         let mut producer_refs = BTreeSet::new();
         let mut available_evidence = BTreeSet::new();
-        for unit in &barrier.required_units {
+        for unit in &barrier.joined_units {
             let leg = self
                 .leg(unit)
                 .ok_or_else(|| OrchestrationError::MissingLeg(unit.to_string()))?;

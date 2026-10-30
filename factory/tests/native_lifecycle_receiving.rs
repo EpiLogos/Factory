@@ -50,6 +50,12 @@ const DECISION: &str = "human-request:controlled-native-receiving";
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
 
+#[cfg(unix)]
+#[path = "support/executable.rs"]
+mod executable;
+#[cfg(unix)]
+use executable::write_executable;
+
 fn value(output: Output) -> Value {
     assert!(
         output.status.success(),
@@ -1521,7 +1527,6 @@ fn ledger_bytes(world: &World) -> std::collections::BTreeMap<String, Vec<u8>> {
 }
 #[cfg(unix)]
 fn real_ctrl_fault(world: &World, name: &str, close_stdout: bool) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     // Source-retained transparent OS boundary, not a native provider double.
     let quote = |path: &Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
     let script = world.root.join(name);
@@ -1532,8 +1537,7 @@ fn real_ctrl_fault(world: &World, name: &str, close_stdout: bool) -> PathBuf {
         if close_stdout { "exec 1>&-\n" } else { "" },
         quote(&world.ctrl)
     );
-    fs::write(&script, body).unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&script, body);
     script
 }
 #[test]
@@ -1774,10 +1778,8 @@ fn native_shell_quote(path: &Path) -> String {
 }
 #[cfg(unix)]
 fn native_script(world: &World, name: &str, body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let script = world.root.join(name);
-    fs::write(&script, format!("#!/bin/sh\n{body}")).unwrap();
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
+    write_executable(&script, format!("#!/bin/sh\n{body}"));
     script
 }
 #[cfg(unix)]
@@ -1809,7 +1811,7 @@ fn native_receiving_client_replacement_after_actual_descriptor_refuses_before_re
     let selector = world.root.join("descriptor-then-real-client-replacement");
     let calls = world.root.join("client-selector.calls");
     let replacement = world.root.join("real-native-client-replacement");
-    fs::copy(&old, &replacement).unwrap();
+    write_executable(&replacement, &old_bytes);
     let body=format!("printf '%s\\n' \"$6\" >> {}\n{} \"$@\"\nstatus=$?\nif [ \"$6\" = 'action.describe' ]; then /bin/mv {} {}; fi\nexit \"$status\"\n",
         native_shell_quote(&calls),native_shell_quote(&world.ctrl),native_shell_quote(&replacement),native_shell_quote(&selector));
     assert_eq!(

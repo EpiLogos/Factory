@@ -1495,17 +1495,14 @@ mod capture_consumer_os_tests {
     }
     #[test]
     fn actual_os_invalid_prefix_and_timeout_never_become_owner_reply_or_broad_debug() {
-        use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().unwrap();
         let binary = root.path().join("actual-stream-only-client");
         // This is an OS byte/deadline test, not a native Central response fixture.
         // No successful ActionResult is emitted or accepted.
-        std::fs::write(
+        crate::test_executable::write_executable(
             &binary,
             b"#!/bin/sh\nprintf '\\377capture-private-os-marker'\nexec /bin/sleep 2\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let endpoint = CentralReceivingEndpoint {
             binary,
             root: root.path().to_owned(),

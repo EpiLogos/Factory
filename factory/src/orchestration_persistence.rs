@@ -25,6 +25,10 @@ pub struct OrchestrationSnapshot {
     owner_observations: BTreeMap<String, OwnerArchitectureObservationReceipt>,
     concatenation_attempts: BTreeSet<String>,
     self_review_attempts: BTreeSet<String>,
+    /// The joins the Run kept for its team steps at its start (O-I #684). Absent in every earlier snapshot; an older
+    /// binary refuses a snapshot that keeps one rather than combining its steps another way.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    step_joins: BTreeMap<String, StepJoinRecord>,
 }
 
 impl ExecutableOrchestration {
@@ -44,6 +48,7 @@ impl ExecutableOrchestration {
             owner_observations: self.owner_observations.clone(),
             concatenation_attempts: self.concatenation_attempts.clone(),
             self_review_attempts: self.self_review_attempts.clone(),
+            step_joins: self.step_joins.clone(),
         }
     }
 
@@ -155,7 +160,29 @@ impl OrchestrationSnapshot {
             owner_observations: self.owner_observations.clone(),
             concatenation_attempts: self.concatenation_attempts.clone(),
             self_review_attempts: self.self_review_attempts.clone(),
+            step_joins: self.step_joins.clone(),
         };
+        let teams = restored.team_steps();
+        for (step, kept) in &restored.step_joins {
+            let members = restored
+                .workflow
+                .barriers
+                .iter()
+                .find(|barrier| &barrier.key == step)
+                .map(|barrier| &barrier.waits_for)
+                .ok_or_else(|| invalid("a kept join names no step of this workflow"))?;
+            if teams.get(step) != Some(&kept.read.agent_set_ref)
+                || kept.read.revision.trim().is_empty()
+                || join_refusal(kept.read.join, members.len()).is_some()
+                || kept.closed_by.as_ref().is_some_and(|closer| {
+                    kept.read.join != Some(BarrierJoin::First)
+                        || !members.contains(closer)
+                        || !restored.legs.contains_key(closer)
+                })
+            {
+                return Err(invalid("a kept join disagrees with its team step"));
+            }
+        }
         let mut executions = BTreeSet::new();
         let mut writers = BTreeMap::new();
         let mut grant_uses = BTreeMap::<String, u32>::new();

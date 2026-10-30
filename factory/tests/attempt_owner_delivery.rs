@@ -16,7 +16,6 @@ use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -24,6 +23,10 @@ use tempfile::TempDir;
 
 #[path = "support/praxis_receipt_fixture.rs"]
 mod praxis_receipt_fixture;
+
+#[path = "support/executable.rs"]
+mod executable;
+use executable::write_executable;
 
 const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FBD";
 const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAW";
@@ -96,12 +99,7 @@ impl World {
         .unwrap();
         let source: WorkflowSource = serde_json::from_str(SOURCE).unwrap();
         let workflow = compile_workflow(source.clone()).unwrap();
-        fs::write(dir.path().join("owner.py"), OWNER).unwrap();
-        fs::set_permissions(
-            dir.path().join("owner.py"),
-            fs::Permissions::from_mode(0o700),
-        )
-        .unwrap();
+        write_executable(dir.path().join("owner.py"), OWNER);
         fs::write(dir.path().join("mode"), "submitted").unwrap();
         let world = Self {
             dir,

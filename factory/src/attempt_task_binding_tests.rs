@@ -15,7 +15,6 @@ use crate::attempt_runtime::{FactoryAttemptOperation, OwnerOperationPhase, Owner
 use crate::native_owner::NativeOwnerInvocation;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
-use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 const DELIVERY: &str = "delivery:task-binding";
@@ -24,15 +23,13 @@ const DELIVERY: &str = "delivery:task-binding";
 /// `reply` with `exit`.
 fn fake_aikit(dir: &Path, exit: i32, stdout: &str, stderr: &str) -> std::path::PathBuf {
     let binary = dir.join("fake-aikit");
-    std::fs::write(
+    crate::test_executable::write_executable(
         &binary,
         format!(
             "#!/bin/sh\nfor word in \"$@\"; do printf '%s\\n' \"$word\"; done > '{log}'\nprintf '%s' '{stdout}'\nprintf '%s' '{stderr}' >&2\nexit {exit}\n",
             log = dir.join("argv.log").display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     binary
 }
 
