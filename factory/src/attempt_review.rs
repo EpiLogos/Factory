@@ -139,7 +139,8 @@ pub(crate) fn synthesize(
         .ok_or_else(|| {
             invalid("independent review has not been admitted through the native operation")
         })?;
-    if !barrier.required_units.is_subset(&reviewed.review_of) {
+    // The legs the step keeps: every member under All, the closing member under First.
+    if !barrier.joined_units.is_subset(&reviewed.review_of) {
         return Err(invalid("review does not cover all required barrier legs"));
     }
     let received = result
@@ -161,8 +162,9 @@ pub(crate) fn synthesize(
         ));
     }
     // Every required leg contributes. Selecting only the convenient successful
-    // sibling is not accountable synthesis of the whole barrier.
-    for unit in &barrier.required_units {
+    // sibling is not accountable synthesis of the whole barrier. Under First the
+    // step keeps one return, the one that closed it.
+    for unit in &barrier.joined_units {
         let leg = engine
             .leg(unit)
             .ok_or_else(|| invalid("required synthesis leg missing"))?;

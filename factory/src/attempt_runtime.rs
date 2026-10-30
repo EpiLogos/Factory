@@ -416,6 +416,10 @@ pub struct FactoryAttemptReading {
     /// Snapshots of the derived performances the attempt Actions opened.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub conduct_performances: Vec<VakPerformanceSnapshot>,
+    /// Each step of the workflow as the owner reads it: its state, how it combines its members' returns (the join a
+    /// team step kept from its Central set at the Run's start, O-I #684), and what it kept.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub barriers: Vec<crate::orchestration::BarrierReading>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -2049,6 +2053,12 @@ pub(crate) fn reading_for(
         syntheses: engine.syntheses().clone(),
         derived_conduct_plans: state.derived_conduct_plans.clone(),
         conduct_performances: state.conduct_performances.clone(),
+        barriers: engine
+            .workflow()
+            .barriers
+            .iter()
+            .map(|barrier| engine.barrier_reading(&barrier.key))
+            .collect::<Result<_, _>>()?,
     })
 }
 
@@ -2082,8 +2092,19 @@ pub fn execute_attempt_cli(
             let source_ref = args
                 .get(3)
                 .ok_or_else(|| FactoryAttemptError::Cli("missing admitted source ref".into()))?;
+            // The Run's team steps read their joins from the host's Central as the coordinator starts on it (O-I #684).
+            let central = crate::step_join_central::CentralStepJoins::configured()
+                .map_err(FactoryAttemptError::Cli)?;
             render_reading(
-                FileAttemptStore::attach(path, run_ref, source_ref)?.reading()?,
+                FileAttemptStore::attach_reading_joins(
+                    path,
+                    run_ref,
+                    source_ref,
+                    central
+                        .as_ref()
+                        .map(|central| central as &dyn crate::orchestration::StepJoinSource),
+                )?
+                .reading()?,
                 json,
             )
         }
@@ -2094,7 +2115,15 @@ pub fn execute_attempt_cli(
             let input = args.get(2).map(String::as_str).unwrap_or("-");
             let seed: FactoryAttemptSeed =
                 serde_json::from_str(&read_input(input, stdin_override)?)?;
-            let store = FileAttemptStore::initialize(state, seed)?;
+            let central = crate::step_join_central::CentralStepJoins::configured()
+                .map_err(FactoryAttemptError::Cli)?;
+            let store = FileAttemptStore::initialize_reading_joins(
+                state,
+                seed,
+                central
+                    .as_ref()
+                    .map(|central| central as &dyn crate::orchestration::StepJoinSource),
+            )?;
             render_reading(store.reading()?, json)
         }
         Some("read") => {
