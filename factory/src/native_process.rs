@@ -250,16 +250,43 @@ fn append_capture(
     Ok(())
 }
 
+/// One kill(2) existence probe of an owned group, read as POSIX defines it.
+#[cfg(unix)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GroupProbe {
+    /// ESRCH: no process of the group remains. Only this confirms retirement.
+    Retired,
+    /// A member answered; it may still be running.
+    Present,
+    /// EPERM: the group still exists but no member may be signalled. On macOS
+    /// every killed member passes through this state, past signalling but not
+    /// yet unlinked from its group (Factory#295, #296). It is neither
+    /// retirement nor a failed read. If it lasts to the deadline, a member
+    /// this process cannot stop remains, and confirmation fails.
+    Unsignallable,
+}
+
+#[cfg(unix)]
+fn probe_owned_group(group: u32) -> io::Result<GroupProbe> {
+    if unsafe { libc::kill(-(group as libc::pid_t), 0) } == 0 {
+        return Ok(GroupProbe::Present);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ESRCH) => Ok(GroupProbe::Retired),
+        Some(libc::EPERM) => Ok(GroupProbe::Unsignallable),
+        _ => Err(error),
+    }
+}
+
+/// Succeeds only on ESRCH, so no member of the owned group, ours or not,
+/// signallable or not, is left when it returns Ok.
 #[cfg(unix)]
 fn confirm_group_retired(group: u32, deadline: Instant) -> io::Result<()> {
     loop {
-        let result = unsafe { libc::kill(-(group as libc::pid_t), 0) };
-        if result == -1 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() == Some(libc::ESRCH) {
-                return Ok(());
-            }
-            return Err(error);
+        let probe = probe_owned_group(group)?;
+        if probe == GroupProbe::Retired {
+            return Ok(());
         }
         let remaining = deadline
             .checked_duration_since(Instant::now())
@@ -267,24 +294,31 @@ fn confirm_group_retired(group: u32, deadline: Instant) -> io::Result<()> {
             .ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "owned reader group retirement unconfirmed within capture budget",
+                    if probe == GroupProbe::Unsignallable {
+                        "owned reader group retirement unconfirmed within capture budget; a member this process may not signal remains (EPERM)"
+                    } else {
+                        "owned reader group retirement unconfirmed within capture budget"
+                    },
                 )
             })?;
         thread::sleep(remaining.min(POLL_INTERVAL));
     }
 }
 
+/// SIGKILL the owned group; Ok(true) when a member was signalled. ESRCH (the
+/// group is gone) and EPERM (no member may be signalled now, see
+/// GroupProbe::Unsignallable) request nothing and prove nothing. Retirement is
+/// decided only by the confirm_group_retired that follows, or the capture
+/// records lost ownership with its cleanup error.
 #[cfg(unix)]
 fn signal_owned_group(group: u32) -> io::Result<bool> {
-    let result = unsafe { libc::kill(-(group as libc::pid_t), libc::SIGKILL) };
-    if result == 0 {
+    if unsafe { libc::kill(-(group as libc::pid_t), libc::SIGKILL) } == 0 {
         return Ok(true);
     }
     let error = io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(false)
-    } else {
-        Err(error)
+    match error.raw_os_error() {
+        Some(libc::ESRCH | libc::EPERM) => Ok(false),
+        _ => Err(error),
     }
 }
 
@@ -1016,6 +1050,98 @@ mod capture_adversity {
             .parse::<i32>()
             .unwrap();
         assert!(actual_group > 0 && actual_group != own_group);
+    }
+
+    /// An owned group whose leader has exited and been reaped, leaving one
+    /// member reparented to init: the shape an owner read leaves when it
+    /// starts a child and exits. Drop stops whatever of the group remains.
+    struct OrphanedGroup {
+        group: u32,
+        member: libc::pid_t,
+    }
+    impl OrphanedGroup {
+        fn spawn() -> Self {
+            let mut leader = Command::new("/bin/sh")
+                .args(["-c", "/bin/sleep 30 </dev/null >/dev/null 2>&1 & echo $!"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let group = leader.id();
+            let mut member = String::new();
+            let read = leader.stdout.take().unwrap().read_to_string(&mut member);
+            let status = leader.wait().unwrap();
+            let orphaned = Self {
+                group,
+                member: member.trim().parse().unwrap_or(0),
+            };
+            read.unwrap();
+            assert!(status.success() && orphaned.member > 0);
+            orphaned
+        }
+    }
+    impl Drop for OrphanedGroup {
+        fn drop(&mut self) {
+            if probe_owned_group(self.group).ok() != Some(GroupProbe::Retired) {
+                let _ = signal_owned_group(self.group);
+            }
+        }
+    }
+
+    /// The owner read that failed on macOS CI (Factory#295, #296): the reader
+    /// exits, its reaped leader leaves a reparented member, and the transport
+    /// kills and probes the group. On macOS each killed member passes through
+    /// a window where it is past signalling but still linked to its group, and
+    /// kill(2) answers EPERM there. The production 2 ms poll landed in it only
+    /// under runner load; this tight loop lands in it nearly every round. Our
+    /// own retiring group is never a cleanup error and ends only in ESRCH.
+    #[test]
+    fn killed_group_with_reparented_member_retires_without_cleanup_error() {
+        let mut unsignallable = 0;
+        for _ in 0..20 {
+            let orphaned = OrphanedGroup::spawn();
+            let group = orphaned.group;
+            assert_eq!(probe_owned_group(group).unwrap(), GroupProbe::Present);
+            assert!(signal_owned_group(group).unwrap());
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let signal = signal_owned_group(group);
+                assert!(
+                    signal.is_ok(),
+                    "re-signal of our retiring group: {signal:?}"
+                );
+                match probe_owned_group(group) {
+                    Ok(GroupProbe::Retired) => break,
+                    Ok(GroupProbe::Unsignallable) => unsignallable += 1,
+                    Ok(GroupProbe::Present) => {}
+                    Err(error) => panic!("probe of our retiring group: {error}"),
+                }
+                assert!(Instant::now() < deadline, "group {group} not retired");
+            }
+            assert_eq!(
+                unsafe { libc::kill(orphaned.member, 0) },
+                -1,
+                "member {} survived its group",
+                orphaned.member
+            );
+        }
+        eprintln!("EPERM probes of retiring groups observed: {unsignallable}");
+    }
+
+    /// The guarantee the EPERM reading must not loosen: a live member of our
+    /// group is never confirmed retired, and confirmation follows the kill.
+    #[test]
+    fn live_owned_group_member_is_never_confirmed_retired() {
+        let orphaned = OrphanedGroup::spawn();
+        let live =
+            confirm_group_retired(orphaned.group, Instant::now() + Duration::from_millis(50))
+                .unwrap_err();
+        assert_eq!(live.kind(), io::ErrorKind::TimedOut);
+        assert!(signal_owned_group(orphaned.group).unwrap());
+        confirm_group_retired(orphaned.group, Instant::now() + Duration::from_secs(5)).unwrap();
+        assert_eq!(unsafe { libc::kill(orphaned.member, 0) }, -1);
     }
 }
 
