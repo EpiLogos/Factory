@@ -13,7 +13,9 @@
    "native_process::capture_adversity::actual_zero_exit_with_open_writer_retains_status_but_cannot_complete",
    "native_process::capture_adversity::real_escaped_writer_after_timeout_observes_closed_capture_pipe",
    "native_process::capture_adversity::actual_external_reap_refuses_signal_and_retains_echild",
-   "native_process::capture_adversity::actual_default_group_and_explicit_caller_group_are_preserved"
+   "native_process::capture_adversity::actual_default_group_and_explicit_caller_group_are_preserved",
+   "native_process::capture_adversity::killed_group_with_reparented_member_retires_without_cleanup_error",
+   "native_process::capture_adversity::live_owned_group_member_is_never_confirmed_retired"
   ],
   "receiving": [
    "native_human_review_is_required_and_the_exact_reply_resumes_once",
