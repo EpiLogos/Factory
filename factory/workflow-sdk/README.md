@@ -151,6 +151,65 @@ under the project root holds the song), and the compiler's own diagnostics. The
 Run keeps performing the edition it was commissioned with; the song's next Run
 performs the edited one. Nothing is executed.
 
+## Songs: one clip, made again, used whole
+
+```sh
+factory workflow export ./factory-state.json release.workflow.ts [--name release-check] [--rows agent/eros,agent-set/anima] [--units gather,check] --json
+factory workflow songs  ./factory-state.json --json
+factory workflow remake ./factory-state.json release-check --json
+```
+
+`export` renders the song in `<project root>/<entry>` — whole, or the rows (the
+tracks: units whose row is one of them) and units (the range) chosen — once into
+one clip, `factory.song-clip/v1`, kept in the project at
+`.factory/songs/<name>.song.json` (the name is the song's `workflowKey` unless
+`--name` gives one). The clip is a render: `clipRef` is
+`factory-song:<projectKey>/<name>`; `set` names what it was made from (`entry`,
+`sourceRef`, `sourceRevision`, `workflowKey`, the `byteRevision` it was rendered
+at, `semanticDigest`); `selection` keeps the rows and range; `score` carries the
+chosen units as the score draws them (`key`, `row`, `rowKind`, `dependencies`
+inside the selection, `heads`, `concern`, `requiredDifference`, `returns`,
+`returnAddress`, `subjectRef`, `praxisRefs`, `capabilityRefs`, `success`, `may`,
+`stop`, `escalate`), the `rows` they stand on, the `joins` among them and the
+ties the selection `cut`; `render` counts the renders. A clip is never edited in
+place: a second export of a name the project keeps is refused
+(`workflow.song_rendered`), and `remake` makes it again from its set as that set
+now stands, with the same rows and range (`render.renders` + 1,
+`previousByteRevision`). `songs` (`factory.song-clips/v1`) lists the project's
+clips with each one's `standing`: `current`, `moved` (the set's bytes changed
+since the render: remake it), `missing`, `another-song`, `does-not-compile`,
+`imported` or `unreadable`, and `why`.
+
+A clip dropped on a track is one unit of the receiving song with the thread form
+canon, written by `workflow edit` (above):
+
+```json
+{"contract": "factory.workflow-edit/v1", "expectedRevision": "blake3:…",
+ "edits": [{"op": "canon", "clip": "/…/.factory/songs/release-check.song.json",
+            "to": {"kind": "agent", "ref": "agent/eros"}, "waitsOn": ["verify"], "key": "release-check"}]}
+```
+
+`clip` is the clip's file in this project or another. The unit is appended to the
+song's `units` in the song's own form (its first unit's builder call and
+indentation), allocated to `to` (an agent or an agent set), waiting on `waitsOn`,
+keyed `key` (default the clip's name, made unique), its `subjectRef` the clip's
+ref in the receiving project and its words the song's: what its last units must
+make true and return, everything its units carry and may do, stopping when the
+song returns. A clip from another project is imported first — a copy kept under
+the receiving project's songs with `importedFrom` naming where it came from —
+written only once the song admits the unit, and an import is never remade where
+it was imported (`workflow.song_import`). The receipt adds `added` (`key`,
+`subjectRef`, `form: "canon"`) and `imports` (the paths written). The score marks
+a unit whose `subjectRef` is a `factory-song:` ref `form: "canon"` with its
+`songClip` and draws the clip's `score` inside it as `song` (or says why not in
+`songWhy`); a clip rendered from a song that holds canons carries their songs the
+same way, four deep. Refusals keep the song and the project as they were:
+`workflow.song_missing`, `workflow.song_invalid`, `workflow.song_name`,
+`workflow.song_selection`, `workflow.song_unplaced`, `workflow.edit_unit` (an
+unknown `waitsOn` or a `key` the song holds), `workflow.edit_invalid` (an agency),
+`workflow.edit_stale`. Nothing is executed; the song keeps no schedule — a Run, a
+repeat or a routine performs it again.
+
 ## Evidence boundary
 
 Repository tests exercise parsing, compiler identity, atomic admission, native

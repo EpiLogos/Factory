@@ -10,6 +10,10 @@
 //! spliced into the authored text at the fields the compiler located (comments and the rest of the file stand), compiled
 //! before the file changes, and refused in Factory's words when Factory cannot write it: a stale revision, a field the song
 //! shares through a const or keeps in another module, a field holding comments, an edit the compiler refuses.
+//!
+//! A song's clip dropped on a track (O-I #844, `canon`) adds one unit to the song with the thread form canon: it names the clip
+//! by its ref, takes the song's words, and the score draws the clip's song inside it (song_clip.rs). A clip from another
+//! project is kept in this one as an import first, written only once the song admits the unit.
 use crate::attempt_task::coherent_read;
 use crate::core::run::RunRef;
 use crate::workflow::{compile_workflow, WorkflowSource, WorkflowUnitSource};
@@ -239,6 +243,8 @@ pub fn score(state_path: &Path, run: &RunRef) -> Result<Value, Diagnostic> {
         }
     }
     let locations = source.source.authoring.as_ref().map(|a| &a.locations);
+    // A unit that names a song's clip is that song, standing as one note: the clip's score drawn inside it (O-I #844).
+    let here = crate::song_clip::project(state_path).ok();
     let units = source
         .units
         .iter()
@@ -280,6 +286,19 @@ pub fn score(state_path: &Path, run: &RunRef) -> Result<Value, Diagnostic> {
                 "edited": edition == "file" && retained_units.get(unit.key.as_str()).is_none_or(|r| *r != unit),
                 "sourceLocation": locations.and_then(|l| l.get(&format!("/units/{index}/key"))),
             })
+        })
+        .zip(&source.units)
+        .map(|(mut drawn, unit)| {
+            if let Some(canon) = crate::song_clip::canon_of(
+                here.as_ref().map(|p| p.root.as_path()),
+                here.as_ref().map(|p| p.key.as_str()),
+                unit.subject_ref.as_str(),
+            ) {
+                for (field, value) in canon {
+                    drawn[field] = value;
+                }
+            }
+            drawn
         })
         .collect::<Vec<_>>();
     let joins = source
@@ -357,6 +376,25 @@ enum Edit {
         unit: String,
         heads: BTreeMap<String, String>,
     },
+    /// A song's clip made one unit of this song, with the thread form canon (O-I #844).
+    Canon {
+        /// The clip's file: this project's (`.factory/songs/<name>.song.json`) or another project's, imported.
+        clip: String,
+        to: Allocation,
+        /// The new unit's key; the clip's name when none is named, made unique in the song.
+        #[serde(default)]
+        key: Option<String>,
+        #[serde(default, rename = "waitsOn")]
+        waits_on: Vec<String>,
+    },
+}
+
+/// A canon edit made ready before the splice: the unit's key, its source text and the import it needs.
+struct Canon {
+    key: String,
+    text: String,
+    reference: String,
+    import: Option<(PathBuf, Value)>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -543,6 +581,140 @@ impl<'a> Text<'a> {
     }
 }
 
+impl Text<'_> {
+    /// The builder call an array's element is written in (`unit({…})`), when it is one: where the call starts and its name. An
+    /// element's location names the call or the brace it opens.
+    fn builder_at(&self, at: usize) -> Option<(usize, &str)> {
+        let word = |end: usize| {
+            let start = self.text[..end]
+                .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                .map_or(0, |i| i + 1);
+            (start < end).then(|| (start, &self.text[start..end]))
+        };
+        if self.text.as_bytes().get(at) == Some(&b'{') {
+            let before = self.text[..at].trim_end();
+            let call = before.strip_suffix('(')?.trim_end();
+            return word(call.len());
+        }
+        let rest = &self.text[at..];
+        let end = at + rest.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))?;
+        self.text[end..]
+            .trim_start()
+            .starts_with('(')
+            .then(|| word(end))
+            .flatten()
+    }
+
+    /// The byte after the element at `at`: a literal, or the builder call it is written in.
+    fn item_end(&self, at: usize) -> Option<usize> {
+        let Some((call, _)) = self.builder_at(at) else {
+            return literal_end(self.text, at);
+        };
+        let open = object_open(self.text, call)?;
+        let close = literal_end(self.text, open)?;
+        let rest = &self.text[close..];
+        let space = rest.len() - rest.trim_start().len();
+        rest[space..].starts_with(')').then_some(close + space + 1)
+    }
+
+    /// Add an item at the end of the array at `array`, written as its first item is (a builder call or a literal) and on its
+    /// own line at that item's indentation.
+    fn append(
+        &self,
+        unit: &str,
+        array: &str,
+        count: usize,
+        item: &Value,
+    ) -> Result<Splice, Diagnostic> {
+        let field = array.trim_start_matches('/');
+        let unreadable = |why: String| {
+            refusal(
+                "workflow.edit_unreadable",
+                unit,
+                field,
+                why,
+                self.locations.get(array),
+            )
+        };
+        let start = self
+            .writable(unit, array, field)?
+            .ok_or_else(|| unreadable(format!("The song has no {field} list to add {unit} to.")))?;
+        if self.text.as_bytes().get(start) != Some(&b'[') {
+            return Err(unreadable(format!("The song's {field} are not a list written in its file, so {unit} cannot be added to them.")));
+        }
+        let end = literal_end(self.text, start).ok_or_else(|| {
+            unreadable(format!(
+                "The song's {field} are not a list Factory can read back."
+            ))
+        })?;
+        let close = end - 1;
+        let first = self
+            .locations
+            .get(&format!("{array}/0"))
+            .map(|at| at.byte_offset);
+        let builder = first.and_then(|at| self.builder_at(at));
+        let indent = first
+            .map(|at| {
+                let at = builder.map_or(at, |(call, _)| call);
+                let line = self.text[..at].rfind('\n').map_or(0, |i| i + 1);
+                let lead = &self.text[line..at];
+                if lead.chars().all(char::is_whitespace) {
+                    lead.to_owned()
+                } else {
+                    "  ".to_owned()
+                }
+            })
+            .unwrap_or_else(|| "    ".to_owned());
+        let body = serde_json::to_string_pretty(item)
+            .map_err(|e| failure(e.to_string()))?
+            .replace('\n', &format!("\n{indent}"));
+        let written = match builder {
+            Some((_, name)) => format!("{name}({body})"),
+            None => body,
+        };
+        let after = match count.checked_sub(1) {
+            None => start + 1,
+            Some(last) => {
+                let at = self
+                    .locations
+                    .get(&format!("{array}/{last}"))
+                    .map(|at| at.byte_offset)
+                    .ok_or_else(|| {
+                        unreadable(format!("The song's last {field} item is not located."))
+                    })?;
+                self.item_end(at).ok_or_else(|| {
+                    unreadable(format!(
+                        "The song's last {field} item is not a literal Factory can read back."
+                    ))
+                })?
+            }
+        };
+        let tail = &self.text[after..close];
+        if has_comment(tail) {
+            return Err(refusal("workflow.edit_by_hand", unit, field,
+                format!("A comment stands after the song's last {field} item; Factory will not write around it. Add {unit} by hand."),
+                self.locations.get(array)));
+        }
+        let comma = tail.trim_start().starts_with(',');
+        let (at, text) = if count == 0 {
+            (after, format!("\n{indent}{written}\n"))
+        } else if comma {
+            (
+                after + tail.find(',').unwrap_or(0) + 1,
+                format!("\n{indent}{written},"),
+            )
+        } else {
+            (after, format!(",\n{indent}{written}"))
+        };
+        Ok(Splice {
+            start: at,
+            end: at,
+            text,
+            pointer: format!("{array}/{count}"),
+        })
+    }
+}
+
 /// The byte after a literal that starts at `start`: a string, an array or object (brackets matched outside strings and
 /// comments), or a bare word or number.
 fn literal_end(text: &str, start: usize) -> Option<usize> {
@@ -647,7 +819,12 @@ fn unit_index(source: &WorkflowSource, key: &str) -> Result<usize, Diagnostic> {
         })
 }
 
-fn splices(song: &Song, text: &str, edits: &[Edit]) -> Result<Vec<Splice>, Diagnostic> {
+fn splices(
+    song: &Song,
+    text: &str,
+    edits: &[Edit],
+    canons: &[Canon],
+) -> Result<Vec<Splice>, Diagnostic> {
     let source = &song.loaded.source;
     let basis = source
         .source
@@ -656,6 +833,8 @@ fn splices(song: &Song, text: &str, edits: &[Edit]) -> Result<Vec<Splice>, Diagn
         .expect("a loaded song is authored");
     let writer = Text::new(&song.entry, text, &basis.locations);
     let mut out = Vec::new();
+    let mut canons = canons.iter();
+    let mut added = 0;
     for edit in edits {
         match edit {
             Edit::Allocate { units, to } => {
@@ -754,8 +933,19 @@ fn splices(song: &Song, text: &str, edits: &[Edit]) -> Result<Vec<Splice>, Diagn
                     )?);
                 }
             }
+            Edit::Canon { .. } => {
+                let canon = canons.next().expect("every canon edit is made ready");
+                let unit: Value =
+                    serde_json::from_str(&canon.text).map_err(|e| failure(e.to_string()))?;
+                let mut splice = writer.append(&canon.key, "/units", source.units.len(), &unit)?;
+                // Two canons in one request land at one place, in their order.
+                splice.pointer = format!("/units/{}", source.units.len() + added);
+                added += 1;
+                out.push(splice);
+            }
         }
     }
+    // Stable: insertions at one place keep the order they were asked in.
     out.sort_by_key(|s| (s.start, s.end));
     for pair in out.windows(2) {
         let (a, b) = (&pair[0], &pair[1]);
@@ -857,6 +1047,87 @@ fn write_song(song: &Song, digest: &str, text: &str) -> Result<(), Diagnostic> {
     Ok(())
 }
 
+/// Each canon edit made ready: its clip read (and, from another project, its import prepared), its key made unique in the
+/// song, and its unit written in the song's words.
+fn canons_of(state_path: &Path, song: &Song, edits: &[Edit]) -> Result<Vec<Canon>, Diagnostic> {
+    if !edits.iter().any(|e| matches!(e, Edit::Canon { .. })) {
+        return Ok(vec![]);
+    }
+    let project = crate::song_clip::project(state_path)
+        .map_err(|why| error("workflow.song_unplaced", why))?;
+    let mut keys = song
+        .loaded
+        .source
+        .units
+        .iter()
+        .map(|u| u.key.clone())
+        .collect::<BTreeSet<_>>();
+    let mut out = Vec::new();
+    for edit in edits {
+        let Edit::Canon {
+            clip,
+            to,
+            key,
+            waits_on,
+        } = edit
+        else {
+            continue;
+        };
+        let dropped = crate::song_clip::dropped(&project.root, &project.key, Path::new(clip))?;
+        if out.iter().any(|c: &Canon| {
+            c.import.is_some()
+                && dropped
+                    .import
+                    .as_ref()
+                    .is_some_and(|(p, _)| c.import.as_ref().is_some_and(|(q, _)| p == q))
+        }) {
+            return Err(error(
+                "workflow.edit_conflict",
+                "One request drops the same clip twice; drop it once.",
+            ));
+        }
+        for wait in waits_on {
+            if !keys.contains(wait) {
+                let mut d = error(
+                    "workflow.edit_unit",
+                    format!(
+                        "{wait} is not a unit of this song, so the dropped song cannot wait on it"
+                    ),
+                );
+                d.unit = Some(wait.clone());
+                return Err(d);
+            }
+        }
+        let base = key
+            .clone()
+            .unwrap_or_else(|| dropped.clip["name"].as_str().unwrap_or("song").to_owned());
+        if key.is_some() && keys.contains(&base) {
+            let mut d = error(
+                "workflow.edit_unit",
+                format!("{base} is already a unit of this song; name the dropped song another key"),
+            );
+            d.unit = Some(base);
+            return Err(d);
+        }
+        let mut chosen = base.clone();
+        let mut n = 2;
+        while keys.contains(&chosen) {
+            chosen = format!("{base}-{n}");
+            n += 1;
+        }
+        keys.insert(chosen.clone());
+        let unit =
+            crate::song_clip::canon_unit(&dropped, &chosen, (&to.kind, &to.reference), waits_on)?;
+        out.push(Canon {
+            key: chosen,
+            text: unit.to_string(),
+            reference: dropped.reference,
+            import: dropped.import,
+        });
+    }
+    Ok(out)
+}
+
 /// `factory workflow edit <state> <run-ref> <edit.json|->`.
 pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Diagnostic> {
     let request: EditRequest = serde_json::from_value(request.clone()).map_err(|e| {
@@ -899,15 +1170,35 @@ pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Di
                 basis.revision, request.expected_revision)));
     }
     let module = &basis.modules[&song.entry];
-    let splices = splices(&song, &module.content, &request.edits)?;
+    let canons = canons_of(state_path, &song, &request.edits)?;
+    let splices = splices(&song, &module.content, &request.edits, &canons)?;
     let text = apply(&module.content, &splices);
     let changed = splices
         .iter()
         .map(|s| s.pointer.clone())
         .collect::<BTreeSet<_>>();
+    let mut imported = Vec::<&Path>::new();
     if text != module.content {
         compile_apart(&song, &text)?;
-        write_song(&song, &module.digest, &text)?;
+        // A clip from another project is kept here once the song admits its unit, and taken out again if the song's file
+        // cannot be written.
+        for canon in &canons {
+            if let Some((path, clip)) = &canon.import {
+                if let Err(d) = crate::song_clip::write_import(path, clip) {
+                    for path in &imported {
+                        let _ = fs::remove_file(path);
+                    }
+                    return Err(d);
+                }
+                imported.push(path);
+            }
+        }
+        if let Err(d) = write_song(&song, &module.digest, &text) {
+            for path in &imported {
+                let _ = fs::remove_file(path);
+            }
+            return Err(d);
+        }
     }
     let written = load_workflow(&song.root, Path::new(&song.entry))?;
     let after = written
@@ -925,6 +1216,8 @@ pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Di
         "semanticDigest": written.source.source.digest,
         "edits": request.edits.len(),
         "changed": changed,
+        "added": canons.iter().map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})).collect::<Vec<_>>(),
+        "imports": imported,
         "check": {"state": "admitted", "by": "factory workflow check"},
         "performed": written.source.source.digest == retained.source.digest,
         "performs": PERFORMS,

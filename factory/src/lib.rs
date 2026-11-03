@@ -73,6 +73,7 @@ pub mod run_lifecycle;
 pub mod sensing;
 pub mod sensing_cli;
 pub mod sensing_sources;
+pub mod song_clip;
 pub mod step_join_central;
 pub mod structural_ground;
 pub mod system;
