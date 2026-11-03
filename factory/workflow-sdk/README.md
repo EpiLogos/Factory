@@ -106,6 +106,51 @@ A cursor is pinned to native revision and selection; a changed reading requires
 an explicit refresh, not silent replacement of historical selection. Unknown
 usage/model observations are not filled from source intent or guessed pricing.
 
+## Read the score and edit the song
+
+```sh
+factory workflow score ./factory-state.json 'run:…' --json
+factory workflow edit ./factory-state.json 'run:…' ./edit.json --json   # or - to read the edit on stdin
+```
+
+`score` (`factory.workflow-score/v1`) reads the song a Run performs as one score:
+its units with their compositions (`heads`: CPF, CT, CP, CF, CFP, CS, direction;
+null for a unit with none), each unit's `row` (who does it: its first agent, else
+its first agent set, else its first agency), the `rows` (every agent, agent set
+and agency the units name), its `joins` (the join the Run keeps, else `all`), its
+`waves` (`factory development wave read`) and each unit's `leg`. It reads the
+song's own file at `<project root>/<entry>` while that file is the same song
+(`song.edition: "file"`, with its `byteRevision`; `edited` marks the units the file
+changed and `song.performed` says whether the Run still performs the file's
+edition). A song commissioned from another root, a file that holds another song
+or does not compile reads the retained edition (`"retained"`) with the reason in
+`song.why` and the compiler's word in `check`.
+
+`edit` writes that file in place. The request is `factory.workflow-edit/v1`:
+
+```json
+{"contract": "factory.workflow-edit/v1", "expectedRevision": "blake3:…",
+ "edits": [{"op": "allocate", "units": ["verify"], "to": {"kind": "agent", "ref": "agent/eros"}},
+           {"op": "connect", "unit": "integrate", "waitsOn": "verify"},
+           {"op": "heads", "unit": "verify", "heads": {"CS": "CS3"}}]}
+```
+
+`allocate` gives units to an agent (its `agentRefs`) or an agent set (its
+`agentSetRefs`, the agents cleared) and moves a composition's `actor` with them;
+`connect` adds a dependency; `heads` rewrites a composition's heads (a unit with
+no composition is refused: compose it in the song first). Each edit is spliced
+into the authored text at the field the compiler located, so comments and the rest
+of the file stand; a field the song leaves out is written into its object. The
+edited song is compiled apart before the file changes, and the receipt
+(`factory.workflow-edit-receipt/v1`) carries the new byte revision. Refusals keep
+the file as it was: `workflow.edit_stale` (the file changed since it was read),
+`workflow.edit_shared` (the field is one const several fields share),
+`workflow.edit_elsewhere` (it is written in another module),
+`workflow.edit_by_hand` (it holds comments), `workflow.song_unplaced` (no file
+under the project root holds the song), and the compiler's own diagnostics. The
+Run keeps performing the edition it was commissioned with; the song's next Run
+performs the edited one. Nothing is executed.
+
 ## Evidence boundary
 
 Repository tests exercise parsing, compiler identity, atomic admission, native
