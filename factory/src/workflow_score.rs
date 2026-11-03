@@ -692,12 +692,14 @@ fn splices(song: &Song, text: &str, edits: &[Edit]) -> Result<Vec<Splice>, Diagn
                                 &json!([to.reference]),
                             )?);
                         }
-                        other => return Err(error(
-                            "workflow.edit_invalid",
-                            format!(
+                        other => {
+                            return Err(error(
+                                "workflow.edit_invalid",
+                                format!(
                                 "Allocate gives a unit to an agent or an agent set, not {other:?}"
                             ),
-                        )),
+                            ))
+                        }
                     }
                     if unit.composition.is_some() {
                         out.push(writer.set(
