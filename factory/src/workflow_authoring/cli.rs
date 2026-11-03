@@ -17,6 +17,8 @@ pub const COMMANDS: &[&str] = &[
     "workflow.compile",
     "workflow.commission",
     "workflow.inspect",
+    "workflow.score",
+    "workflow.edit",
     "workflow.inputs",
     "workflow.locate",
     "workflow.source",
@@ -28,6 +30,9 @@ pub const CONTRACTS: &[&str] = &[
     "factory.authored-workflow/v1",
     "factory.workflow-commission-receipt/v1",
     "factory.workflow-inspection/v1",
+    crate::workflow_score::SCORE_CONTRACT,
+    crate::workflow_score::EDIT_CONTRACT,
+    crate::workflow_score::EDIT_RECEIPT_CONTRACT,
     "factory.workflow-input-candidates/v1",
     "factory.workflow-location/v1",
     "factory.workflow-check/v1",
@@ -35,7 +40,7 @@ pub const CONTRACTS: &[&str] = &[
     "factory.workflow-sdk-install/v1",
     "factory.workflow-diagnostic/v1",
 ];
-pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  (registered domain type adapters, e.g. @epilogos/ql-vak, are listed as domainAdapters in help --json)\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module.";
+pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  (registered domain type adapters, e.g. @epilogos/ql-vak, are listed as domainAdapters in help --json)\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow score <state> <run-ref> [--json]\n  factory workflow edit <state> <run-ref> <edit.json|-> [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module. Score reads the song a Run performs (from its file under the project root while it is the same song); edit writes that file in place (allocate, connect, heads), compare-and-swap on its byte revision, compiled before it changes; the Run keeps the edition it was commissioned with.";
 fn failure(e: impl fmt::Display) -> Diagnostic {
     error("workflow.operation", e.to_string())
 }
@@ -54,7 +59,18 @@ fn after_commission_failure(
     diagnostic.native_result = Some(result.clone());
     diagnostic
 }
-fn read_request(path: &str) -> Result<FactoryCommissionRequest, Diagnostic> {
+fn read_request<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, Diagnostic> {
+    if path == "-" {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .take(MAX_BUNDLE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(failure)?;
+        if bytes.len() > MAX_BUNDLE_BYTES {
+            return Err(failure("Request exceeds 2 MiB"));
+        }
+        return serde_json::from_slice(&bytes).map_err(failure);
+    }
     let before = fs::symlink_metadata(path).map_err(failure)?;
     if !before.is_file() {
         return Err(failure("Request must be a regular, non-symlink file"));
@@ -173,7 +189,7 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
         "commission" => {
             let root = take_option(&mut args, "--root")?;
             require_len(&args, 3)?;
-            let request = read_request(&args[1])?;
+            let request: FactoryCommissionRequest = read_request(&args[1])?;
             let loaded = load(&args[2], root)?;
             let receipt = FactoryDevelopmentalFileProvider::commission_workflow(
                 &args[0],
@@ -212,6 +228,19 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
                 attempt,
                 limit,
                 cursor.as_deref(),
+            )
+        }
+        "score" => {
+            require_len(&args, 2)?;
+            crate::workflow_score::score(Path::new(&args[0]), &args[1].parse().map_err(failure)?)
+        }
+        "edit" => {
+            require_len(&args, 3)?;
+            let request: Value = read_request(&args[2])?;
+            crate::workflow_score::edit(
+                Path::new(&args[0]),
+                &args[1].parse().map_err(failure)?,
+                request,
             )
         }
         "inputs" => {

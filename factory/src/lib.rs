@@ -85,6 +85,7 @@ pub mod wave_sdlc_cli;
 pub mod work_custody;
 pub mod workflow;
 pub mod workflow_authoring;
+pub mod workflow_score;
 
 impl AsRef<core::identity::Ref> for journey::JourneyRef {
     fn as_ref(&self) -> &core::identity::Ref {
