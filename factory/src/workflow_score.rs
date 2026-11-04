@@ -14,6 +14,11 @@
 //! A song's clip dropped on a track (O-I #844, `canon`) adds one unit to the song with the thread form canon: it names the clip
 //! by its ref, takes the song's words, and the score draws the clip's song inside it (song_clip.rs). A clip from another
 //! project is kept in this one as an import first, written only once the song admits the unit.
+//!
+//! An edit can be checked without being written (`--check`): the same compare-and-swap, splice and compile, answered with the
+//! receipt it would give and `written: false`, so a proposal (Anima's Compose, O-I #844) is admitted before anyone accepts it.
+//! A project's map gives a development song its units (`map`): the open sub-issues of a `wayfinder:map` issue, in the order
+//! their blocking gives, read through the forge port and never written.
 use crate::attempt_task::coherent_read;
 use crate::core::run::RunRef;
 use crate::workflow::{compile_workflow, WorkflowSource, WorkflowUnitSource};
@@ -1142,6 +1147,20 @@ fn canons_of(state_path: &Path, song: &Song, edits: &[Edit]) -> Result<Vec<Canon
 
 /// `factory workflow edit <state> <run-ref> <edit.json|->`.
 pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Diagnostic> {
+    edit_song(state_path, run, request, true)
+}
+
+/// `factory workflow edit <state> <run-ref> <edit.json|-> --check`: the edit admitted or refused, the song's file untouched.
+pub fn check_edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Diagnostic> {
+    edit_song(state_path, run, request, false)
+}
+
+fn edit_song(
+    state_path: &Path,
+    run: &RunRef,
+    request: Value,
+    write: bool,
+) -> Result<Value, Diagnostic> {
     let request: EditRequest = serde_json::from_value(request.clone()).map_err(|e| {
         error(
             "workflow.edit_invalid",
@@ -1190,6 +1209,24 @@ pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Di
         .map(|s| s.pointer.clone())
         .collect::<BTreeSet<_>>();
     let mut imported = Vec::<&Path>::new();
+    if !write {
+        if text != module.content {
+            compile_apart(&song, &text)?;
+        }
+        return Ok(json!({
+            "contract": EDIT_RECEIPT_CONTRACT,
+            "runRef": run,
+            "song": {"path": song.file, "entry": song.entry, "sourceRef": song.loaded.source.source.reference},
+            "previousRevision": basis.revision,
+            "revision": basis.revision,
+            "edits": request.edits.len(),
+            "changed": changed,
+            "added": canons.iter().map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})).collect::<Vec<_>>(),
+            "check": {"state": "admitted", "by": "factory workflow check"},
+            "written": false,
+            "execution": "not-requested",
+        }));
+    }
     if text != module.content {
         compile_apart(&song, &text)?;
         // A clip from another project is kept here once the song admits its unit, and taken out again if the song's file
@@ -1231,8 +1268,237 @@ pub fn edit(state_path: &Path, run: &RunRef, request: Value) -> Result<Value, Di
         "added": canons.iter().map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})).collect::<Vec<_>>(),
         "imports": imported,
         "check": {"state": "admitted", "by": "factory workflow check"},
+        "written": true,
         "performed": written.source.source.digest == retained.source.digest,
         "performs": PERFORMS,
         "execution": "not-requested",
+    }))
+}
+
+pub const MAP_CONTRACT: &str = "factory.project-map-reading/v1";
+const MAP_LABEL: &str = "wayfinder:map";
+/// The most sub-issues a map is read to (ten pages of a hundred), and the wall budget of the whole read.
+const MAP_PAGES: usize = 10;
+const MAP_BUDGET: std::time::Duration = std::time::Duration::from_secs(120);
+
+fn map_refusal(code: &str, message: impl Into<String>) -> Diagnostic {
+    error(code, message)
+}
+
+/// One ticket as the forge reads it: its repository, number, title, state and page.
+struct Ticket {
+    repository: String,
+    number: u64,
+    title: String,
+    open: bool,
+    url: String,
+}
+
+impl Ticket {
+    fn of(row: &Value, fallback: &str) -> Option<Ticket> {
+        let number = row["number"].as_u64()?;
+        let repository = row["repository_url"]
+            .as_str()
+            .and_then(|url| url.split("/repos/").nth(1))
+            .filter(|repo| crate::sensing_sources::valid_github_scope(repo))
+            .unwrap_or(fallback)
+            .to_owned();
+        Some(Ticket {
+            url: row["html_url"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("https://github.com/{repository}/issues/{number}")),
+            title: row["title"].as_str().unwrap_or("").to_owned(),
+            open: row["state"] == "open",
+            repository,
+            number,
+        })
+    }
+    fn reference(&self) -> String {
+        format!("github:{}:issue:{}", self.repository, self.number)
+    }
+    /// The unit's key: `issue-<n>` for the map's own repository, the repository's name before it for another.
+    fn key(&self, home: &str) -> String {
+        if self.repository == home {
+            return format!("issue-{}", self.number);
+        }
+        let name: String = self
+            .repository
+            .to_ascii_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+            .collect();
+        format!("{name}-{}", self.number)
+    }
+}
+
+/// A development song's units from the project's map (O-I #844; DLW manual §19.1 Songs, "A project's map gives a development song
+/// its units: each ticket is a unit"). The map is an issue labelled `wayfinder:map` (the Wayfinder skill's map); its open
+/// sub-issues are the units, in whichever repository they stand; blocked-by gives their order: a unit's wave is one past the
+/// latest wave of the open units of the map that block it. A closed ticket blocks nothing and is no unit; an open blocker the map
+/// does not hold is named where its unit waits on it. Read through the forge port Factory reads pull requests by
+/// (attempt_delivery.rs: an explicit absolute `gh`, `gh api`, each read bounded) and never written.
+pub fn map(gh: &str, repository: &str, number: u64) -> Result<Value, Diagnostic> {
+    if !crate::sensing_sources::valid_github_scope(repository) {
+        return Err(map_refusal(
+            "workflow.map_invalid",
+            format!(
+                "{repository} names no repository: a map is read from an exact owner/repository"
+            ),
+        ));
+    }
+    let deadline = std::time::Instant::now() + MAP_BUDGET;
+    let read = |endpoint: String| {
+        crate::attempt_delivery::gh(gh, endpoint.clone(), deadline).map_err(|why| {
+            map_refusal(
+                "workflow.map_unread",
+                format!("The forge did not answer {endpoint}: {why}"),
+            )
+        })
+    };
+    let rows = |value: Value, endpoint: &str| -> Result<Vec<Value>, Diagnostic> {
+        match value {
+            Value::Array(rows) => Ok(rows),
+            _ => Err(map_refusal(
+                "workflow.map_unread",
+                format!("The forge answered {endpoint} with no list of issues"),
+            )),
+        }
+    };
+    let issue = read(format!("repos/{repository}/issues/{number}"))?;
+    let map = Ticket::of(&issue, repository).ok_or_else(|| {
+        map_refusal(
+            "workflow.map_unread",
+            format!("The forge answered {repository}#{number} without its number"),
+        )
+    })?;
+    let labelled = issue["labels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|label| label["name"] == MAP_LABEL || label == MAP_LABEL);
+    if issue.get("pull_request").is_some() || !labelled {
+        return Err(map_refusal(
+            "workflow.not_a_map",
+            format!(
+                "{repository}#{number} ({}) carries no {MAP_LABEL} label: it is not a map, so it gives no song its units",
+                map.title
+            ),
+        ));
+    }
+    let mut children = Vec::new();
+    for page in 1..=MAP_PAGES {
+        let endpoint =
+            format!("repos/{repository}/issues/{number}/sub_issues?per_page=100&page={page}");
+        let page_rows = rows(read(endpoint.clone())?, &endpoint)?;
+        let full = page_rows.len() == 100;
+        children.extend(
+            page_rows
+                .iter()
+                .filter_map(|row| Ticket::of(row, repository)),
+        );
+        if !full {
+            break;
+        }
+        if page == MAP_PAGES {
+            return Err(map_refusal(
+                "workflow.map_too_large",
+                format!("{repository}#{number} holds more than {} sub-issues: Factory reads a map to that many", MAP_PAGES * 100),
+            ));
+        }
+    }
+    let (open, closed): (Vec<Ticket>, Vec<Ticket>) =
+        children.into_iter().partition(|ticket| ticket.open);
+    let keys: BTreeMap<String, String> = open
+        .iter()
+        .map(|ticket| (ticket.reference(), ticket.key(repository)))
+        .collect();
+    let mut blocked: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut outside: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for ticket in &open {
+        let key = ticket.key(repository);
+        let endpoint = format!(
+            "repos/{}/issues/{}/dependencies/blocked_by?per_page=100",
+            ticket.repository, ticket.number
+        );
+        let mut on = Vec::new();
+        let mut waits = Vec::new();
+        for blocker in rows(read(endpoint.clone())?, &endpoint)?
+            .iter()
+            .filter_map(|row| Ticket::of(row, &ticket.repository))
+            .filter(|blocker| blocker.open)
+        {
+            match keys.get(&blocker.reference()) {
+                Some(unit) => on.push(unit.clone()),
+                None => waits.push(json!({"ticket": blocker.reference(), "title": blocker.title, "url": blocker.url})),
+            }
+        }
+        on.sort();
+        on.dedup();
+        blocked.insert(key.clone(), on);
+        outside.insert(key, waits);
+    }
+    // The waves: a unit stands one past the latest of the units that block it (Kahn's layering); blocking in a circle gives none.
+    let mut wave: BTreeMap<String, usize> = BTreeMap::new();
+    while wave.len() < blocked.len() {
+        let ready: Vec<(String, usize)> = blocked
+            .iter()
+            .filter(|(key, _)| !wave.contains_key(*key))
+            .filter_map(|(key, on)| {
+                on.iter()
+                    .map(|unit| wave.get(unit).copied())
+                    .collect::<Option<Vec<_>>>()
+                    .map(|waves| (key.clone(), waves.into_iter().max().map_or(1, |w| w + 1)))
+            })
+            .collect();
+        if ready.is_empty() {
+            let circle: Vec<&str> = blocked
+                .keys()
+                .filter(|key| !wave.contains_key(*key))
+                .map(String::as_str)
+                .collect();
+            return Err(map_refusal(
+                "workflow.map_cycle",
+                format!(
+                    "The blocking on {repository}#{number} runs in a circle among {}: a song takes no order from it",
+                    circle.join(", ")
+                ),
+            ));
+        }
+        wave.extend(ready);
+    }
+    let mut ordered: Vec<&Ticket> = open.iter().collect();
+    ordered.sort_by_key(|ticket| {
+        (
+            wave[&ticket.key(repository)],
+            ticket.repository != repository,
+            ticket.number,
+        )
+    });
+    let units: Vec<Value> = ordered
+        .iter()
+        .map(|ticket| {
+            let key = ticket.key(repository);
+            json!({"key": key, "ticket": ticket.reference(), "title": ticket.title, "url": ticket.url,
+                "wave": format!("wave-{}", wave[&key]), "blockedBy": blocked[&key], "waitsOutside": outside[&key]})
+        })
+        .collect();
+    let mut waves: Vec<Value> = Vec::new();
+    for unit in &units {
+        match waves.last_mut() {
+            Some(last) if last["wave"] == unit["wave"] => last["units"]
+                .as_array_mut()
+                .expect("units")
+                .push(unit["key"].clone()),
+            _ => waves.push(json!({"wave": unit["wave"], "units": [unit["key"]]})),
+        }
+    }
+    Ok(json!({
+        "contract": MAP_CONTRACT,
+        "map": {"ticket": map.reference(), "title": map.title, "url": map.url, "label": MAP_LABEL},
+        "units": units,
+        "waves": waves,
+        "closed": closed.iter().map(Ticket::reference).collect::<Vec<_>>(),
+        "written": false,
     }))
 }

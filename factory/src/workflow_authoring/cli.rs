@@ -19,6 +19,7 @@ pub const COMMANDS: &[&str] = &[
     "workflow.inspect",
     "workflow.score",
     "workflow.edit",
+    "workflow.map",
     "workflow.export",
     "workflow.remake",
     "workflow.songs",
@@ -37,6 +38,7 @@ pub const CONTRACTS: &[&str] = &[
     crate::workflow_score::SCORE_CONTRACT,
     crate::workflow_score::EDIT_CONTRACT,
     crate::workflow_score::EDIT_RECEIPT_CONTRACT,
+    crate::workflow_score::MAP_CONTRACT,
     crate::song_clip::CLIP_CONTRACT,
     crate::song_clip::CLIPS_CONTRACT,
     crate::song_take::TAKE_CONTRACT,
@@ -47,7 +49,7 @@ pub const CONTRACTS: &[&str] = &[
     "factory.workflow-sdk-install/v1",
     "factory.workflow-diagnostic/v1",
 ];
-pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  (registered domain type adapters, e.g. @epilogos/ql-vak, are listed as domainAdapters in help --json)\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow score <state> <run-ref> [--json]\n  factory workflow edit <state> <run-ref> <edit.json|-> [--json]\n  factory workflow export <state> <song.workflow.ts> [--name <name>] [--rows <ref,…>] [--units <key,…>] [--json]\n  factory workflow remake <state> <name> [--json]\n  factory workflow songs <state> [--json]\n  factory workflow perform <state> <run-ref> <unit> [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module. Score reads the song a Run performs (from its file under the project root while it is the same song); edit writes that file in place (allocate, connect, heads, canon), compare-and-swap on its byte revision, compiled before it changes; the Run keeps the edition it was commissioned with. Export renders a song, or the rows and units chosen, once into one clip the project keeps under .factory/songs; remake makes it again from the set it names; songs lists the project's clips and whether each one's set has moved. A canon edit makes a clip one unit of another song; perform runs the song a canon unit names again, each run a take: a Run of the clip's set as it was rendered, commissioned as the Run the unit stands in was.";
+pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compile <source.workflow.ts> [--root <source-root>] [--json]\n  (registered domain type adapters, e.g. @epilogos/ql-vak, are listed as domainAdapters in help --json)\n  factory workflow commission <state> <request.json> <source.workflow.ts> [--root <source-root>] [--json]\n  factory workflow inspect <state> <run-ref> [--unit <key-or-ref>] [--attempt <ref>] [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow score <state> <run-ref> [--json]\n  factory workflow edit <state> <run-ref> <edit.json|-> [--check] [--json]\n  factory workflow map <owner/repo> <map-issue> --gh <absolute gh> [--json]\n  factory workflow export <state> <song.workflow.ts> [--name <name>] [--rows <ref,…>] [--units <key,…>] [--json]\n  factory workflow remake <state> <name> [--json]\n  factory workflow songs <state> [--json]\n  factory workflow perform <state> <run-ref> <unit> [--json]\n  factory workflow inputs <state> <run-ref> --unit <key-or-ref> [--expected-revision <number>] [--json]\n  factory workflow locate <state> <exact-native-ref> [--limit 1..100] [--cursor <json>] [--json]\n  factory workflow source <state> <run-ref> <retained-module.ts> [--json]\n  factory workflow schema [--json]\n  factory workflow sdk <new-directory> [--json]\n\nCompilation never executes source. Commission stamps the exact basis before the existing attempt lifecycle can act. Normal factory attempt Actions own start/fork/dispatch/retry/cancel/Return. Inspect omits source bodies and transport payloads; source explicitly reads one retained module. Score reads the song a Run performs (from its file under the project root while it is the same song); edit writes that file in place (allocate, connect, heads, canon), compare-and-swap on its byte revision, compiled before it changes; the Run keeps the edition it was commissioned with; --check admits or refuses the edit and writes nothing. Map reads a project's map (an issue labelled wayfinder:map) through the forge: its open sub-issues are a development song's units, in waves their blocked-by gives; it writes nothing. Export renders a song, or the rows and units chosen, once into one clip the project keeps under .factory/songs; remake makes it again from the set it names; songs lists the project's clips and whether each one's set has moved. A canon edit makes a clip one unit of another song; perform runs the song a canon unit names again, each run a take: a Run of the clip's set as it was rendered, commissioned as the Run the unit stands in was.";
 fn failure(e: impl fmt::Display) -> Diagnostic {
     error("workflow.operation", e.to_string())
 }
@@ -244,13 +246,31 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
             crate::workflow_score::score(Path::new(&args[0]), &args[1].parse().map_err(failure)?)
         }
         "edit" => {
+            let check = args.iter().position(|a| a == "--check");
+            if let Some(index) = check {
+                args.remove(index);
+            }
             require_len(&args, 3)?;
             let request: Value = read_request(&args[2])?;
-            crate::workflow_score::edit(
-                Path::new(&args[0]),
-                &args[1].parse().map_err(failure)?,
-                request,
-            )
+            let run = args[1].parse().map_err(failure)?;
+            if check.is_some() {
+                crate::workflow_score::check_edit(Path::new(&args[0]), &run, request)
+            } else {
+                crate::workflow_score::edit(Path::new(&args[0]), &run, request)
+            }
+        }
+        "map" => {
+            let gh = take_option(&mut args, "--gh")?.ok_or_else(|| {
+                failure("map requires --gh <absolute gh>: the forge is read through it")
+            })?;
+            require_len(&args, 2)?;
+            let number = args[1].parse::<u64>().map_err(|_| {
+                failure(format!(
+                    "{} is no issue number: a map is read by its number",
+                    args[1]
+                ))
+            })?;
+            crate::workflow_score::map(&gh, &args[0], number)
         }
         "export" => {
             let name = take_option(&mut args, "--name")?;

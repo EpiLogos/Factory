@@ -13,6 +13,9 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "support/executable.rs"]
+mod executable;
+
 const SONG: &str = "development-and-knowledge.workflow.ts";
 
 fn fixture(name: &str) -> PathBuf {
@@ -471,4 +474,253 @@ fn help_names_the_score_and_its_edit() {
         .as_str()
         .unwrap()
         .contains("factory workflow score <state> <run-ref>"));
+}
+
+/// A forge Factory reads through its own port, faked: `gh api <endpoint>` answered from a table, with no network. An endpoint the
+/// table does not hold answers as GitHub does, Not Found.
+fn forge(dir: &Path, table: Value) -> PathBuf {
+    let answers = dir.join("forge.json");
+    fs::write(&answers, table.to_string()).unwrap();
+    let gh = dir.join("gh");
+    executable::write_executable(
+        &gh,
+        format!(
+            "#!/usr/bin/python3\nimport json,sys\nt=json.load(open({:?}))\ne=sys.argv[-1]\n\
+             if sys.argv[1:2]!=['api'] or e not in t:\n    sys.stderr.write('gh: Not Found (HTTP 404): '+e+'\\n')\n    sys.exit(1)\n\
+             print(json.dumps(t[e]))\n",
+            answers.display().to_string()
+        ),
+    );
+    gh
+}
+
+fn ticket(repo: &str, number: u64, title: &str, state: &str) -> Value {
+    json!({"number": number, "title": title, "state": state, "html_url": format!("https://github.com/{repo}/issues/{number}"),
+        "repository_url": format!("https://api.github.com/repos/{repo}"), "labels": [{"name": "wayfinder:task"}], "assignees": []})
+}
+
+fn blocked_by(repo: &str, number: u64) -> String {
+    format!("repos/{repo}/issues/{number}/dependencies/blocked_by?per_page=100")
+}
+
+const MAP_REPO: &str = "EpiLogos/O-I";
+const SUBS: &str = "repos/EpiLogos/O-I/issues/706/sub_issues?per_page=100&page=1";
+
+fn map_issue(labelled: bool) -> Value {
+    let mut map = ticket(MAP_REPO, 706, "The Living World", "open");
+    map["labels"] = if labelled {
+        json!([{"name": "wayfinder:map"}])
+    } else {
+        json!([])
+    };
+    map
+}
+
+fn the_map() -> Value {
+    json!({
+        "repos/EpiLogos/O-I/issues/706": map_issue(true),
+        SUBS: [ticket(MAP_REPO, 843, "Factory's Clip view", "open"), ticket(MAP_REPO, 844, "Songs", "open"),
+            ticket(MAP_REPO, 845, "A resolved question", "closed"), ticket(MAP_REPO, 846, "The Intent panel", "open"),
+            ticket("EpiLogos/ai-kit", 589, "Capture from a song", "open")],
+        blocked_by(MAP_REPO, 843): [],
+        blocked_by(MAP_REPO, 844): [ticket(MAP_REPO, 843, "Factory's Clip view", "open")],
+        blocked_by(MAP_REPO, 846): [ticket(MAP_REPO, 845, "A resolved question", "closed"), ticket("EpiLogos/QL-MEF", 999, "The engine's word", "open")],
+        blocked_by("EpiLogos/ai-kit", 589): [ticket(MAP_REPO, 844, "Songs", "open")],
+    })
+}
+
+fn read_map(
+    gh: &Path,
+    number: &str,
+) -> Result<Value, epilogos_factory::workflow_authoring::Diagnostic> {
+    run(&[
+        "workflow",
+        "map",
+        MAP_REPO,
+        number,
+        "--gh",
+        &gh.to_string_lossy(),
+        "--json",
+    ])
+}
+
+/// O-I #844 (manual §19.1 Songs, "A project's map gives a development song its units: each ticket is a unit"): Factory reads the
+/// project's map through the forge port it reads pull requests by. The map is a `wayfinder:map` issue; its open sub-issues are the
+/// units, in any repository; blocked-by gives the order — a unit's wave is one past the latest of the open map units that block it,
+/// a closed ticket blocks nothing, and an open blocker the map does not hold is named where its unit waits on it. Nothing is written.
+#[test]
+fn a_projects_map_gives_a_development_song_its_units_in_the_order_its_blocking_gives() {
+    let dir = tempfile::tempdir().unwrap();
+    let gh = forge(dir.path(), the_map());
+    let reading = read_map(&gh, "706").unwrap();
+    assert_eq!(reading["contract"], "factory.project-map-reading/v1");
+    assert_eq!(reading["map"]["ticket"], "github:EpiLogos/O-I:issue:706");
+    assert_eq!(reading["map"]["title"], "The Living World");
+    let units = reading["units"].as_array().unwrap();
+    let keys: Vec<&str> = units
+        .iter()
+        .map(|unit| unit["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        keys,
+        ["issue-843", "issue-846", "issue-844", "epilogos-ai-kit-589"],
+        "by wave, then by number"
+    );
+    let of = |key: &str| units.iter().find(|unit| unit["key"] == key).unwrap();
+    assert_eq!(of("issue-843")["wave"], "wave-1");
+    assert_eq!(of("issue-843")["ticket"], "github:EpiLogos/O-I:issue:843");
+    assert_eq!(of("issue-843")["title"], "Factory's Clip view");
+    assert_eq!(of("issue-844")["wave"], "wave-2");
+    assert_eq!(of("issue-844")["blockedBy"], json!(["issue-843"]));
+    assert_eq!(of("epilogos-ai-kit-589")["wave"], "wave-3");
+    assert_eq!(
+        of("epilogos-ai-kit-589")["ticket"],
+        "github:EpiLogos/ai-kit:issue:589"
+    );
+    // A closed blocker blocks nothing; an open one outside the map is where the unit waits.
+    assert_eq!(of("issue-846")["wave"], "wave-1");
+    assert_eq!(of("issue-846")["blockedBy"], json!([]));
+    assert_eq!(
+        of("issue-846")["waitsOutside"],
+        json!([{"ticket": "github:EpiLogos/QL-MEF:issue:999", "title": "The engine's word",
+        "url": "https://github.com/EpiLogos/QL-MEF/issues/999"}])
+    );
+    assert_eq!(
+        reading["waves"],
+        json!([{"wave": "wave-1", "units": ["issue-843", "issue-846"]}, {"wave": "wave-2", "units": ["issue-844"]},
+        {"wave": "wave-3", "units": ["epilogos-ai-kit-589"]}])
+    );
+    assert_eq!(
+        reading["closed"],
+        json!(["github:EpiLogos/O-I:issue:845"]),
+        "a resolved ticket is no unit"
+    );
+    assert_eq!(reading["written"], false);
+    let help = run(&["workflow", "help", "--json"]).unwrap();
+    assert!(help["commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c == "workflow.map"));
+    assert!(help["contracts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c == "factory.project-map-reading/v1"));
+}
+
+#[test]
+fn what_is_not_a_map_or_cannot_be_ordered_is_refused_in_factorys_words() {
+    let dir = tempfile::tempdir().unwrap();
+    // An issue without the label is no map.
+    let mut table = the_map();
+    table["repos/EpiLogos/O-I/issues/706"] = map_issue(false);
+    let refused = read_map(&forge(dir.path(), table), "706").unwrap_err();
+    assert_eq!(refused.code, "workflow.not_a_map");
+    assert!(
+        refused.message.contains("EpiLogos/O-I#706") && refused.message.contains("wayfinder:map"),
+        "{}",
+        refused.message
+    );
+    // Blocking that runs in a circle gives no order.
+    let mut table = the_map();
+    table[blocked_by(MAP_REPO, 843)] = json!([ticket(MAP_REPO, 844, "Songs", "open")]);
+    let refused = read_map(&forge(dir.path(), table), "706").unwrap_err();
+    assert_eq!(refused.code, "workflow.map_cycle");
+    assert!(
+        refused.message.contains("issue-843") && refused.message.contains("issue-844"),
+        "{}",
+        refused.message
+    );
+    // What the forge does not answer is said in its words.
+    let mut table = the_map();
+    table
+        .as_object_mut()
+        .unwrap()
+        .remove(&blocked_by(MAP_REPO, 846));
+    let refused = read_map(&forge(dir.path(), table), "706").unwrap_err();
+    assert_eq!(refused.code, "workflow.map_unread");
+    assert!(refused.message.contains("Not Found"), "{}", refused.message);
+    // The port is an explicit absolute gh, as Factory's pull-request reads take it; the repository is exact.
+    let refused = run(&["workflow", "map", MAP_REPO, "706", "--gh", "gh", "--json"]).unwrap_err();
+    assert!(refused.message.contains("absolute"), "{}", refused.message);
+    let gh = forge(dir.path(), the_map());
+    let refused = run(&[
+        "workflow",
+        "map",
+        "O-I",
+        "706",
+        "--gh",
+        &gh.to_string_lossy(),
+        "--json",
+    ])
+    .unwrap_err();
+    assert!(
+        refused.message.contains("owner/repository"),
+        "{}",
+        refused.message
+    );
+    assert!(run(&[
+        "workflow",
+        "map",
+        MAP_REPO,
+        "seven",
+        "--gh",
+        &gh.to_string_lossy(),
+        "--json"
+    ])
+    .is_err());
+}
+
+/// O-I #844 Compose (lead ruling, r15): a proposal is admitted by Factory before the person accepts it, and nothing is written until
+/// then — `factory workflow edit --check` compiles the edit as the write would, and answers without changing the song's file.
+#[test]
+fn an_edit_is_admitted_without_being_written_and_a_refusal_is_the_compilers() {
+    let p = anima();
+    let before = fs::read_to_string(p.root.join(SONG)).unwrap();
+    let s = score(&p);
+    let path = p.root.join("edit.json");
+    let check = |request: Value| {
+        fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let answer = run(&[
+            "workflow",
+            "edit",
+            &p.state,
+            &p.run,
+            &path.to_string_lossy(),
+            "--check",
+            "--json",
+        ]);
+        fs::remove_file(&path).unwrap();
+        answer
+    };
+    let admitted = check(
+        json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&s),
+        "edits": [{"op": "heads", "unit": "eros-verify", "heads": {"CS": "CS3"}}]}),
+    )
+    .unwrap();
+    assert_eq!(admitted["contract"], "factory.workflow-edit-receipt/v1");
+    assert_eq!(admitted["check"]["state"], "admitted");
+    assert_eq!(admitted["written"], false);
+    assert_eq!(
+        admitted["revision"],
+        revision(&s),
+        "the file's revision stands"
+    );
+    assert_eq!(admitted["changed"].as_array().map(Vec::len), Some(1));
+    assert_eq!(before, fs::read_to_string(p.root.join(SONG)).unwrap());
+    let refused = check(json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&s),
+        "edits": [{"op": "heads", "unit": "eros-verify", "heads": {"CPF": "authorised-undertaking"}}]}))
+    .unwrap_err();
+    assert_eq!(refused.code, "authoring.domain_lowering");
+    assert_eq!(before, fs::read_to_string(p.root.join(SONG)).unwrap());
+    only_the_song(&p, SONG);
+    // A written edit says so.
+    let written = edit(
+        &p,
+        json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&s),
+        "edits": [{"op": "heads", "unit": "eros-verify", "heads": {"CS": "CS3"}}]}),
+    )
+    .unwrap();
+    assert_eq!(written["written"], true);
 }
