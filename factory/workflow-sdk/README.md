@@ -227,10 +227,14 @@ names the set. The take is commissioned as the Run the canon unit stands in was
 `set`, the commission and the take Run's attempts, and the score lists a canon
 unit's `takes` (`take`, `runRef`) in order. Refused, with nothing commissioned:
 `workflow.song_take` (no such unit, a unit that is no song, another project's clip,
-a clip of chosen rows or units — a Run performs a whole song — or a Run Factory did
-not commission) and `workflow.song_set` (the set has moved since the render, is
-missing, does not compile or is another song now: remake it first). Nothing
-executes: Factory's attempt Actions start the take's units as any Run's.
+a clip of chosen rows or units — a Run performs a whole song — a Run Factory did
+not commission, a set that names its `successorOf` in another module than its
+own file, or a take number another perform commissioned first: the number is read
+before the developmental lock and its request is admitted once under it, so two
+performs never share a take — perform again for the next) and `workflow.song_set`
+(the set has moved since the render, is missing, does not compile or is another
+song now: remake it first). Nothing executes: Factory's attempt Actions start the
+take's units as any Run's.
 
 ## Evidence boundary
 
