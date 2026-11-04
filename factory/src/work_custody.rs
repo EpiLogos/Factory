@@ -29,15 +29,17 @@
 //! transition that closed it, and a reopen clears it from the record. Records
 //! closed before this law carry none and stay valid.
 //!
-//! A custody also carries how much its holder decides alone (DLW §19.4,
-//! "Software Factory owns how much it decides alone: autonomy, the review gate
-//! and what it holds"): its autonomy (suggest | review | auto), its review gate
-//! (diffs | approvals | both) and whom it escalates to. Each is set when the
-//! custody is assigned, kept verbatim, and absent until set — Factory never
-//! supplies the manual's starting value on a record nobody set. They are not
-//! changed by `update`: that command admits only the holding occupant, and the
-//! holder deciding how much it may decide alone is not this law's to grant. A
-//! hand-off does not carry them to the receiver, whose holding is its own.
+//! A custody also carries what waits for the person and whom its holder asks
+//! (DLW §19.4 Custody): its review gate (diffs | approvals | both) and whom it
+//! escalates to. Each is set when the custody is assigned, kept verbatim, and
+//! absent until set — Factory never supplies the manual's starting value on a
+//! record nobody set. They are not changed by `update`: that command admits
+//! only the holding occupant, and the holder setting what holds it is not this
+//! law's to grant. A hand-off does not carry them to the receiver, whose
+//! holding is its own. Autonomy is retired (§19.4, §19.12): Scope's Tool calls
+//! answers the harness's request to use a tool, so `assign` refuses
+//! `--autonomy` in words, and a record an earlier Factory kept with one reads
+//! with it dropped.
 
 use crate::core::run::RunRef;
 use crate::core::run::WorkflowUnitRef;
@@ -57,37 +59,12 @@ pub const FACTORY_WORK_CUSTODY_RECEIPT: &str = "factory.work-custody-receipt/v1"
 pub const FACTORY_WORK_CUSTODY_LISTING: &str = "factory.work-custody-listing/v1";
 pub const FACTORY_REFUSAL: &str = "factory.refusal/v1";
 
-pub const ASSIGN_USAGE: &str = "factory development custody assign [<state>] --position <central:position:…> --work <ref> --reason <text> [--run <run-ref> [--workflow-unit <ref>]] [--journey <ref>] [--origin-communique <ref>] [--state in-progress|blocked] [--custody <factory:custody:…>] [--autonomy suggest|review|auto] [--review-gate diffs|approvals|both] [--escalate-to <person-ref>] [--json]";
+pub const ASSIGN_USAGE: &str = "factory development custody assign [<state>] --position <central:position:…> --work <ref> --reason <text> [--run <run-ref> [--workflow-unit <ref>]] [--journey <ref>] [--origin-communique <ref>] [--state in-progress|blocked] [--custody <factory:custody:…>] [--review-gate diffs|approvals|both] [--escalate-to <person-ref>] [--json]";
+/// Why `assign` takes no `--autonomy` (DLW §19.4, §19.12).
+pub const AUTONOMY_RETIRED: &str = "--autonomy is retired (DLW §19.4, §19.12): Scope's Tool calls answers the harness's request to use a tool, and custody keeps only its review gate and whom its holder escalates to";
 pub const UPDATE_USAGE: &str = "factory development custody update [<state>] --custody <factory:custody:…> --state <in-progress|blocked|released|completed|handed-off> --reason <text> [--closure-reason handed_off_to|blocked_on|denied|canceled|no-follow-on|escalation|superseded [--closure-target <ref>]] [--reopen] [--to-position <central:position:…>] [--expected-revision N] [--json]";
 
 const CUSTODY_PREFIX: &str = "factory:custody:";
-
-/// How much the holder decides alone (DLW §19.4 Custody, Autonomy: "Suggest:
-/// the agent proposes only. Review: it works and you check each result. Auto:
-/// it works and lands changes with receipts.").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CustodyAutonomy {
-    Suggest,
-    Review,
-    Auto,
-}
-
-impl CustodyAutonomy {
-    pub const ALL: [CustodyAutonomy; 3] = [Self::Suggest, Self::Review, Self::Auto];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Suggest => "suggest",
-            Self::Review => "review",
-            Self::Auto => "auto",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|level| level.as_str() == value)
-    }
-}
 
 /// What waits for the person before a change lands (DLW §19.4 Custody, Review
 /// gate: Diffs · Approvals · Both).
@@ -331,9 +308,6 @@ pub struct FactoryWorkCustody {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handed_off_to: Option<CustodyHandoff>,
     pub transitions: Vec<CustodyTransition>,
-    /// How much the holder decides alone; absent until an assignment sets it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub autonomy: Option<CustodyAutonomy>,
     /// What waits for the person before a change lands; absent until set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_gate: Option<ReviewGate>,
@@ -345,12 +319,27 @@ pub struct FactoryWorkCustody {
     /// cleared by a reopen, absent on custody closed before the law.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closure: Option<CustodyClosure>,
+    /// The retired autonomy a record an earlier Factory kept may carry: read
+    /// and dropped, never written (AUTONOMY_RETIRED).
+    #[serde(default, rename = "autonomy", skip_serializing)]
+    pub retired: Retired,
+}
+
+/// A retired field: read from a record an earlier Factory kept, kept as
+/// nothing, and never written again.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Retired;
+
+impl<'de> Deserialize<'de> for Retired {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Retired)
+    }
 }
 
 impl FactoryWorkCustody {
     /// The settings the assignment gave, compared as one.
-    fn settings(&self) -> (Option<CustodyAutonomy>, Option<ReviewGate>, Option<&str>) {
-        (self.autonomy, self.review_gate, self.escalate_to.as_deref())
+    fn settings(&self) -> (Option<ReviewGate>, Option<&str>) {
+        (self.review_gate, self.escalate_to.as_deref())
     }
 
     /// The same obligation, regardless of when or why it was assigned.
@@ -476,7 +465,6 @@ pub struct AssignRequest {
     pub initial_state: Option<CustodyState>,
     /// Caller-chosen identity makes a retried assignment replay-safe.
     pub custody_ref: Option<String>,
-    pub autonomy: Option<CustodyAutonomy>,
     pub review_gate: Option<ReviewGate>,
     pub escalate_to: Option<String>,
 }
@@ -923,10 +911,10 @@ pub fn assign_in(
             actor: None,
             closure: None,
         }],
-        autonomy: request.autonomy,
         review_gate: request.review_gate,
         escalate_to: request.escalate_to,
         closure: None,
+        retired: Retired,
     };
     if let Some(existing) = state
         .work_custody
@@ -1206,12 +1194,12 @@ pub fn update_in(
                 actor: None,
                 closure: None,
             }],
-            // The receiver's holding is its own: how much it decides alone is
-            // not carried over from the Position that handed it off.
-            autonomy: None,
+            // The receiver's holding is its own: what holds it is not carried
+            // over from the Position that handed it off.
             review_gate: None,
             escalate_to: None,
             closure: None,
+            retired: Retired,
         });
     }
     let record = &mut state.work_custody[index];
@@ -2037,12 +2025,12 @@ mod tests {
         assert!(validate_custody_collection(&duplicated).is_err());
     }
 
-    /// DLW §19.4 Custody: "Software Factory owns how much it decides alone:
-    /// autonomy, the review gate and what it holds" — Autonomy Suggest · Review
-    /// · Auto, Review gate Diffs · Approvals · Both, Escalate to "A person".
+    /// DLW §19.4 Custody: the review gate and what the holder holds — Review
+    /// gate Diffs · Approvals · Both, Escalate to "A person". Autonomy is
+    /// retired (§19.4, §19.12): Scope's Tool calls answers the harness's
+    /// request to use a tool.
     fn settled(work: &str) -> AssignRequest {
         AssignRequest {
-            autonomy: Some(CustodyAutonomy::Suggest),
             review_gate: Some(ReviewGate::Approvals),
             escalate_to: Some("central:person:frank".into()),
             ..request(work)
@@ -2055,18 +2043,27 @@ mod tests {
         let set = assign_in(&mut state, settled("work:set"), 1)
             .unwrap()
             .custody;
-        assert_eq!(set.autonomy, Some(CustodyAutonomy::Suggest));
         assert_eq!(set.review_gate, Some(ReviewGate::Approvals));
         assert_eq!(set.escalate_to.as_deref(), Some("central:person:frank"));
         let wire = serde_json::to_value(&set).unwrap();
-        assert_eq!(wire["autonomy"], "suggest");
+        assert!(wire.get("autonomy").is_none(), "Autonomy is retired");
         assert_eq!(wire["review_gate"], "approvals");
         assert_eq!(wire["escalate_to"], "central:person:frank");
+        // A record an earlier Factory kept with the retired autonomy still
+        // reads, and drops it: nothing writes it again.
+        let mut kept = wire.clone();
+        kept["autonomy"] = serde_json::json!("suggest");
+        let read: FactoryWorkCustody = serde_json::from_value(kept).unwrap();
+        assert_eq!(read, set, "the retired autonomy is no part of the record");
+        assert!(serde_json::to_value(&read)
+            .unwrap()
+            .get("autonomy")
+            .is_none());
         let unset = assign_in(&mut state, request("work:unset"), 2)
             .unwrap()
             .custody;
         let wire = serde_json::to_value(&unset).unwrap();
-        for key in ["autonomy", "review_gate", "escalate_to"] {
+        for key in ["review_gate", "escalate_to"] {
             assert!(
                 wire.get(key).is_none(),
                 "{key}: absent until set, never the manual's starting value"
@@ -2076,14 +2073,6 @@ mod tests {
         let old: FactoryWorkCustody = serde_json::from_value(wire.clone()).unwrap();
         assert_eq!(old, unset);
         validate_custody_collection(&state.work_custody).unwrap();
-        for (value, words) in [
-            ("suggest", Some(CustodyAutonomy::Suggest)),
-            ("review", Some(CustodyAutonomy::Review)),
-            ("auto", Some(CustodyAutonomy::Auto)),
-            ("Auto", None),
-        ] {
-            assert_eq!(CustodyAutonomy::parse(value), words, "{value}");
-        }
         for (value, gate) in [
             ("diffs", Some(ReviewGate::Diffs)),
             ("approvals", Some(ReviewGate::Approvals)),
@@ -2121,7 +2110,7 @@ mod tests {
         assert_eq!(again.result, "already-applied");
         let other = AssignRequest {
             custody_ref: Some(first.custody.custody_ref.clone()),
-            autonomy: Some(CustodyAutonomy::Auto),
+            review_gate: Some(ReviewGate::Both),
             ..settled("work:r")
         };
         assert_eq!(
@@ -2158,8 +2147,8 @@ mod tests {
             .custody_ref;
         let blocked = update_in(&mut state, update(&reference, CustodyState::Blocked), 2).unwrap();
         assert_eq!(
-            blocked.custody.autonomy,
-            Some(CustodyAutonomy::Suggest),
+            blocked.custody.review_gate,
+            Some(ReviewGate::Approvals),
             "a state change keeps the holder's settings"
         );
         let handed = update_in(
@@ -2173,12 +2162,8 @@ mod tests {
         .unwrap();
         let successor = handed.successor.unwrap();
         assert_eq!(
-            (
-                successor.autonomy,
-                successor.review_gate,
-                successor.escalate_to.clone()
-            ),
-            (None, None, None),
+            (successor.review_gate, successor.escalate_to.clone()),
+            (None, None),
             "the receiver's holding is its own"
         );
         assert_eq!(handed.custody.review_gate, Some(ReviewGate::Approvals));
@@ -2209,21 +2194,24 @@ mod tests {
             args.extend(extra.iter().map(|arg| arg.to_string()));
             crate::inhabitation_cli::execute(&args, true)
         };
-        let refused = run(&["--autonomy", "sometimes"]).unwrap_err();
-        assert_eq!(refused.code, "factory.custody.usage");
-        assert!(
-            refused.fact.contains("suggest, review or auto"),
-            "{}",
-            refused.fact
-        );
+        // Autonomy is retired: assign refuses it in words, whatever it says.
+        for level in ["sometimes", "auto"] {
+            let refused = run(&["--autonomy", level]).unwrap_err();
+            assert_eq!(refused.code, "factory.custody.usage");
+            assert!(
+                refused.fact.contains("--autonomy is retired")
+                    && refused.fact.contains("Tool calls"),
+                "{}",
+                refused.fact
+            );
+        }
+        assert!(!ASSIGN_USAGE.contains("autonomy"), "{ASSIGN_USAGE}");
         assert_eq!(
             run(&["--review-gate", "everything"]).unwrap_err().code,
             "factory.custody.usage"
         );
         let answer: serde_json::Value = serde_json::from_str(
             &run(&[
-                "--autonomy",
-                "auto",
                 "--review-gate",
                 "diffs",
                 "--escalate-to",
@@ -2233,13 +2221,13 @@ mod tests {
         )
         .unwrap();
         assert_eq!(answer["schema"], FACTORY_WORK_CUSTODY_RECEIPT);
-        assert_eq!(answer["custody"]["autonomy"], "auto");
+        assert!(answer["custody"].get("autonomy").is_none());
         assert_eq!(answer["custody"]["review_gate"], "diffs");
         assert_eq!(answer["custody"]["escalate_to"], "central:person:frank");
         let kept = FactoryDevelopmentalFileProvider::open(&path).unwrap();
         assert_eq!(
-            kept.state().work_custody[0].autonomy,
-            Some(CustodyAutonomy::Auto),
+            kept.state().work_custody[0].review_gate,
+            Some(ReviewGate::Diffs),
             "kept in the developmental state"
         );
         // `update` does not take them: the holder deciding how much it decides alone is not that law's to grant.
