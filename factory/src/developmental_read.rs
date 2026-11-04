@@ -3746,7 +3746,7 @@ impl Error for FactoryDevelopmentalProviderError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::build::{
         AgencyRecord, CandidateRecord, ExecutionRecord, FactoryActionAuthority,
@@ -3763,14 +3763,14 @@ mod tests {
 
     const PROJECT: &str = "project:01ARZ3NDEKTSV4RRFFQ69G5FAE";
     const JOURNEY: &str = "journey:01ARZ3NDEKTSV4RRFFQ69G5FAD";
-    const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FAA";
+    pub(crate) const RUN: &str = "run:01ARZ3NDEKTSV4RRFFQ69G5FAA";
     const SCHEMA: &str = include_str!("../../contracts/factory/developmental-read.schema.json");
     const CASES: &str =
         include_str!("../../contracts/factory/fixtures/developmental-read-cases.json");
     const WORKFLOW_SOURCE: &str =
         include_str!("../../contracts/factory/fixtures/agent-workflow-source.json");
 
-    fn state() -> FactoryDevelopmentalState {
+    pub(crate) fn state() -> FactoryDevelopmentalState {
         let project_ref: ProjectRef = PROJECT.parse().unwrap();
         let run_ref: RunRef = RUN.parse().unwrap();
         let project = Project::new(project_ref.clone());
