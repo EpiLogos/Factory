@@ -281,7 +281,7 @@ fn render_score(
 }
 
 /// The set a clip names: the song's file under the project root, its source and the revision it was rendered at.
-fn set_of(entry: &str, loaded: &AuthoredWorkflow) -> Value {
+pub(crate) fn set_of(entry: &str, loaded: &AuthoredWorkflow) -> Value {
     let source = &loaded.source.source;
     let basis = source
         .authoring
@@ -465,7 +465,7 @@ fn selection_of(clip: &Value) -> Selection {
 }
 
 /// The set a clip names, as it now stands: loaded, or why it cannot be.
-fn set_now(root: &Path, clip: &Value) -> Result<AuthoredWorkflow, (String, String)> {
+pub(crate) fn set_now(root: &Path, clip: &Value) -> Result<AuthoredWorkflow, (String, String)> {
     let entry = clip["set"]["entry"].as_str().unwrap_or_default();
     if entry.is_empty() || !root.join(entry).is_file() {
         return Err((

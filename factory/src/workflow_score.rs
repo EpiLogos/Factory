@@ -39,15 +39,15 @@ fn failure(message: impl Into<String>) -> Diagnostic {
 }
 
 /// The song's file, when it is the song the Run performs and it compiles.
-struct Song {
+pub(crate) struct Song {
     root: PathBuf,
     file: PathBuf,
     entry: String,
-    loaded: AuthoredWorkflow,
+    pub(crate) loaded: AuthoredWorkflow,
 }
 
 /// Why the score reads the retained edition instead of a file, and the compiler's word when the file does not compile.
-struct Unplaced {
+pub(crate) struct Unplaced {
     why: String,
     diagnostic: Option<Diagnostic>,
 }
@@ -78,7 +78,7 @@ fn project_root(state_path: &Path) -> Result<PathBuf, Unplaced> {
     Ok(root.to_path_buf())
 }
 
-fn song(state_path: &Path, retained: &WorkflowSource) -> Result<Song, Unplaced> {
+pub(crate) fn song(state_path: &Path, retained: &WorkflowSource) -> Result<Song, Unplaced> {
     let basis = retained.source.authoring.as_ref().ok_or_else(|| {
         unplaced("The Run's song carries no authored basis: it was not commissioned from a source file, so no file holds it.")
     })?;
@@ -110,7 +110,7 @@ fn song(state_path: &Path, retained: &WorkflowSource) -> Result<Song, Unplaced> 
     })
 }
 
-fn retained_source(
+pub(crate) fn retained_source(
     state_path: &Path,
     run: &RunRef,
 ) -> Result<
@@ -297,6 +297,8 @@ pub fn score(state_path: &Path, run: &RunRef) -> Result<Value, Diagnostic> {
                 for (field, value) in canon {
                     drawn[field] = value;
                 }
+                // Each time the song ran again from this unit, a take of its own (`factory workflow perform`, song_take.rs).
+                drawn["takes"] = json!(crate::song_take::takes_of(&state, run, &unit.key));
             }
             drawn
         })
@@ -717,7 +719,7 @@ impl Text<'_> {
 
 /// The byte after a literal that starts at `start`: a string, an array or object (brackets matched outside strings and
 /// comments), or a bare word or number.
-fn literal_end(text: &str, start: usize) -> Option<usize> {
+pub(crate) fn literal_end(text: &str, start: usize) -> Option<usize> {
     let bytes = text.as_bytes();
     let first = *bytes.get(start)?;
     let string_end = |from: usize, quote: u8| -> Option<usize> {
@@ -979,6 +981,16 @@ fn compile_apart(song: &Song, text: &str) -> Result<AuthoredWorkflow, Diagnostic
         .authoring
         .as_ref()
         .expect("a loaded song is authored");
+    compile_modules_apart(basis, &song.entry, text)
+}
+
+/// Compile a song's modules apart from any project, its entry module's text replaced, at the same paths (a take's edition,
+/// song_take.rs, is compiled so too).
+pub(crate) fn compile_modules_apart(
+    basis: &crate::workflow_authoring::AuthoredBasis,
+    entry: &str,
+    text: &str,
+) -> Result<AuthoredWorkflow, Diagnostic> {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
@@ -993,14 +1005,14 @@ fn compile_apart(song: &Song, text: &str) -> Result<AuthoredWorkflow, Diagnostic
             if let Some(dir) = target.parent() {
                 fs::create_dir_all(dir).map_err(|e| failure(e.to_string()))?;
             }
-            let bytes = if *path == song.entry {
+            let bytes = if path == entry {
                 text
             } else {
                 module.content.as_str()
             };
             fs::write(&target, bytes).map_err(|e| failure(e.to_string()))?;
         }
-        load_workflow(&apart, Path::new(&song.entry))
+        load_workflow(&apart, Path::new(entry))
     })();
     let _ = fs::remove_dir_all(&apart);
     compiled

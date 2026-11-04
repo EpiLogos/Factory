@@ -210,6 +210,28 @@ unknown `waitsOn` or a `key` the song holds), `workflow.edit_invalid` (an agency
 `workflow.edit_stale`. Nothing is executed; the song keeps no schedule — a Run, a
 repeat or a routine performs it again.
 
+A song runs again from its canon unit, each run a take:
+
+```bash
+factory workflow perform ./factory-state.json run:… release-check --json
+```
+
+`perform` (`factory.song-take/v1`) starts a Run of the song the canon unit names:
+the set its clip names, as it was rendered (read in this project, or for an import
+in the project that made it). A song's edition runs once in a developmental state,
+so each take performs an edition of its own — the set's modules byte for byte but
+for the source's `ref`, which Factory mints for the take, and `successorOf`, which
+names the set. The take is commissioned as the Run the canon unit stands in was
+(the same project, participants and root act) under the request
+`<that Run's request>:take/<unit>/<n>`; the receipt carries `take`, `clipRef`,
+`set`, the commission and the take Run's attempts, and the score lists a canon
+unit's `takes` (`take`, `runRef`) in order. Refused, with nothing commissioned:
+`workflow.song_take` (no such unit, a unit that is no song, another project's clip,
+a clip of chosen rows or units — a Run performs a whole song — or a Run Factory did
+not commission) and `workflow.song_set` (the set has moved since the render, is
+missing, does not compile or is another song now: remake it first). Nothing
+executes: Factory's attempt Actions start the take's units as any Run's.
+
 ## Evidence boundary
 
 Repository tests exercise parsing, compiler identity, atomic admission, native
