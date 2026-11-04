@@ -647,7 +647,7 @@ fn parse_time(value: &str) -> Option<i64> {
         .map(|t| t.timestamp_millis())
 }
 
-fn valid_github_scope(scope: &str) -> bool {
+pub(crate) fn valid_github_scope(scope: &str) -> bool {
     let parts: Vec<_> = scope.split('/').collect();
     parts.len() == 2
         && parts.iter().all(|p| {

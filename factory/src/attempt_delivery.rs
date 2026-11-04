@@ -1358,7 +1358,9 @@ pub fn read_current_readiness(
     readiness_live(&store, &store.reading()?, attempt_ref)
 }
 
-fn gh(binary: &str, endpoint: String, deadline: Instant) -> Result<Value, String> {
+/// The forge port: one bounded `gh api` read through an explicit absolute `gh` (pull requests here, a project's map in
+/// workflow_score.rs).
+pub(crate) fn gh(binary: &str, endpoint: String, deadline: Instant) -> Result<Value, String> {
     if !Path::new(binary).is_absolute() {
         return Err("GitHub reader requires explicit absolute gh executable".into());
     }
