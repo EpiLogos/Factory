@@ -17,6 +17,7 @@ use serde_json::Value;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 
@@ -71,7 +72,7 @@ pub fn execute_extension(
 }
 
 fn field_help() -> &'static str {
-    "Development Field:\n  factory development field read          <ledger-root> <run-ref> [--json]\n  factory development field set           <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field operative     <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field bind-material <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field return        <ledger-root> <run-ref> [request-file|-] [--json]\n\nThe Development Field retains Factory developmental meaning and references native owner state; it does not execute Git, AIKit, Workcell or Actuation operations itself."
+    "Development Field:\n  factory development field read          <ledger-root> <run-ref> [--json]\n  factory development field <operation>   --state <state> <run-ref> [request-file|-] [--json]\n  factory development field set           <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field operative     <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field bind-material <ledger-root> <run-ref> [request-file|-] [--json]\n  factory development field return        <ledger-root> <run-ref> [request-file|-] [--json]\n\nThe Development Field retains Factory developmental meaning and references native owner state; it does not execute Git, AIKit, Workcell or Actuation operations itself. With --state in place of <ledger-root>, the Run is one the state holds, and its ledger is the one Factory keeps beside that state (<state>.development/)."
 }
 
 fn extend_capabilities(args: &[String]) -> Result<String, DevelopmentFieldCliError> {
@@ -105,29 +106,73 @@ fn extend_capabilities(args: &[String]) -> Result<String, DevelopmentFieldCliErr
     serde_json::to_string_pretty(&value).map_err(Into::into)
 }
 
+/// The development ledger Factory keeps for the Runs a developmental state
+/// holds: a directory beside the state (`<state>.development/`), as the
+/// telemetry settings sidecar sits beside it (configuration.rs
+/// telemetry_settings_path). A caller that names the state and the Run never
+/// names a ledger root; the `<ledger-root>` form stays for callers that keep
+/// their own.
+pub fn development_ledger_root(state_path: &Path) -> PathBuf {
+    let mut name = state_path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.push_str(".development");
+    state_path.with_file_name(name)
+}
+
 fn field_command(
     raw_args: &[String],
     stdin_override: Option<&str>,
 ) -> Result<String, DevelopmentFieldCliError> {
     let mut args = raw_args.to_vec();
     let json = remove_flag(&mut args, "--json");
+    let state = take_option(&mut args, "--state")?;
     let operation = args
         .first()
-        .ok_or_else(|| DevelopmentFieldCliError::new("missing Development Field operation"))?;
-    let ledger_root = args
-        .get(1)
-        .ok_or_else(|| DevelopmentFieldCliError::new("missing development ledger root"))?;
+        .ok_or_else(|| DevelopmentFieldCliError::new("missing Development Field operation"))?
+        .clone();
+    // `--state <state> <run-ref>`, or `<ledger-root> <run-ref>`.
+    let (ledger_root, run_at) =
+        match &state {
+            Some(state) => (development_ledger_root(Path::new(state)), 1),
+            None => (
+                PathBuf::from(args.get(1).ok_or_else(|| {
+                    DevelopmentFieldCliError::new("missing development ledger root")
+                })?),
+                2,
+            ),
+        };
     let run_ref = args
-        .get(2)
+        .get(run_at)
         .ok_or_else(|| DevelopmentFieldCliError::new("missing run-ref"))?;
     let run_ref = RunRef::from_str(run_ref)
         .map_err(|error| DevelopmentFieldCliError::new(format!("invalid run-ref: {error}")))?;
-    let store = FileProjectDevelopmentStore::new(ledger_root);
+    if let Some(state) = &state {
+        let provider = crate::developmental_read::FactoryDevelopmentalFileProvider::open(state)
+            .map_err(DevelopmentFieldCliError::from_native)?;
+        provider.run_reading(&run_ref).map_err(|error| {
+            DevelopmentFieldCliError::new(format!(
+                "the Factory state {state} holds no Run {run_ref}: {error}"
+            ))
+        })?;
+    }
+    let request_at = run_at + 1;
+    let store = FileProjectDevelopmentStore::new(&ledger_root);
 
     let reading = match operation.as_str() {
-        "read" => load_required(&store, &run_ref)?.development_field_reading()?,
+        "read" => match (&state, store.load(&run_ref)?) {
+            (Some(state), None) => {
+                return Err(DevelopmentFieldCliError::new(format!(
+                    "no Development Field is set for {run_ref}: the development ledger Factory keeps beside {state} ({}) holds none; `factory development field set --state {state} {run_ref}` sets it",
+                    ledger_root.display()
+                )))
+            }
+            (None, None) => load_required(&store, &run_ref)?.development_field_reading()?,
+            (_, Some(ledger)) => ledger.development_field_reading()?,
+        },
         "set" => {
-            let request_path = args.get(3).map(String::as_str).unwrap_or("-");
+            let request_path = args.get(request_at).map(String::as_str).unwrap_or("-");
             let field: DevelopmentField =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let ledger = store.transact(&run_ref, true, |ledger| {
@@ -138,7 +183,7 @@ fn field_command(
             ledger.development_field_reading()?
         }
         "operative" => {
-            let request_path = args.get(3).map(String::as_str).unwrap_or("-");
+            let request_path = args.get(request_at).map(String::as_str).unwrap_or("-");
             let operative: AikitOperativeReferences =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let ledger = store.transact(&run_ref, false, |ledger| {
@@ -149,7 +194,7 @@ fn field_command(
             ledger.development_field_reading()?
         }
         "bind-material" => {
-            let request_path = args.get(3).map(String::as_str).unwrap_or("-");
+            let request_path = args.get(request_at).map(String::as_str).unwrap_or("-");
             let binding: DevelopmentMaterialBinding =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let ledger = store.transact(&run_ref, false, |ledger| {
@@ -160,7 +205,7 @@ fn field_command(
             ledger.development_field_reading()?
         }
         "return" => {
-            let request_path = args.get(3).map(String::as_str).unwrap_or("-");
+            let request_path = args.get(request_at).map(String::as_str).unwrap_or("-");
             let returned: DevelopmentFieldReturn =
                 serde_json::from_str(&read_input(request_path, stdin_override)?)?;
             let ledger = store.transact(&run_ref, false, |ledger| {
@@ -247,6 +292,24 @@ fn render_reading(
         grade_list(&reading.remaining_proof),
         reading.latest_return_ref.as_deref().unwrap_or("none")
     ))
+}
+
+/// An option's value (`--state <state>`), taken out of the arguments.
+fn take_option(
+    args: &mut Vec<String>,
+    option: &str,
+) -> Result<Option<String>, DevelopmentFieldCliError> {
+    let Some(index) = args.iter().position(|argument| argument == option) else {
+        return Ok(None);
+    };
+    if index + 1 >= args.len() {
+        return Err(DevelopmentFieldCliError::new(format!(
+            "{option} names the developmental state that holds the Run"
+        )));
+    }
+    let value = args.remove(index + 1);
+    args.remove(index);
+    Ok(Some(value))
 }
 
 fn remove_flag(args: &mut Vec<String>, flag: &str) -> bool {
@@ -456,12 +519,72 @@ mod tests {
         assert_eq!(read.contract, DEVELOPMENT_FIELD_READING_CONTRACT);
     }
 
+    /// A Run's Development Field is set and read by the Factory state that
+    /// holds the Run (O-I 843/795, the Clip view's Intent): Factory keeps the
+    /// Run's development ledger beside that state, so a caller that knows the
+    /// state and the Run never names a ledger root. A Run the state does not
+    /// hold is refused, and a read before any Field is set says how to set it.
+    #[test]
+    fn a_runs_field_is_set_and_read_through_the_state_that_holds_it() {
+        let directory = tempdir().unwrap();
+        let state = directory.path().join("developmental.json");
+        crate::developmental_read::FactoryDevelopmentalFileProvider::create(
+            &state,
+            crate::developmental_read::tests::state(),
+        )
+        .unwrap();
+        let run = crate::developmental_read::tests::RUN;
+        let args = |operation: &str, run: &str, rest: &[&str]| -> Vec<String> {
+            let mut args: Vec<String> = ["development", "field", operation, "--state"]
+                .map(String::from)
+                .into();
+            args.push(state.display().to_string());
+            args.push(run.into());
+            args.extend(rest.iter().map(|arg| arg.to_string()));
+            args.push("--json".into());
+            args
+        };
+        let unset = execute_extension(&args("read", run, &[]), None)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            unset.contains("no Development Field is set") && unset.contains("field set --state"),
+            "{unset}"
+        );
+        let run_ref = RunRef::from_str(run).unwrap();
+        let encoded = serde_json::to_string(&field(run_ref.clone())).unwrap();
+        let set = execute_extension(&args("set", run, &["-"]), Some(&encoded))
+            .unwrap()
+            .expect("field command handled");
+        let set: DevelopmentFieldReading = serde_json::from_str(&set).unwrap();
+        assert_eq!(set.field.run_ref, run_ref);
+        let read = execute_extension(&args("read", run, &[]), None)
+            .unwrap()
+            .expect("field command handled");
+        let read: DevelopmentFieldReading = serde_json::from_str(&read).unwrap();
+        assert_eq!(read.contract, DEVELOPMENT_FIELD_READING_CONTRACT);
+        assert_eq!(
+            read.field.required_difference,
+            "Return the intended software difference with exact provenance"
+        );
+        assert!(directory
+            .path()
+            .join("developmental.json.development")
+            .join(format!("{}.json", run_ref.as_ref().id()))
+            .is_file());
+        let foreign = execute_extension(&args("read", "run:01ARZ3NDEKTSV4RRFFQ69G5FAW", &[]), None)
+            .unwrap_err()
+            .to_string();
+        assert!(foreign.contains("holds no Run"), "{foreign}");
+    }
+
     #[test]
     fn help_and_capabilities_expose_the_native_surface() {
         let help = execute_extension(&["help".into()], None)
             .unwrap()
             .expect("help handled");
         assert!(help.contains("factory development field read"));
+        assert!(help.contains("--state <state>"));
 
         let capabilities = execute_extension(&["capabilities".into(), "--json".into()], None)
             .unwrap()
