@@ -265,10 +265,13 @@ the transition that closed it. A Run that aborts names its reason the same way
 (`closureReason` on its `transition-run` Action). Closed custody reopens only with
 `--reopen`, which clears the record's closure; a hand-off names its receiver and
 creates the successor in the same write. An assignment may also set
-how much the holder decides alone (DLW §19.4): `--autonomy suggest|review|auto`,
+what waits for the person and whom the holder asks (DLW §19.4 Custody):
 `--review-gate diffs|approvals|both` and `--escalate-to <person-ref>`, kept
 verbatim on the record and absent until set; `update` does not change them, and a
-hand-off does not carry them to the receiver. `factory development
+hand-off does not carry them to the receiver. Autonomy is retired (DLW §19.4,
+§19.12: Scope's Tool calls answers the harness's request to use a tool):
+`assign` refuses `--autonomy` in words, and a record an earlier Factory kept with
+one reads with it dropped. `factory development
 current-work --position P` answers `none`, `one` or `ambiguous` from every
 in-progress custody and every running attempt whose participant names `P` — never
 from a capped list, never the most recent — and refuses to guess when relations

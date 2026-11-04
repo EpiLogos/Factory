@@ -18,8 +18,8 @@ use crate::project_development_store::read_developmental_state;
 use crate::task_activity::{parse_request, read_task_activity, TASK_ACTIVITY_USAGE};
 use crate::work_custody::{
     self, list_in, state_refusal, validate_position_ref, AssignRequest, ClosureReason,
-    CustodyAutonomy, CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate,
-    UpdateRequest, ASSIGN_USAGE, NOTHING_READ, UPDATE_USAGE,
+    CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate, UpdateRequest,
+    ASSIGN_USAGE, AUTONOMY_RETIRED, NOTHING_READ, UPDATE_USAGE,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -331,9 +331,6 @@ fn receipt_text(receipt: &CustodyReceipt) -> String {
     }
     let settings: Vec<String> = [
         record
-            .autonomy
-            .map(|level| format!("autonomy {}", level.as_str())),
-        record
             .review_gate
             .map(|gate| format!("review gate {}", gate.as_str())),
         record
@@ -361,6 +358,9 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
     match args.first().map(String::as_str) {
         Some("custody") => match args.get(1).map(String::as_str) {
             Some("assign") => {
+                if args[2..].iter().any(|argument| argument == "--autonomy") {
+                    return Err(usage_for(AUTONOMY_RETIRED, ASSIGN_USAGE));
+                }
                 let parsed = parse(
                     &args[2..],
                     &[
@@ -373,7 +373,6 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                         "--origin-communique",
                         "--state",
                         "--custody",
-                        "--autonomy",
                         "--review-gate",
                         "--escalate-to",
                     ],
@@ -390,11 +389,6 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                     origin_communique_ref: parsed.get("--origin-communique").cloned(),
                     initial_state: parsed.custody_state("--state")?,
                     custody_ref: parsed.get("--custody").cloned(),
-                    autonomy: parsed.choice(
-                        "--autonomy",
-                        CustodyAutonomy::parse,
-                        "suggest, review or auto",
-                    )?,
                     review_gate: parsed.choice(
                         "--review-gate",
                         ReviewGate::parse,
