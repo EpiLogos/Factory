@@ -311,6 +311,119 @@ fn a_unit_that_is_no_whole_song_or_whose_set_has_moved_is_refused_and_nothing_is
     assert_eq!(commissions(&taker.placed.state), before);
 }
 
+/// The maker's song, its source naming a predecessor through `prior` — a const in the song's own file, or one imported from
+/// another module of the set.
+fn with_prior(maker: &Placed, imported: bool) {
+    let file = maker.root.join(SONG);
+    let prior = "{ ref: \"workflow-source:01M399B6B0R8CJY3Y2RTG5EPWT\", revision: \"development-and-knowledge-v0\", digest: \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }";
+    let mut text = fs::read_to_string(&file).unwrap().replacen(
+        "    revision: \"development-and-knowledge-v1\",\n",
+        "    revision: \"development-and-knowledge-v1\",\n    successorOf: prior,\n",
+        1,
+    );
+    if imported {
+        fs::write(
+            maker.root.join("prior.ts"),
+            format!("export const prior = {prior};\n"),
+        )
+        .unwrap();
+        text = text.replacen("import { defineWorkflow, unit } from \"@epilogos/factory-workflow\";", "import { defineWorkflow, unit } from \"@epilogos/factory-workflow\";\nimport { prior } from \"./prior.ts\";", 1);
+    } else {
+        text = text.replacen(
+            "export default defineWorkflow({",
+            &format!("const prior = {prior};\n\nexport default defineWorkflow({{"),
+            1,
+        );
+    }
+    assert!(text.contains("successorOf: prior"));
+    fs::write(&file, text).unwrap();
+}
+
+#[test]
+fn two_performs_of_one_canon_unit_at_the_same_moment_never_share_a_take() {
+    // Both are prepared from the same state, so both would be take 1: the take is numbered under the developmental lock, and
+    // the one that comes second is refused in Factory's words, never commissioned as a second take 1.
+    let maker = placed("song-twin-maker");
+    let whole = export(&maker, "release", None);
+    let taker = performing("song-twin-taker");
+    let canon = drop_clip(&taker, &whole, "agent/anima-eros", &["eros-verify"]);
+    let run: epilogos_factory::core::run::RunRef = taker.run.parse().unwrap();
+    let state = Path::new(&taker.placed.state);
+    let before = commissions(&taker.placed.state);
+    let first = epilogos_factory::song_take::prepare(state, &run, &canon).unwrap();
+    let second = epilogos_factory::song_take::prepare(state, &run, &canon).unwrap();
+    assert_eq!(
+        (first.take, second.take),
+        (1, 1),
+        "prepared together, both read take 1"
+    );
+    let made = epilogos_factory::song_take::commission(state, first).unwrap();
+    assert_eq!(made["take"], 1);
+    let refused = epilogos_factory::song_take::commission(state, second).unwrap_err();
+    assert_eq!(refused.code, "workflow.song_take");
+    assert!(
+        refused
+            .message
+            .contains("take 1 of release was started by another perform")
+            && refused.message.ends_with("Nothing is performed."),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        commissions(&taker.placed.state),
+        before + 1,
+        "one take 1, never two"
+    );
+    assert_eq!(
+        perform(&taker, &canon).unwrap()["take"],
+        2,
+        "the next perform takes the next number"
+    );
+}
+
+#[test]
+fn a_set_that_names_its_predecessor_through_a_const_gets_a_take_that_names_the_set_it_was_made_from(
+) {
+    let maker = placed("song-const-maker");
+    with_prior(&maker, false);
+    let whole = export(&maker, "release", None);
+    let taker = performing("song-const-taker");
+    let canon = drop_clip(&taker, &whole, "agent/anima-eros", &["eros-verify"]);
+    let take = perform(&taker, &canon).unwrap();
+    let set = &take["set"];
+    assert_eq!(
+        take["source"]["authoring"]["successorOf"],
+        json!({"ref": set["sourceRef"], "revision": set["sourceRevision"], "digest": set["semanticDigest"]}),
+        "the take names the set it was made from, not the set's own predecessor"
+    );
+    assert_ne!(take["source"]["ref"], set["sourceRef"]);
+}
+
+#[test]
+fn a_set_whose_predecessor_is_written_in_another_module_is_refused_saying_why_and_nothing_is_commissioned(
+) {
+    let maker = placed("song-import-maker");
+    with_prior(&maker, true);
+    let whole = export(&maker, "release", None);
+    let taker = performing("song-import-taker");
+    let canon = drop_clip(&taker, &whole, "agent/anima-eros", &["eros-verify"]);
+    let before = commissions(&taker.placed.state);
+    let refused = perform(&taker, &canon).unwrap_err();
+    assert_eq!(refused.code, "workflow.song_take", "{}", refused.message);
+    assert!(
+        refused.message.contains("successorOf")
+            && refused.message.contains("prior.ts")
+            && refused.message.ends_with("Nothing is performed."),
+        "{}",
+        refused.message
+    );
+    assert_eq!(
+        commissions(&taker.placed.state),
+        before,
+        "nothing is commissioned"
+    );
+}
+
 #[test]
 fn help_names_perform_and_its_contract() {
     let help = run(&["workflow", "help", "--json"]).unwrap();

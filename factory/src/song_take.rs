@@ -9,12 +9,16 @@
 //!
 //! A song's edition runs once in a project's developmental state (a workflow source identity is attached once, its units' identities
 //! once), so each take performs an edition of its own: the set's own modules, byte for byte, but for the source's identity — a ref
-//! Factory mints for the take — and `successorOf`, which names the set it was made from. Nothing else of the song changes.
+//! Factory mints for the take — and `successorOf`, which names the set it was made from. Nothing else of the song changes. Both are
+//! written where the set's own file writes them (a predecessor named through a const in that file is the const's literal); a set
+//! that names its predecessor in another module is refused, naming the module, since the take cannot name the set in its place.
 //!
 //! The take is commissioned as the Run the canon unit stands in was — the same project, participants and root act — under a request
 //! of its own, `<that Run's request>:take/<unit>/<n>`, so a canon unit's takes are the commissions its requests name, numbered in
-//! order (`takes_of`, drawn on the unit in the score). Commission stamps the exact basis; nothing executes here: Factory's attempt
-//! Actions start, fork and dispatch the take's units as they do any Run's.
+//! order (`takes_of`, drawn on the unit in the score). The number is read before the developmental lock, and the request it names is
+//! admitted once under it: when two performs read the same number, the one that comes second is refused in words (`commission`) and
+//! never made a second take of that number; performing again reads the next. Commission stamps the exact basis; nothing executes
+//! here: Factory's attempt Actions start, fork and dispatch the take's units as they do any Run's.
 use crate::commission::FactoryCommissionRequest;
 use crate::core::run::RunRef;
 use crate::developmental_read::FactoryDevelopmentalState;
@@ -126,12 +130,21 @@ fn take_edition(set: &AuthoredWorkflow, request_ref: &str) -> Result<AuthoredWor
     let named =
         json!({"ref": source.reference, "revision": source.revision, "digest": source.digest})
             .to_string();
+    let prior_at = basis.locations.get("/source/successorOf");
+    if let Some(elsewhere) = prior_at.filter(|at| at.file != basis.entry) {
+        return Err(refused(format!(
+            "The song names the set it succeeds (successorOf) in {}, not in its own source ({}), so Factory cannot make a take that names the set it was made from: write successorOf in {}, then Remake the clip. {NOTHING}",
+            elsewhere.file, basis.entry, basis.entry
+        )));
+    }
+    if prior_at.is_none() && basis.successor_of.is_some() {
+        return Err(refused(format!(
+            "The song names the set it succeeds (successorOf), but not where Factory can read it in its own source ({}), so Factory cannot make a take that names the set it was made from: write successorOf as a literal in {}, then Remake the clip. {NOTHING}",
+            basis.entry, basis.entry
+        )));
+    }
     let mut edited = text.clone();
-    match basis
-        .locations
-        .get("/source/successorOf")
-        .filter(|at| at.file == basis.entry)
-    {
+    match prior_at {
         // The set names a predecessor of its own: the take names the set instead (spliced from the end, so `at` holds).
         Some(prior) => {
             let prior_end = crate::workflow_score::literal_end(text, prior.byte_offset)
@@ -155,7 +168,23 @@ fn take_edition(set: &AuthoredWorkflow, request_ref: &str) -> Result<AuthoredWor
             &format!("{}, successorOf: {named}", json!(take_ref)),
         ),
     }
-    crate::workflow_score::compile_modules_apart(basis, &basis.entry, &edited)
+    let edition = crate::workflow_score::compile_modules_apart(basis, &basis.entry, &edited)?;
+    // The edition is the take only when it names itself and the set it was made from, as spliced.
+    let made = &edition.source.source;
+    let names = made
+        .authoring
+        .as_ref()
+        .and_then(|a| a.successor_of.as_ref())
+        .map(|p| {
+            json!({"ref": p.reference, "revision": p.revision, "digest": p.digest}).to_string()
+        });
+    if made.reference.to_string() != take_ref || names.as_deref() != Some(named.as_str()) {
+        return Err(refused(format!(
+            "The take's edition of the song in {} does not name itself and the set it was made from as Factory wrote them, so it is not a take of that set. {NOTHING}",
+            basis.entry
+        )));
+    }
+    Ok(edition)
 }
 
 /// A take ready to commission: the request, the song's source, and what the receipt names of where it came from.
@@ -163,6 +192,8 @@ pub struct Take {
     pub request: FactoryCommissionRequest,
     pub source: WorkflowSource,
     pub take: u64,
+    pub unit: String,
+    pub of: RunRef,
     pub clip_ref: Value,
     pub clip: String,
     pub set: Value,
@@ -254,8 +285,57 @@ pub fn prepare(state_path: &Path, run: &RunRef, unit: &str) -> Result<Take, Diag
         request,
         source: edition.source,
         take,
+        unit: unit.to_owned(),
+        of: run.clone(),
         clip_ref: clip["clipRef"].clone(),
         clip: name.to_owned(),
         set: clip["set"].clone(),
     })
+}
+
+/// Commission a prepared take: the Run and the edition it performs as one act under the developmental lock, then its attempt
+/// store. The take's number is read before the lock, so when another perform commissioned that number first the request names a
+/// take already made (Factory refuses the same request twice) and this one is refused in words, never commissioned as a second take
+/// of that number: performing again reads the next one.
+pub fn commission(state_path: &Path, take: Take) -> Result<Value, Diagnostic> {
+    use crate::commission::{CommissionError, FactoryAdmissionStatus};
+    use crate::developmental_read::{
+        FactoryDevelopmentalFileProvider, FactoryDevelopmentalProviderError as Provider,
+    };
+    use crate::workflow_authoring::cli::{after_commission_failure, publication_failure};
+    let taken = || {
+        refused(format!(
+            "take {} of {} was started by another perform at the same moment, under the same number: perform again for the next take. {NOTHING}",
+            take.take, take.unit
+        ))
+    };
+    let receipt = match FactoryDevelopmentalFileProvider::commission_workflow(
+        state_path,
+        take.request.clone(),
+        take.source.clone(),
+    ) {
+        Err(Provider::Commission(CommissionError::ReplayConflict(_))) => return Err(taken()),
+        Err(error) => return Err(publication_failure(error)),
+        Ok(receipt) if receipt.status == FactoryAdmissionStatus::AlreadyApplied => {
+            return Err(taken())
+        }
+        Ok(receipt) => receipt,
+    };
+    let summary = crate::workflow_authoring::inspect::summary(&take.source);
+    let native_result =
+        json!({"commission": receipt, "source": summary, "execution": "not-requested"});
+    let store = crate::attempt_native_store::FileAttemptStore::attach(
+        state_path,
+        receipt.commission.run_ref.clone(),
+        &take.source.source.reference.to_string(),
+    )
+    .map_err(|error| after_commission_failure(error, &native_result))?;
+    let reading = store
+        .reading()
+        .map_err(|error| after_commission_failure(error, &native_result))?;
+    Ok(
+        json!({"contract": TAKE_CONTRACT, "take": take.take, "unit": take.unit, "of": take.of.to_string(), "clipRef": take.clip_ref,
+        "clip": take.clip, "set": take.set, "source": summary, "commission": receipt, "attempts": reading,
+        "execution": "not-requested", "nextCommand": "factory attempt action"}),
+    )
 }

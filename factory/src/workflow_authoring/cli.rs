@@ -51,14 +51,16 @@ pub const HELP: &str = "Typed native workflows:\n  factory workflow check|compil
 fn failure(e: impl fmt::Display) -> Diagnostic {
     error("workflow.operation", e.to_string())
 }
-fn publication_failure(error: impl std::error::Error + Send + Sync + 'static) -> Diagnostic {
+pub(crate) fn publication_failure(
+    error: impl std::error::Error + Send + Sync + 'static,
+) -> Diagnostic {
     let mut diagnostic = failure(&error);
     diagnostic.publication_uncertainty =
         crate::native_publication_uncertainty(&error).map(|cause| cause.details());
     diagnostic.publication_cause = Some(std::sync::Arc::new(error));
     diagnostic
 }
-fn after_commission_failure(
+pub(crate) fn after_commission_failure(
     error: impl std::error::Error + Send + Sync + 'static,
     result: &Value,
 ) -> Diagnostic {
@@ -286,27 +288,7 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
                 &args[1].parse().map_err(failure)?,
                 &args[2],
             )?;
-            let receipt = FactoryDevelopmentalFileProvider::commission_workflow(
-                &args[0],
-                take.request,
-                take.source.clone(),
-            )
-            .map_err(publication_failure)?;
-            let native_result = json!({"commission":receipt,"source":summary(&take.source),"execution":"not-requested"});
-            let store = FileAttemptStore::attach(
-                &args[0],
-                receipt.commission.run_ref.clone(),
-                &take.source.source.reference.to_string(),
-            )
-            .map_err(|error| after_commission_failure(error, &native_result))?;
-            let reading = store
-                .reading()
-                .map_err(|error| after_commission_failure(error, &native_result))?;
-            Ok(
-                json!({"contract":crate::song_take::TAKE_CONTRACT,"take":take.take,"unit":args[2],"of":args[1],"clipRef":take.clip_ref,
-                "clip":take.clip,"set":take.set,"source":summary(&take.source),"commission":receipt,"attempts":reading,
-                "execution":"not-requested","nextCommand":"factory attempt action"}),
-            )
+            crate::song_take::commission(Path::new(&args[0]), take)
         }
         "inputs" => {
             let unit = take_option(&mut args, "--unit")?
