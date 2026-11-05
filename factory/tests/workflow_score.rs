@@ -345,6 +345,136 @@ fn an_edit_the_compiler_refuses_leaves_the_song_as_it_was() {
     );
 }
 
+/// A unit in the workflow SDK's words, as Compose's first score and a map's tickets write one (O-I #844).
+fn whole_unit(key: &str, waits_on: &[&str]) -> Value {
+    json!({
+        "key": key,
+        "developmentalConcern": "Each mode's Clip panel names the constellation its clip was made of",
+        "requiredDifference": "A clip's source reads back from its owner in every mode",
+        "returnContract": "Return the panels changed and the evidence each reads its source",
+        "subjectRef": "project:quaternal-logic",
+        "basisRevision": "c624c52",
+        "agentRequirements": {"agentRefs": ["agent/anima-techne"]},
+        "praxisRefs": ["skill/personal/verification-before-completion"],
+        "capabilityRefs": ["capability/source-read"],
+        "dependencies": waits_on,
+        "permittedEffects": ["edit the shell's clip bindings"],
+        "verificationObligations": ["quote executed results"],
+        "returnAddress": "central:source:project:quaternal-logic:ProjectCentral/now",
+        "stopConditions": "Stop when a mode's owner cannot read its source",
+        "escalationConditions": "Escalate an owner that keeps no source",
+    })
+}
+
+/// A unit written whole joins the song (O-I #844: Compose writes a first score, a project's map gives a development song its
+/// units): checked without being written, then written on its row, waiting on the units it names. A key the song holds, a wait
+/// on a unit it does not hold, and a unit the compiler refuses are refused in Factory's words, the file as it was.
+#[test]
+fn a_unit_written_whole_joins_the_song_and_one_the_song_cannot_hold_is_refused() {
+    let p = anima();
+    let before = fs::read_to_string(p.root.join(SONG)).unwrap();
+    let s = score(&p);
+    let request = |edits: Value| json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&s), "edits": edits});
+    let path = p.root.join("edit.json");
+    let check = |request: Value| {
+        fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+        let answer = run(&[
+            "workflow",
+            "edit",
+            &p.state,
+            &p.run,
+            &path.to_string_lossy(),
+            "--check",
+            "--json",
+        ]);
+        fs::remove_file(&path).unwrap();
+        answer
+    };
+    // Two units in one edit, the second waiting on the first: admitted, nothing written.
+    let admitted = check(request(
+        json!([{"op": "unit", "unit": whole_unit("clip-source", &["eros-verify"])},
+        {"op": "unit", "unit": whole_unit("clip-source-walk", &["clip-source"])}]),
+    ))
+    .unwrap();
+    assert_eq!(admitted["written"], false);
+    assert_eq!(admitted["check"]["state"], "admitted");
+    assert_eq!(
+        admitted["added"],
+        json!([{"key": "clip-source", "subjectRef": "project:quaternal-logic", "form": "unit"},
+        {"key": "clip-source-walk", "subjectRef": "project:quaternal-logic", "form": "unit"}])
+    );
+    assert_eq!(before, fs::read_to_string(p.root.join(SONG)).unwrap());
+    // Refused in Factory's words: a key the song holds, a wait on no unit of it, one that waits on a unit written after it.
+    let held = check(request(
+        json!([{"op": "unit", "unit": whole_unit("eros-verify", &[])}]),
+    ))
+    .unwrap_err();
+    assert_eq!(
+        (held.code.as_str(), held.unit.as_deref()),
+        ("workflow.edit_unit", Some("eros-verify"))
+    );
+    assert!(
+        held.message.contains("already a unit of this song"),
+        "{}",
+        held.message
+    );
+    let nowhere = check(request(
+        json!([{"op": "unit", "unit": whole_unit("clip-source", &["nowhere"])}]),
+    ))
+    .unwrap_err();
+    assert_eq!(nowhere.code, "workflow.edit_unit");
+    assert!(
+        nowhere
+            .message
+            .contains("nowhere is not a unit of this song, so clip-source cannot wait on it"),
+        "{}",
+        nowhere.message
+    );
+    let later = check(request(
+        json!([{"op": "unit", "unit": whole_unit("clip-source-walk", &["clip-source"])},
+        {"op": "unit", "unit": whole_unit("clip-source", &[])}]),
+    ))
+    .unwrap_err();
+    assert_eq!(later.code, "workflow.edit_unit", "{}", later.message);
+    let keyless = check(request(
+        json!([{"op": "unit", "unit": {"developmentalConcern": "no key"}}]),
+    ))
+    .unwrap_err();
+    assert_eq!(keyless.code, "workflow.edit_invalid");
+    // The compiler's word on a unit the SDK does not admit: one that verifies nothing.
+    let mut unverified = whole_unit("clip-source", &[]);
+    unverified["verificationObligations"] = json!([]);
+    let compiler = check(request(json!([{"op": "unit", "unit": unverified}]))).unwrap_err();
+    assert!(
+        compiler.code.starts_with("authoring."),
+        "{} {}",
+        compiler.code,
+        compiler.message
+    );
+    assert_eq!(before, fs::read_to_string(p.root.join(SONG)).unwrap());
+    // Written: the unit stands in the song's file as the song writes its units, and the score reads it on its row.
+    let receipt = edit(
+        &p,
+        request(json!([{"op": "unit", "unit": whole_unit("clip-source", &["eros-verify"])}])),
+    )
+    .unwrap();
+    assert_eq!(receipt["written"], true);
+    assert_eq!(receipt["added"][0]["form"], "unit");
+    let after = fs::read_to_string(p.root.join(SONG)).unwrap();
+    assert!(
+        after.contains("unit({\n") && after.contains("\"key\": \"clip-source\""),
+        "{after}"
+    );
+    assert!(after.starts_with(
+        "// Development and knowledge: ordinary software development carried by Anima's"
+    ));
+    let read = score(&p);
+    let written = unit(&read, "clip-source");
+    assert_eq!(written["row"], "agent/anima-techne");
+    assert_eq!(revision(&read), receipt["revision"].as_str().unwrap());
+    only_the_song(&p, SONG);
+}
+
 #[test]
 fn connect_makes_a_unit_wait_on_another() {
     let p = project(

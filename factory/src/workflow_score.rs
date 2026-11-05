@@ -13,7 +13,8 @@
 //!
 //! A song's clip dropped on a track (O-I #844, `canon`) adds one unit to the song with the thread form canon: it names the clip
 //! by its ref, takes the song's words, and the score draws the clip's song inside it (song_clip.rs). A clip from another
-//! project is kept in this one as an import first, written only once the song admits the unit.
+//! project is kept in this one as an import first, written only once the song admits the unit. A unit written whole (`unit`, in
+//! the workflow SDK's words) adds a unit of the song's own: how Compose writes a first score, and how a map's tickets become units.
 //!
 //! An edit can be checked without being written (`--check`): the same compare-and-swap, splice and compile, answered with the
 //! receipt it would give and `written: false`, so a proposal (Anima's Compose, O-I #844) is admitted before anyone accepts it.
@@ -393,6 +394,12 @@ enum Edit {
         key: Option<String>,
         #[serde(default, rename = "waitsOn")]
         waits_on: Vec<String>,
+    },
+    /// A unit written whole, in the workflow SDK's words (O-I #844: Compose writes a first score, and a project's map gives a
+    /// development song its units). Its key is new to the song, it waits only on units the song holds or this request wrote
+    /// before it, and the compiler admits or refuses it as the song's own.
+    Unit {
+        unit: Value,
     },
 }
 
@@ -811,6 +818,44 @@ fn object_open(text: &str, start: usize) -> Option<usize> {
     after.starts_with('{').then(|| text.len() - after.len())
 }
 
+/// A whole unit's key: the object a unit edit writes names one.
+fn unit_key(unit: &Value) -> Result<String, Diagnostic> {
+    if !unit.is_object() {
+        return Err(error(
+            "workflow.edit_invalid",
+            "A unit edit writes a whole unit: an object in the workflow SDK's words",
+        ));
+    }
+    unit["key"]
+        .as_str()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            error(
+                "workflow.edit_invalid",
+                "A unit edit writes a whole unit, and a unit names its key",
+            )
+        })
+}
+
+/// What an edit adds to the song: the units it writes whole and the clips it drops as canon units, in its order.
+fn added_of(edits: &[Edit], canons: &[Canon]) -> Vec<Value> {
+    let mut canons = canons.iter();
+    edits
+        .iter()
+        .filter_map(|edit| match edit {
+            Edit::Unit { unit } => {
+                Some(json!({"key": unit["key"], "subjectRef": unit["subjectRef"], "form": "unit"}))
+            }
+            Edit::Canon { .. } => canons
+                .next()
+                .map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})),
+            _ => None,
+        })
+        .collect()
+}
+
 fn unit_index(source: &WorkflowSource, key: &str) -> Result<usize, Diagnostic> {
     source
         .units
@@ -842,6 +887,12 @@ fn splices(
     let mut out = Vec::new();
     let mut canons = canons.iter();
     let mut added = 0;
+    // The units the song holds, and those this request writes as it goes: a new unit's key is new, and it waits on these.
+    let mut keys = source
+        .units
+        .iter()
+        .map(|u| u.key.clone())
+        .collect::<BTreeSet<_>>();
     for edit in edits {
         match edit {
             Edit::Allocate { units, to } => {
@@ -940,8 +991,48 @@ fn splices(
                     )?);
                 }
             }
+            Edit::Unit { unit } => {
+                let key = unit_key(unit)?;
+                if !keys.insert(key.clone()) {
+                    let mut d = error(
+                        "workflow.edit_unit",
+                        format!(
+                            "{key} is already a unit of this song; name the new unit another key"
+                        ),
+                    );
+                    d.unit = Some(key);
+                    return Err(d);
+                }
+                for wait in unit["dependencies"].as_array().into_iter().flatten() {
+                    let wait = wait.as_str().unwrap_or_default();
+                    if wait == key || !keys.contains(wait) {
+                        let mut d = error(
+                            "workflow.edit_unit",
+                            format!("{wait} is not a unit of this song, so {key} cannot wait on it: a new unit waits on the units the song holds, or on those this edit wrote before it"),
+                        );
+                        d.unit = Some(key);
+                        d.field = Some("dependencies".into());
+                        return Err(d);
+                    }
+                }
+                let mut splice = writer.append(&key, "/units", source.units.len(), unit)?;
+                splice.pointer = format!("/units/{}", source.units.len() + added);
+                added += 1;
+                out.push(splice);
+            }
             Edit::Canon { .. } => {
                 let canon = canons.next().expect("every canon edit is made ready");
+                if !keys.insert(canon.key.clone()) {
+                    let mut d = error(
+                        "workflow.edit_conflict",
+                        format!(
+                            "{} is written twice in one edit; send the dropped song another key",
+                            canon.key
+                        ),
+                    );
+                    d.unit = Some(canon.key.clone());
+                    return Err(d);
+                }
                 let unit: Value =
                     serde_json::from_str(&canon.text).map_err(|e| failure(e.to_string()))?;
                 let mut splice = writer.append(&canon.key, "/units", source.units.len(), &unit)?;
@@ -1221,7 +1312,7 @@ fn edit_song(
             "revision": basis.revision,
             "edits": request.edits.len(),
             "changed": changed,
-            "added": canons.iter().map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})).collect::<Vec<_>>(),
+            "added": added_of(&request.edits, &canons),
             "check": {"state": "admitted", "by": "factory workflow check"},
             "written": false,
             "execution": "not-requested",
@@ -1265,7 +1356,7 @@ fn edit_song(
         "semanticDigest": written.source.source.digest,
         "edits": request.edits.len(),
         "changed": changed,
-        "added": canons.iter().map(|c| json!({"key": c.key, "subjectRef": c.reference, "form": "canon"})).collect::<Vec<_>>(),
+        "added": added_of(&request.edits, &canons),
         "imports": imported,
         "check": {"state": "admitted", "by": "factory workflow check"},
         "written": true,
