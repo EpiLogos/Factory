@@ -109,7 +109,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/aletheia-janus"], agentSetRefs: aletheia },
-      praxisRefs: ["skill/ql/day-night-pass"],
+      praxisRefs: ["skill/ql/prospective-retrospective-pass"],
       capabilityRefs: ["capability/wiki-read", "capability/now-read"],
       dependencies: ["anansi-blueprint"],
       independenceFrom: ["moirai-distil", "mercurius-translate"],

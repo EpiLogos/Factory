@@ -33,6 +33,10 @@ const RECEIVING_NATIVE_ACTION: &str = "central.receiving.submit";
 /// What retrying a unit is at the host: Factory's own `retry` attempt operation (`factory attempt action <state> -`), which the
 /// host authenticates against the person's grant itself (Central lists it among the host-checked actions a project grant holds).
 const RETRY_NATIVE_ACTION: &str = "factory.attempt.retry";
+/// What asking a unit's current attempt to stop is at the host: Factory's own `request-cancellation` attempt operation, which the
+/// host authenticates against the person's grant itself, as a retry (Central lists it among the host-checked actions a project
+/// grant holds). The request stops nothing by itself: Factory's lifecycle accepts it or records the process's termination.
+const CANCEL_NATIVE_ACTION: &str = "factory.attempt.request-cancellation";
 /// Where the scope comes from, said when no state is named.
 const SCOPE_RULE: &str = "the project the Run's Factory state stands in: project:<id> of the ProjectCentral manifest beside its .factory, or control:root for a state at a Central ground's own root (factory attempt admission <state>)";
 
@@ -132,6 +136,15 @@ pub fn reading_for(scope: Option<&str>) -> Value {
             "scopeRef": scope,
             "actorKind": "human",
             "meaning": "The person retries a unit: Factory's own retry operation starts a new attempt under the retry grant the unit's current attempt already consumes, with that attempt's task, parent Journey and disposition. Factory refuses a retry that needs re-resolution, in its own words.",
+        }, {
+            "actionRef": "attempt-request-cancellation",
+            "contract": FACTORY_ATTEMPT_ACTION,
+            "command": "factory attempt action <state> -",
+            "operation": "request-cancellation",
+            "nativeAction": CANCEL_NATIVE_ACTION,
+            "scopeRef": scope,
+            "actorKind": "human",
+            "meaning": "The person asks a unit's current attempt to stop: Factory's own request-cancellation operation moves its leg to cancel-requested. It stops no process by itself: Factory's lifecycle accepts the request or records the process's termination, and an attempt that is not running is refused in Factory's words.",
         }],
         "standing": "A reading of what Factory expects of a desktop caller. It grants nothing: the grant is the owner's, in the contract named here.",
     })
@@ -357,5 +370,32 @@ mod tests {
             )
         };
         assert_eq!(retry["operation"], "retry");
+    }
+
+    /// Stop after (O-I #842 round 20): a desktop asks a unit's current attempt to stop through Factory's own
+    /// `request-cancellation` operation, under its own native action, at the Run's project.
+    #[test]
+    fn a_cancellation_request_is_admitted_as_factory_s_own_operation_by_the_person() {
+        let disclosed = reading_for(Some("project:field-notes"));
+        let cancel = disclosed["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["actionRef"] == "attempt-request-cancellation")
+            .expect("a desktop's cancellation request is admitted");
+        assert_eq!(cancel["contract"], FACTORY_ATTEMPT_ACTION);
+        assert_eq!(cancel["nativeAction"], CANCEL_NATIVE_ACTION);
+        assert_eq!(cancel["actorKind"], "human");
+        assert_eq!(cancel["scopeRef"], "project:field-notes");
+        // The operation it names is Factory's own tag for RequestCancellation.
+        let tag = serde_json::to_value(
+            crate::attempt_runtime::FactoryAttemptOperation::RequestCancellation {
+                attempt_ref: "attempt:x".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(cancel["operation"], tag["operation"]);
+        assert_eq!(tag["attempt_ref"], "attempt:x", "its field is snake_case");
+        assert_ne!(CANCEL_NATIVE_ACTION, RETRY_NATIVE_ACTION);
     }
 }

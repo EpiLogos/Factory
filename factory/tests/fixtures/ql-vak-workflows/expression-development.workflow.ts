@@ -168,7 +168,7 @@ export default defineWorkflow({
       subjectRef: subject,
       basisRevision: basis,
       agentRequirements: { agentRefs: ["agent/anima-psyche"], agentSetRefs: anima },
-      praxisRefs: ["skill/ql/day-night-pass", "skill/ql/chronos-act-continuity", "skill/personal/executing-plans"],
+      praxisRefs: ["skill/ql/prospective-retrospective-pass", "skill/ql/chronos-act-continuity", "skill/personal/executing-plans"],
       capabilityRefs: ["capability/now-read", "capability/expression-inspect"],
       dependencies: ["anima-conduct"],
       inputs: [{ predecessor: "anima-conduct", receivingContextRef: "context:expression-development/psyche-from-anima" }],

@@ -18,8 +18,8 @@ use crate::project_development_store::read_developmental_state;
 use crate::task_activity::{parse_request, read_task_activity, TASK_ACTIVITY_USAGE};
 use crate::work_custody::{
     self, list_in, state_refusal, validate_position_ref, AssignRequest, ClosureReason,
-    CustodyListingFilter, CustodyReceipt, CustodyState, Refusal, ReviewGate, UpdateRequest,
-    ASSIGN_USAGE, AUTONOMY_RETIRED, NOTHING_READ, UPDATE_USAGE,
+    CustodyListingFilter, CustodyReceipt, CustodyState, HoldRequest, Refusal, ReviewGate,
+    UpdateRequest, ASSIGN_USAGE, AUTONOMY_RETIRED, HOLD_USAGE, NOTHING_READ, UPDATE_USAGE,
 };
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -32,7 +32,7 @@ pub const INHABITATION_USAGE: &str = "factory development inhabitation [<state>]
 
 pub fn help() -> String {
     format!(
-        "World inhabitation (Position custody, current work, occupant relations):\n  {ASSIGN_USAGE}\n  {UPDATE_USAGE}\n  {LIST_USAGE}\n  {CURRENT_WORK_USAGE}\n  {INHABITATION_USAGE}\n  {TASK_ACTIVITY_USAGE}\n                                    how each task stands, read from its owners' evidence; custody is read only from a named <state>\nWithout <state>, the nearest Factory project placement above the working directory is used (task-activity reads none)."
+        "World inhabitation (Position custody, current work, occupant relations):\n  {ASSIGN_USAGE}\n  {UPDATE_USAGE}\n  {LIST_USAGE}\n  {HOLD_USAGE}\n                                    a person's hold on what an agent holds, taken when they edit it and given back with Hand back\n  {CURRENT_WORK_USAGE}\n  {INHABITATION_USAGE}\n  {TASK_ACTIVITY_USAGE}\n                                    how each task stands, read from its owners' evidence; custody is read only from a named <state>\nWithout <state>, the nearest Factory project placement above the working directory is used (task-activity reads none)."
     )
 }
 
@@ -511,8 +511,29 @@ pub fn execute(args: &[String], json: bool) -> Result<String, Refusal> {
                     lines.join("\n")
                 })
             }
+            Some("hold") => {
+                let parsed = parse(&args[2..], &["--request"], false, HOLD_USAGE)?;
+                let source = parsed.required("--request")?;
+                let text = if source == "-" {
+                    std::io::read_to_string(std::io::stdin())
+                } else {
+                    std::fs::read_to_string(&source)
+                }
+                .map_err(|error| {
+                    usage_for(
+                        format!("the hold request {source} could not be read: {error}"),
+                        HOLD_USAGE,
+                    )
+                })?;
+                let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+                    usage_for(format!("the hold request is not JSON: {error}"), HOLD_USAGE)
+                })?;
+                let receipt =
+                    work_custody::hold(&state_path(&parsed)?, HoldRequest::parse(&value)?)?;
+                render(&receipt, json, || receipt_text(&receipt))
+            }
             _ => Err(usage_for(
-                "custody needs one of assign, update or list",
+                "custody needs one of assign, update, list or hold",
                 &help(),
             )),
         },

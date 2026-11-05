@@ -68,6 +68,7 @@ pub mod project_development;
 pub mod project_development_store;
 pub mod project_setup;
 pub mod prompt_pads;
+pub mod rack_macros;
 pub mod routine_continuation;
 pub mod run_lifecycle;
 pub mod sensing;
