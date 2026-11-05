@@ -198,3 +198,78 @@ fn a_write_that_is_not_a_persons_is_refused_by_the_binary_and_writes_nothing() {
     assert_eq!(document["code"], "not_human");
     assert!(std::fs::read_dir(state.path()).unwrap().next().is_none());
 }
+
+/// The rack macros owner beside the pads, in the same state directory: its two
+/// verbs are in help and capabilities, a person's turn is a receipt, and a
+/// refusal is a document on stdout with exit 2.
+#[test]
+fn a_rack_s_macros_are_read_and_turned_by_the_binary() {
+    use epilogos_factory::rack_macros::{
+        RACK_MACROS_CAPABILITY_REF, RACK_MACROS_READING, RACK_MACROS_RECEIPT, RACK_MACROS_REFUSAL,
+    };
+    let (help, _, code) = factory(&["help"], None);
+    assert_eq!(code, 0);
+    assert!(help.contains("factory development rack-macros <state> <project-ref> <space-ref>"));
+    assert!(help.contains("factory development rack-macros-write <state>"));
+    let capabilities = answer(&["capabilities", "--json"], None);
+    for command in ["development.rack-macros", "development.rack-macros-write"] {
+        assert!(capabilities["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == command));
+    }
+    for contract in [
+        RACK_MACROS_READING,
+        RACK_MACROS_RECEIPT,
+        RACK_MACROS_REFUSAL,
+    ] {
+        assert!(capabilities["nativeContracts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|value| value == contract));
+    }
+
+    let state = tempfile::tempdir().unwrap();
+    let state = state.path().to_str().unwrap();
+    let space = "session-space/o-i-rack";
+    let read = answer(
+        &[
+            "development",
+            "rack-macros",
+            state,
+            PROJECT,
+            space,
+            "--json",
+        ],
+        None,
+    );
+    assert_eq!(read["schema"], RACK_MACROS_READING);
+    assert_eq!(read["revision"], "absent");
+    let turn = |expected: &str, value: Value| {
+        json!({
+            "project_ref":PROJECT,"space_ref":space,"expected_revision":expected,
+            "act":"turn","macro":"effort","value":value,
+            "caller":{"callerRef":"oi:desk-rack-macros","projectionKind":"desktop-human","lineage":["oi:desk-rack-macros"]},
+            "authority":{"authorityRef":"central:native-action-authority#person","nativeOwner":"factory",
+                "capabilityRef":RACK_MACROS_CAPABILITY_REF,"capabilityGranted":true,"actionAuthorised":true}
+        })
+        .to_string()
+    };
+    let receipt = answer(
+        &["development", "rack-macros-write", state, "-", "--json"],
+        Some(&turn("absent", json!("high"))),
+    );
+    assert_eq!(receipt["schema"], RACK_MACROS_RECEIPT);
+    assert_eq!(receipt["macros"]["effort"], "high");
+    let (stdout, _, code) = factory(
+        &["development", "rack-macros-write", state, "-", "--json"],
+        Some(&turn("absent", json!("low"))),
+    );
+    assert_eq!(code, 2);
+    let refusal: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(refusal["schema"], RACK_MACROS_REFUSAL);
+    assert_eq!(refusal["code"], "stale_revision");
+    assert_eq!(refusal["effect"], "Nothing was changed.");
+}

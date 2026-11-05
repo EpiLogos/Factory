@@ -40,7 +40,22 @@
 //! answers the harness's request to use a tool, so `assign` refuses
 //! `--autonomy` in words, and a record an earlier Factory kept with one reads
 //! with it dropped.
+//!
+//! Hand back (DLW §19.4: "When you edit something the agent holds, the agent
+//! does not overwrite your edit. Hand back stays lit until you press it"): a
+//! person takes a hold on an open custody when they edit what it holds, and
+//! gives it back with Hand back (`custody hold`, take | give-back). The hold is
+//! kept on the record (`person_hold`), names the person and what they edited,
+//! and is no state change: the record's state, transitions and revision stand,
+//! so the occupant's own `update` is never pinned stale by it. Only a person
+//! at the desktop takes or gives back, on Factory's authority with
+//! `capability/factory/hold-custody` granted. The listing answers the light
+//! (`hand_back`): lit while a hold stands on any open record it lists.
 
+use crate::action_projection::{
+    FactoryActionCaller, FactoryActionProjectionKind, ProjectedFactoryActionAuthority,
+};
+use crate::build::FACTORY_NATIVE_OWNER;
 use crate::core::run::RunRef;
 use crate::core::run::WorkflowUnitRef;
 use crate::developmental_read::FactoryDevelopmentalState;
@@ -58,6 +73,10 @@ pub const FACTORY_WORK_CUSTODY: &str = "factory.work-custody/v1";
 pub const FACTORY_WORK_CUSTODY_RECEIPT: &str = "factory.work-custody-receipt/v1";
 pub const FACTORY_WORK_CUSTODY_LISTING: &str = "factory.work-custody-listing/v1";
 pub const FACTORY_REFUSAL: &str = "factory.refusal/v1";
+/// The capability a person presents to take or give back a hold on custody.
+pub const HOLD_CAPABILITY_REF: &str = "capability/factory/hold-custody";
+pub const HOLD_USAGE: &str = "factory development custody hold [<state>] --request <file|-> [--json]   (request: {custody_ref, act: take|give-back, reason, subject_ref?, expected_revision?, caller, authority})";
+const MAX_HOLD_TEXT: usize = 512;
 
 pub const ASSIGN_USAGE: &str = "factory development custody assign [<state>] --position <central:position:…> --work <ref> --reason <text> [--run <run-ref> [--workflow-unit <ref>]] [--journey <ref>] [--origin-communique <ref>] [--state in-progress|blocked] [--custody <factory:custody:…>] [--review-gate diffs|approvals|both] [--escalate-to <person-ref>] [--json]";
 /// Why `assign` takes no `--autonomy` (DLW §19.4, §19.12).
@@ -282,6 +301,19 @@ impl CustodyActor {
     }
 }
 
+/// A person's hold on work an agent holds (DLW §19.4 Hand back): who took it,
+/// what they edited, why, and when. Kept until they give it back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CustodyHold {
+    pub held_by: String,
+    pub authority_ref: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_ref: Option<String>,
+    pub reason: String,
+    pub taken_at_unix_ms: i64,
+}
+
 /// `factory.work-custody/v1`. Field names follow the cross-owner contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -319,6 +351,10 @@ pub struct FactoryWorkCustody {
     /// cleared by a reopen, absent on custody closed before the law.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub closure: Option<CustodyClosure>,
+    /// A person's hold on what this custody holds, while one stands (Hand
+    /// back); absent on a record nobody has taken back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub person_hold: Option<CustodyHold>,
     /// The retired autonomy a record an earlier Factory kept may carry: read
     /// and dropped, never written (AUTONOMY_RETIRED).
     #[serde(default, rename = "autonomy", skip_serializing)]
@@ -506,6 +542,279 @@ pub struct CustodyListing {
     pub filter: CustodyListingFilter,
     pub count: usize,
     pub custody: Vec<FactoryWorkCustody>,
+    /// The hand-back light over what the listing holds (DLW §19.4 Hand back:
+    /// "Lit when you edited something the agent holds").
+    pub hand_back: HandBackReading,
+}
+
+/// Lit while a person's hold stands on an open record of the listing; `held`
+/// names those records, in the listing's order.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct HandBackReading {
+    pub lit: bool,
+    pub held: Vec<String>,
+}
+
+/// Take or give back, on one custody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoldAct {
+    Take,
+    GiveBack,
+}
+
+/// `custody hold`'s request: the act, the custody, why, what was edited (on a
+/// take), the record's revision as read, and the person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HoldRequest {
+    pub custody_ref: String,
+    pub act: HoldAct,
+    pub reason: String,
+    pub subject_ref: Option<String>,
+    pub expected_revision: Option<u64>,
+    pub held_by: String,
+    pub authority_ref: String,
+}
+
+fn hold_refusal(code: &str, fact: impl Into<String>) -> Refusal {
+    Refusal::unchanged(code, fact, format!("run: {HOLD_USAGE}"))
+}
+
+fn hold_text(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    required: bool,
+) -> Result<Option<String>, Refusal> {
+    match object.get(key) {
+        None | Some(serde_json::Value::Null) if !required => Ok(None),
+        Some(serde_json::Value::String(text))
+            if !text.trim().is_empty()
+                && text.trim() == text
+                && text.chars().count() <= MAX_HOLD_TEXT
+                && !text.chars().any(char::is_control) =>
+        {
+            Ok(Some(text.clone()))
+        }
+        _ => Err(hold_refusal(
+            "factory.custody.hold_invalid",
+            format!("{key} is text of 1 to {MAX_HOLD_TEXT} characters on one line"),
+        )),
+    }
+}
+
+impl HoldRequest {
+    /// The request as `custody hold` reads it, with the person recognised as
+    /// Factory's other owner writes recognise one: a `desktop-human` caller
+    /// whose lineage ends at itself, and Factory's authority with
+    /// `capability/factory/hold-custody` granted and the act authorised.
+    pub fn parse(value: &serde_json::Value) -> Result<Self, Refusal> {
+        let object = value.as_object().ok_or_else(|| {
+            hold_refusal(
+                "factory.custody.hold_invalid",
+                "the hold request is a JSON object",
+            )
+        })?;
+        const KEYS: [&str; 7] = [
+            "custody_ref",
+            "act",
+            "reason",
+            "subject_ref",
+            "expected_revision",
+            "caller",
+            "authority",
+        ];
+        if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+            return Err(hold_refusal(
+                "factory.custody.hold_invalid",
+                format!("the hold request has no `{key}`"),
+            ));
+        }
+        let act = match object.get("act").and_then(serde_json::Value::as_str) {
+            Some("take") => HoldAct::Take,
+            Some("give-back") => HoldAct::GiveBack,
+            other => {
+                return Err(hold_refusal(
+                    "factory.custody.hold_invalid",
+                    format!(
+                        "act is take or give-back, not {}",
+                        other.unwrap_or("absent")
+                    ),
+                ))
+            }
+        };
+        let not_human = |fact: String| {
+            hold_refusal(
+                "factory.custody.not_human",
+                format!("What an agent holds is taken and given back by a person at the desktop: {fact}"),
+            )
+        };
+        let caller: FactoryActionCaller = match object.get("caller") {
+            Some(value) if !value.is_null() => {
+                serde_json::from_value(value.clone()).map_err(|error| {
+                    not_human(format!(
+                        "the caller is not a Factory action caller ({error})"
+                    ))
+                })?
+            }
+            _ => return Err(not_human("the request names no caller".into())),
+        };
+        if caller.projection_kind != FactoryActionProjectionKind::DesktopHuman
+            || caller.caller_ref.trim().is_empty()
+            || caller.lineage.last().map(String::as_str) != Some(caller.caller_ref.as_str())
+        {
+            return Err(not_human(format!(
+                "the caller {} is no desktop-human whose lineage ends at itself",
+                caller.caller_ref
+            )));
+        }
+        let authority: ProjectedFactoryActionAuthority = match object.get("authority") {
+            Some(value) if !value.is_null() => {
+                serde_json::from_value(value.clone()).map_err(|error| {
+                    hold_refusal(
+                        "factory.custody.not_authorised",
+                        format!("the authority is not a Factory authority ({error})"),
+                    )
+                })?
+            }
+            _ => {
+                return Err(hold_refusal(
+                    "factory.custody.not_authorised",
+                    "the request names no authority",
+                ))
+            }
+        };
+        if authority.native_owner != FACTORY_NATIVE_OWNER
+            || authority.capability_ref.as_deref() != Some(HOLD_CAPABILITY_REF)
+            || !authority.capability_granted
+            || !authority.action_authorised
+            || authority.authority_ref.trim().is_empty()
+        {
+            return Err(hold_refusal(
+                "factory.custody.not_authorised",
+                format!("a hold needs Factory's authority with {HOLD_CAPABILITY_REF} granted and the act authorised"),
+            ));
+        }
+        let expected_revision = match object.get("expected_revision") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(value.as_u64().filter(|revision| *revision > 0).ok_or_else(
+                || {
+                    hold_refusal(
+                        "factory.custody.hold_invalid",
+                        "expected_revision is the record's revision as read, a whole number from 1",
+                    )
+                },
+            )?),
+        };
+        let subject_ref = hold_text(object, "subject_ref", false)?;
+        if act == HoldAct::GiveBack && subject_ref.is_some() {
+            return Err(hold_refusal(
+                "factory.custody.hold_invalid",
+                "give-back takes no subject_ref: it gives back the whole hold",
+            ));
+        }
+        Ok(Self {
+            custody_ref: hold_text(object, "custody_ref", true)?.unwrap_or_default(),
+            act,
+            reason: hold_text(object, "reason", true)?.unwrap_or_default(),
+            subject_ref,
+            expected_revision,
+            held_by: caller.caller_ref,
+            authority_ref: authority.authority_ref,
+        })
+    }
+}
+
+/// Take a hold on an open custody, or give it back (Hand back). Neither
+/// changes the record's state, transitions or revision.
+pub fn hold_in(
+    state: &mut FactoryDevelopmentalState,
+    request: HoldRequest,
+    now_unix_ms: i64,
+) -> Result<CustodyReceipt, Refusal> {
+    let record = state
+        .work_custody
+        .iter_mut()
+        .find(|record| record.custody_ref == request.custody_ref)
+        .ok_or_else(|| {
+            Refusal::unchanged(
+                "factory.custody.not_found",
+                format!(
+                    "custody {} is not in this developmental state",
+                    request.custody_ref
+                ),
+                "list the retained custody with `factory development custody list <state>`",
+            )
+        })?;
+    if let Some(expected) = request.expected_revision {
+        if expected != record.revision {
+            return Err(Refusal::unchanged(
+                "factory.custody.stale_revision",
+                format!(
+                    "custody {} is at revision {}, not {expected}",
+                    record.custody_ref, record.revision
+                ),
+                "read it again with `factory development custody list <state>`",
+            ));
+        }
+    }
+    let unchanged = |record: &FactoryWorkCustody| CustodyReceipt {
+        schema: FACTORY_WORK_CUSTODY_RECEIPT.into(),
+        result: "unchanged".into(),
+        custody: record.clone(),
+        successor: None,
+    };
+    match request.act {
+        HoldAct::Take => {
+            if record.state.is_terminal() {
+                return Err(Refusal::unchanged(
+                    "factory.custody.hold_closed",
+                    format!(
+                        "custody {} is {}: the agent holds none of it, so there is nothing to take",
+                        record.custody_ref, record.state
+                    ),
+                    "take a hold only on open custody (in-progress or blocked)",
+                ));
+            }
+            if let Some(hold) = &record.person_hold {
+                if hold.held_by == request.held_by {
+                    return Ok(unchanged(record));
+                }
+                return Err(Refusal::unchanged(
+                    "factory.custody.held",
+                    format!(
+                        "custody {} is already held by {} since {}",
+                        record.custody_ref, hold.held_by, hold.taken_at_unix_ms
+                    ),
+                    "the person who holds it hands it back first",
+                ));
+            }
+            record.person_hold = Some(CustodyHold {
+                held_by: request.held_by,
+                authority_ref: request.authority_ref,
+                subject_ref: request.subject_ref,
+                reason: request.reason,
+                taken_at_unix_ms: now_unix_ms,
+            });
+        }
+        HoldAct::GiveBack => {
+            if record.person_hold.is_none() {
+                return Ok(unchanged(record));
+            }
+            record.person_hold = None;
+        }
+    }
+    record.updated_at_unix_ms = now_unix_ms;
+    Ok(CustodyReceipt {
+        schema: FACTORY_WORK_CUSTODY_RECEIPT.into(),
+        result: "applied".into(),
+        custody: record.clone(),
+        successor: None,
+    })
+}
+
+/// The published `custody hold`: one take or give-back, in the provider's lock.
+pub fn hold(path: &Path, request: HoldRequest) -> Result<CustodyReceipt, Refusal> {
+    let now = now_unix_ms();
+    transact(path, |state| hold_in(state, request, now))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -914,6 +1223,7 @@ pub fn assign_in(
         review_gate: request.review_gate,
         escalate_to: request.escalate_to,
         closure: None,
+        person_hold: None,
         retired: Retired,
     };
     if let Some(existing) = state
@@ -1199,6 +1509,7 @@ pub fn update_in(
             review_gate: None,
             escalate_to: None,
             closure: None,
+            person_hold: None,
             retired: Retired,
         });
     }
@@ -1251,12 +1562,21 @@ pub fn list_in(state: &FactoryDevelopmentalState, filter: CustodyListingFilter) 
         .cloned()
         .collect::<Vec<_>>();
     custody.sort_by(|left, right| left.custody_ref.cmp(&right.custody_ref));
+    let held = custody
+        .iter()
+        .filter(|record| !record.state.is_terminal() && record.person_hold.is_some())
+        .map(|record| record.custody_ref.clone())
+        .collect::<Vec<_>>();
     CustodyListing {
         schema: FACTORY_WORK_CUSTODY_LISTING.into(),
         project_ref: state.project_ref().to_string(),
         filter,
         count: custody.len(),
         custody,
+        hand_back: HandBackReading {
+            lit: !held.is_empty(),
+            held,
+        },
     }
 }
 
@@ -1441,6 +1761,180 @@ mod tests {
             closure_reason: matches!(to, CustodyState::Completed | CustodyState::Released)
                 .then_some(ClosureReason::NoFollowOn),
             ..UpdateRequest::default()
+        }
+    }
+
+    fn hold_request(custody_ref: &str, act: &str, extra: serde_json::Value) -> serde_json::Value {
+        let mut request = serde_json::json!({
+            "custody_ref": custody_ref, "act": act, "reason": "I edited the draft",
+            "caller": {"callerRef": "oi:desk-custody-hold", "projectionKind": "desktop-human",
+                       "lineage": ["oi:desk-custody-hold"]},
+            "authority": {"authorityRef": "central:native-action-authority#person", "nativeOwner": FACTORY_NATIVE_OWNER,
+                          "capabilityRef": HOLD_CAPABILITY_REF, "capabilityGranted": true, "actionAuthorised": true},
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            request[key] = value.clone();
+        }
+        request
+    }
+
+    #[test]
+    fn a_person_takes_a_hold_on_what_an_agent_holds_and_hand_back_gives_it_back() {
+        // DLW §19.4 Hand back: "Lit when you edited something the agent holds"; "Hand back stays lit until you press it."
+        let mut state = state();
+        let held = assign_in(&mut state, request("work:draft"), 1)
+            .unwrap()
+            .custody;
+        let other = assign_in(&mut state, request("work:notes"), 1)
+            .unwrap()
+            .custody;
+        let listing = list_in(&state, CustodyListingFilter::default());
+        assert_eq!(
+            listing.hand_back,
+            HandBackReading {
+                lit: false,
+                held: vec![]
+            }
+        );
+        let encoded = serde_json::to_value(&held).unwrap();
+        assert!(
+            encoded.get("person_hold").is_none(),
+            "a record nobody took back says nothing of a hold"
+        );
+
+        let take = HoldRequest::parse(&hold_request(
+            &held.custody_ref,
+            "take",
+            serde_json::json!({"subject_ref": "file:Work/O-I/draft.md", "expected_revision": 1}),
+        ))
+        .unwrap();
+        let receipt = hold_in(&mut state, take.clone(), 5).unwrap();
+        assert_eq!(receipt.result, "applied");
+        let hold = receipt.custody.person_hold.clone().unwrap();
+        assert_eq!(hold.held_by, "oi:desk-custody-hold");
+        assert_eq!(hold.subject_ref.as_deref(), Some("file:Work/O-I/draft.md"));
+        assert_eq!(hold.taken_at_unix_ms, 5);
+        assert_eq!(
+            receipt.custody.revision, 1,
+            "a hold is no state change: the revision stands"
+        );
+        assert_eq!(receipt.custody.transitions.len(), 1);
+        validate_custody_collection(&state.work_custody).unwrap();
+        let listing = list_in(&state, CustodyListingFilter::default());
+        assert_eq!(listing.hand_back.held, vec![held.custody_ref.clone()]);
+        assert!(listing.hand_back.lit);
+        // The same take again changes nothing.
+        assert_eq!(hold_in(&mut state, take, 6).unwrap().result, "unchanged");
+        // The occupant's own update is not made stale by the hold.
+        update_in(
+            &mut state,
+            UpdateRequest {
+                expected_revision: Some(1),
+                ..update(&held.custody_ref, CustodyState::Blocked)
+            },
+            7,
+        )
+        .unwrap();
+        assert!(
+            list_in(&state, CustodyListingFilter::default())
+                .hand_back
+                .lit,
+            "a blocked custody is still held"
+        );
+
+        let give = HoldRequest::parse(&hold_request(
+            &held.custody_ref,
+            "give-back",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        let receipt = hold_in(&mut state, give.clone(), 8).unwrap();
+        assert_eq!(receipt.result, "applied");
+        assert!(receipt.custody.person_hold.is_none());
+        assert!(
+            !list_in(&state, CustodyListingFilter::default())
+                .hand_back
+                .lit
+        );
+        assert_eq!(hold_in(&mut state, give, 9).unwrap().result, "unchanged");
+
+        // A closed custody holds nothing to take; a stale read is refused; nothing is written.
+        update_in(
+            &mut state,
+            update(&other.custody_ref, CustodyState::Completed),
+            10,
+        )
+        .unwrap();
+        let before = state.clone();
+        let closed = HoldRequest::parse(&hold_request(
+            &other.custody_ref,
+            "take",
+            serde_json::json!({}),
+        ))
+        .unwrap();
+        assert_eq!(
+            hold_in(&mut state, closed, 11).unwrap_err().code,
+            "factory.custody.hold_closed"
+        );
+        let stale = HoldRequest::parse(&hold_request(
+            &held.custody_ref,
+            "take",
+            serde_json::json!({"expected_revision": 1}),
+        ))
+        .unwrap();
+        assert_eq!(
+            hold_in(&mut state, stale, 11).unwrap_err().code,
+            "factory.custody.stale_revision"
+        );
+        assert_eq!(state, before);
+    }
+
+    #[test]
+    fn a_hold_is_taken_only_by_a_person_on_factory_s_authority() {
+        let mut agent = hold_request("factory:custody:x", "take", serde_json::json!({}));
+        agent["caller"]["projectionKind"] = serde_json::json!("situated-agent");
+        let mut ungranted = hold_request("factory:custody:x", "take", serde_json::json!({}));
+        ungranted["authority"]["capabilityGranted"] = serde_json::json!(false);
+        let mut nobody = hold_request("factory:custody:x", "take", serde_json::json!({}));
+        nobody.as_object_mut().unwrap().remove("caller");
+        for (request, code) in [
+            (agent, "factory.custody.not_human"),
+            (nobody, "factory.custody.not_human"),
+            (ungranted, "factory.custody.not_authorised"),
+            (
+                hold_request("factory:custody:x", "steal", serde_json::json!({})),
+                "factory.custody.hold_invalid",
+            ),
+            (
+                hold_request(
+                    "factory:custody:x",
+                    "give-back",
+                    serde_json::json!({"subject_ref": "file:a"}),
+                ),
+                "factory.custody.hold_invalid",
+            ),
+            (
+                hold_request(
+                    "factory:custody:x",
+                    "take",
+                    serde_json::json!({"reason": " "}),
+                ),
+                "factory.custody.hold_invalid",
+            ),
+            (
+                hold_request(
+                    "factory:custody:x",
+                    "take",
+                    serde_json::json!({"elsewhere": 1}),
+                ),
+                "factory.custody.hold_invalid",
+            ),
+        ] {
+            assert_eq!(
+                HoldRequest::parse(&request).unwrap_err().code,
+                code,
+                "{request}"
+            );
         }
     }
 

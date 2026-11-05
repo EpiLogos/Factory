@@ -22,6 +22,10 @@ fn main() -> std::process::ExitCode {
     if epilogos_factory::prompt_pads::is_pads_command(&args) {
         return epilogos_factory::prompt_pads::main(&args);
     }
+    // A rack's macros refuse the same way, as the rack's own owner.
+    if epilogos_factory::rack_macros::is_rack_macros_command(&args) {
+        return epilogos_factory::rack_macros::main(&args);
+    }
     match epilogos_factory::attempt_cli::execute(&args, None) {
         Ok(output) => {
             if !output.is_empty() {
