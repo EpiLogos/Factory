@@ -439,7 +439,9 @@ actor kind the host's grant must carry. For `attempt-receiving` that is
 attempt operation) `factory.attempt.retry`, and for
 `attempt-request-cancellation` (its own `request-cancellation`, which asks a
 unit's current attempt to stop and stops no process by itself)
-`factory.attempt.request-cancellation`, each as a `human` principal over the
+`factory.attempt.request-cancellation`, and for `attempt-launch` (its own
+`start-serial`, assembled by `factory attempt launch`, below)
+`factory.attempt.launch`, each as a `human` principal over the
 Run's own project: `project:<id>` of the ProjectCentral manifest beside the
 state's `.factory` folder, or `control:root` for a state at a Central ground's
 own root. Read without a state, each action names that rule and no scope.
@@ -449,6 +451,37 @@ It is a reading, not a grant. The grant is the owner's, in
 carries the action with its own token, which never travels in JSON. A desktop
 reads this disclosure, then presents the caller, the capability and the
 authority ref it resolved, so it invents none of them.
+
+### Launching a unit from its owners' readings: `factory attempt launch`
+
+`factory attempt launch <state> <request-json|->` takes
+`factory.attempt-launch/v1` and answers the ordinary
+`factory.attempt-action/v1` receipt of a `start-serial`. Factory assembles the
+situated execution disposition `start-serial` takes from the owners' readings
+and invents no value:
+
+- the Run, the unit's law (capabilities, praxis, effects, verification,
+  Return address, stop and escalation conditions) and the parent Journey come
+  from Factory's own state; the parent Journey is the one whose runs link the
+  Run, and a Run no Journey commissioned is refused;
+- the demand is Factory's own: the Run, the unit, its capabilities, its
+  contribution's modalities, tools and actions, and its key as the use;
+- the model, the participant (Agent, Agency, WorldBinding and the Agency
+  source's ref, revision and digest) and the body (route, harness, harness
+  composition, AgentSession and SessionSpace) come from AIKit's realisation
+  of the model on the session that carries the unit (`aikit compose
+  --realise --model <ref>`, `aikit.model-realisation/v2`), through its
+  explicit selection receipt, verified against its own basis digests. A
+  realisation without that receipt (a roster-ranked one, say) is refused
+  naming what AIKit's reading lacks;
+- a unit that names praxis carries AIKit's NOW-preparation receipt and the
+  NOW context it was resolved against; a unit whose effects write carries
+  Central's placement. Without them the ordinary admission refuses, in its
+  own words;
+- no budget is invented: none of its fields is set.
+
+The assembled Action is applied through the same store and admission as
+`attempt action`, at the revision the caller read.
 
 ## Existing development/learning intake
 

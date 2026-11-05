@@ -513,6 +513,35 @@ impl FileAttemptStore {
         Ok(basis)
     }
 
+    /// What Launch starts a unit from in Factory's own state
+    /// (attempt_application.rs `launch_action`): the Run, the compiled unit,
+    /// and the Journey the Run was commissioned from — the Journey whose runs
+    /// link it — when Factory holds one.
+    pub(crate) fn launch_basis(
+        &self,
+        unit: &crate::core::run::WorkflowUnitRef,
+    ) -> Result<LaunchBasis, FactoryAttemptError> {
+        let native = read_developmental_state(&self.path).map_err(native_error)?;
+        let view = view_for(&native, &self.run_ref)?;
+        let workflow = crate::workflow::compile_workflow(view.workflow_source.clone())?;
+        let unit = workflow
+            .units
+            .values()
+            .find(|compiled| &compiled.reference == unit)
+            .cloned()
+            .ok_or_else(|| invalid("Factory's Run holds no such workflow unit"))?;
+        let journey_ref = native
+            .journeys
+            .iter()
+            .find(|journey| journey.runs.iter().any(|link| link.run_ref == self.run_ref))
+            .map(|journey| journey.journey_ref.to_string());
+        Ok(LaunchBasis {
+            run: view.run,
+            unit,
+            journey_ref,
+        })
+    }
+
     pub fn workflow_inputs(
         &self,
         selector: &str,
@@ -695,6 +724,13 @@ impl FileAttemptStore {
             })().map_err(store_error)
         }).map_err(native_error)
     }
+}
+
+/// Factory's own basis for a Launch (`FileAttemptStore::launch_basis`).
+pub(crate) struct LaunchBasis {
+    pub(crate) run: crate::core::run::Run,
+    pub(crate) unit: crate::workflow::CompiledWorkflowUnit,
+    pub(crate) journey_ref: Option<String>,
 }
 
 pub(crate) fn view_for(

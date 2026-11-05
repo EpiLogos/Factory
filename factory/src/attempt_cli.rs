@@ -13,6 +13,7 @@ const COMMANDS: &[&str] = &[
     "attempt.read",
     "attempt.scope",
     "attempt.action",
+    "attempt.launch",
     "attempt.owner-action",
     "attempt.list",
     "attempt.task",
@@ -31,6 +32,7 @@ const COMMANDS: &[&str] = &[
     "development.attempt.read",
     "development.attempt.scope",
     "development.attempt.action",
+    "development.attempt.launch",
     "development.attempt.owner-action",
     "development.attempt.list",
     "development.attempt.task",
@@ -111,7 +113,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
         if args.first().is_some_and(|command| {
             matches!(
                 command.as_str(),
-                "init" | "attach" | "read" | "scope" | "action"
+                "init" | "attach" | "read" | "scope" | "action" | "launch"
             )
         }) {
             return crate::attempt_application::execute_attempt_cli(args, stdin)

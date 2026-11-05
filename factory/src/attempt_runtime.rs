@@ -34,7 +34,7 @@ use std::io::{self, Read};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-fn factory_admission_time() -> String {
+pub(crate) fn factory_admission_time() -> String {
     let instant: chrono::DateTime<chrono::Utc> = SystemTime::now().into();
     instant.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
@@ -2178,7 +2178,7 @@ pub fn attempt_cli_main(args: &[String]) -> std::process::ExitCode {
 }
 
 fn attempt_help() -> String {
-    "Factory native attempt operations\n\nUsage:\n  factory attempt init   <state> [seed-file|-] [--json]\n  factory attempt read   <state> [--json]\n  factory attempt scope  <state> [run-ref] [--attempt <ref>] [--json]\n  factory attempt action <state> [request-file|-] [--json]\n\nThe durable state revalidates the canonical Run/workflow/snapshot basis on every operation. Owner delivery receipts never imply verification or human acceptance.".into()
+    "Factory native attempt operations\n\nUsage:\n  factory attempt init   <state> [seed-file|-] [--json]\n  factory attempt read   <state> [--json]\n  factory attempt scope  <state> [run-ref] [--attempt <ref>] [--json]\n  factory attempt action <state> [request-file|-] [--json]\n  factory attempt launch <state> [request-file|-] [--json]\n\nThe durable state revalidates the canonical Run/workflow/snapshot basis on every operation. Owner delivery receipts never imply verification or human acceptance.".into()
 }
 
 fn render_reading(
