@@ -1,6 +1,6 @@
 use super::{
-    required, ThreadForm, VakConductPlan, VakConductPlans, VakOrchestrationError,
-    VAK_ORCHESTRATION_CONTRACT,
+    c_prime_direction, required, ThreadForm, VakConductPlan, VakConductPlans,
+    VakOrchestrationError, VAK_ORCHESTRATION_CONTRACT,
 };
 use crate::core::run::WorkflowUnitRef;
 use crate::execution_intelligence::ExecutionDisposition;
@@ -562,7 +562,8 @@ impl NativeVakPerformance {
             frame: self.plan.binding.frame.clone(),
             thread: self.plan.binding.thread.clone(),
             sequence: self.plan.binding.sequence.clone(),
-            direction: self.plan.binding.direction.clone(),
+            direction: c_prime_direction(&self.plan.binding.direction)
+                .map_or_else(|| self.plan.binding.direction.clone(), str::to_owned),
             musical_role: self.plan.binding.thread_form().musical_role().into(),
             attempts,
             chain_inputs: self

@@ -28,7 +28,8 @@ export type ThreadForm = "CFP0" | "CFP1" | "CFP2" | "CFP3" | "CFP4" | "CFP5";
 /** CS0-5: exact source-defined paired passage; direction and extent stay distinct. */
 export type ContextSequence = "CS0" | "CS1" | "CS2" | "CS3" | "CS4" | "CS5";
 
-export type InquiryDirection = "forward" | "returning";
+/** The CS direction as QL's law spells it: forward-synthesis (prospective) or returning-inquiry (retrospective). */
+export type InquiryDirection = "forward-synthesis" | "returning-inquiry";
 
 /** Musical role of each thread form. */
 export type ThreadMusicalRole = {

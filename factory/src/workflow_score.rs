@@ -22,6 +22,7 @@
 //! their blocking gives, read through the forge port and never written.
 use crate::attempt_task::coherent_read;
 use crate::core::run::RunRef;
+use crate::vak_orchestration::c_prime_direction;
 use crate::workflow::{compile_workflow, WorkflowSource, WorkflowUnitSource};
 use crate::workflow_authoring::{
     error, load_workflow, AuthoredWorkflow, Diagnostic, SourceLocation,
@@ -161,7 +162,7 @@ fn row_of(unit: &WorkflowUnitSource) -> Option<(&str, &'static str)> {
 fn heads(unit: &WorkflowUnitSource) -> Value {
     unit.composition.as_ref().map_or(Value::Null, |c| {
         json!({"CPF": c.participation, "CT": c.content, "CP": c.position, "CF": c.frame, "CFP": c.thread,
-            "CS": c.sequence, "direction": c.direction})
+            "CS": c.sequence, "direction": c_prime_direction(&c.direction).unwrap_or(&c.direction)})
     })
 }
 

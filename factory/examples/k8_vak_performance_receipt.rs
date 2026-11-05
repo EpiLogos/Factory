@@ -66,7 +66,7 @@ fn binding() -> CPrimeExecutionBinding {
         frame: "CF5".into(),
         thread: "CFP0".into(),
         sequence: "CS2".into(),
-        direction: "forward".into(),
+        direction: "forward-synthesis".into(),
         ai_kit_scope_contract: AIKIT_OPERATIVE_SCOPE_CONTRACT.into(),
         ai_kit_resolve_path_ref: "resolve-scoped-path:k8-vak-receipt".into(),
         context_resolution_ref: "context-resolution:k8-vak-receipt".into(),

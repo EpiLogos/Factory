@@ -45,7 +45,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the Expression or its subject cannot be identified",
       escalationConditions: "Escalate a request whose meaning depends on an undecided owner position",
       composition: {
-        CPF: "dialogical", CT: "CT0", CP: "4.0", CF: "CF1", CFP: "CFP2", CS: "CS1", direction: "forward",
+        CPF: "dialogical", CT: "CT0", CP: "4.0", CF: "CF1", CFP: "CFP2", CS: "CS1", direction: "forward-synthesis",
         actor: "agent/anima-nous", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/nous",
         contextResolution: "context-resolution:expression-development/nous",
@@ -70,7 +70,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the recovered ground contradicts the request",
       escalationConditions: "Escalate a constraint that only the owner can decide",
       composition: {
-        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward",
+        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/anima-logos", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/logos",
         contextResolution: "context-resolution:expression-development/logos",
@@ -97,7 +97,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate any operation that would change the original edition",
       composition: {
         CPF: "authorised-undertaking", authority: placement,
-        CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP1", CS: "CS2", direction: "forward",
+        CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP1", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/anima-eros", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/eros",
         contextResolution: "context-resolution:expression-development/eros",
@@ -123,7 +123,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the specification leaves no room for a distinct image",
       escalationConditions: "Escalate an image that changes what the work means",
       composition: {
-        CPF: "dialogical", CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP1", CS: "CS3", direction: "forward",
+        CPF: "dialogical", CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP1", CS: "CS3", direction: "forward-synthesis",
         actor: "agent/anima-mythos", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/mythos",
         contextResolution: "context-resolution:expression-development/mythos",
@@ -153,7 +153,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate publication, sharing or replacement of the original edition",
       composition: {
         CPF: "authorised-undertaking", authority: placement,
-        CT: "CT4", CP: "4.4", CF: "CF5", CFP: "CFP2", CS: "CS4", direction: "forward",
+        CT: "CT4", CP: "4.4", CF: "CF5", CFP: "CFP2", CS: "CS4", direction: "forward-synthesis",
         actor: "agent/anima", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/anima",
         contextResolution: "context-resolution:expression-development/anima",
@@ -178,7 +178,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the draft edition is not retrievable",
       escalationConditions: "Escalate continuity that would need personal or private context",
       composition: {
-        CPF: "dialogical", CT: "CT4b'", CP: "4.4", CF: "CF6", CFP: "CFP2", CS: "CS4", direction: "returning",
+        CPF: "dialogical", CT: "CT4b'", CP: "4.4", CF: "CF6", CFP: "CFP2", CS: "CS4", direction: "returning-inquiry",
         actor: "agent/anima-psyche", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/psyche",
         contextResolution: "context-resolution:expression-development/psyche",
@@ -203,7 +203,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the performed draft cannot be compared with the specification",
       escalationConditions: "Escalate a synthesis that would change authored ground",
       composition: {
-        CPF: "dialogical", CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "returning",
+        CPF: "dialogical", CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "returning-inquiry",
         actor: "agent/anima-sophia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/sophia",
         contextResolution: "context-resolution:expression-development/sophia",
@@ -229,7 +229,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate Recognition decisions to the owner; never promote on its own",
       composition: {
         CPF: "authorised-undertaking", authority: returnDoor,
-        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning",
+        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning-inquiry",
         actor: "agent/aletheia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:expression-development/aletheia",
         contextResolution: "context-resolution:expression-development/aletheia",

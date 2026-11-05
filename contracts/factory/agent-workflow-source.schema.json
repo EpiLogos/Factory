@@ -659,8 +659,8 @@
         },
         "direction": {
           "enum": [
-            "forward",
-            "returning"
+            "forward-synthesis",
+            "returning-inquiry"
           ]
         },
         "aiKitScopeContract": {
