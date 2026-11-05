@@ -14,7 +14,10 @@ use std::path::Path;
 pub const TASK_READING: &str = "factory.attempt-task-reading/v1";
 pub const TASK_LIST_READING: &str = "factory.attempt-task-list-reading/v1";
 pub const RETURN_READING: &str = "factory.attempt-return-reading/v1";
+pub const TASK_UNITS_READING: &str = "factory.attempt-task-units-reading/v1";
 const MAX_PAGE: usize = 100;
+/// The most units one task's reading names. A task standing on more is read Run by Run (`attempt task`), never cut short.
+pub const MAX_TASK_UNITS: usize = 100;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -209,6 +212,68 @@ pub fn read_task_list(path: &Path, run: &RunRef) -> Result<Value, String> {
     }))
 }
 
+/// Where a task stands in Factory: each Run and workflow unit its retained attempts stand on, with the unit's current
+/// attempt and status as the Run's leg has them (O-I #772: a task clip's and a chain's Retry, Launch and Stop after
+/// address a unit of a Run, and only Factory knows which). A task Factory retains no attempt for stands on none: that is
+/// an answer, not a refusal. Read only: no Run, attempt or leg is touched.
+pub fn read_task_units(path: &Path, task_ref: &str) -> Result<Value, String> {
+    if task_ref.trim().is_empty() || task_ref != task_ref.trim() {
+        return Err("a task ref is required, without surrounding space".into());
+    }
+    let state = read_developmental_state(path).map_err(|error| error.to_string())?;
+    let mut units = Vec::new();
+    let mut runs_read = 0usize;
+    for run in state.attempt_states.keys() {
+        let (_, reading) = coherent_read(path, run)?;
+        runs_read += 1;
+        let mut by_unit: BTreeMap<&crate::core::run::WorkflowUnitRef, Vec<&FactoryAttemptRecord>> =
+            BTreeMap::new();
+        for attempt in reading
+            .attempts
+            .iter()
+            .filter(|attempt| attempt.task_ref == task_ref)
+        {
+            by_unit
+                .entry(&attempt.workflow_unit_ref)
+                .or_default()
+                .push(attempt);
+        }
+        for (unit, attempts) in by_unit {
+            let leg = reading.legs.get(unit);
+            let current = attempts.iter().find(|attempt| {
+                let execution = attempt
+                    .execution_ref
+                    .as_deref()
+                    .unwrap_or(&attempt.reserved_execution_ref);
+                leg.is_some_and(|leg| leg.execution_ref == execution)
+            });
+            units.push(json!({
+                "runRef": run,
+                "workflowUnitRef": unit,
+                "currentAttemptRef": current.map(|attempt| attempt.attempt_ref.clone()),
+                "status": if current.is_some() { leg.map(|leg| json!(leg.status)) } else { None },
+                "attempts": attempts.len(),
+                "runRevision": reading.run_revision,
+                "required": reading.required_units.contains(unit),
+            }));
+            if units.len() > MAX_TASK_UNITS {
+                return Err(format!(
+                    "task {task_ref} stands on more than {MAX_TASK_UNITS} units; read it Run by Run with `factory attempt task <state> <run-ref> {task_ref}`"
+                ));
+            }
+        }
+    }
+    let total = units.len();
+    Ok(json!({
+        "contract": TASK_UNITS_READING,
+        "projectRef": state.build.project().reference(),
+        "taskRef": task_ref,
+        "runsRead": runs_read,
+        "units": units,
+        "totalUnits": total,
+    }))
+}
+
 pub fn read_return(path: &Path, run: &RunRef, attempt_ref: &str) -> Result<Value, String> {
     let (state, reading) = coherent_read(path, run)?;
     let attempt = reading
@@ -242,6 +307,32 @@ fn text(value: &Value) -> &str {
 }
 
 pub fn render_reading(value: &Value) -> String {
+    if value["contract"].as_str() == Some(TASK_UNITS_READING) {
+        let mut lines = vec![format!(
+            "{}\nProject: {}\nTask: {}\nRuns read: {}\nUnits ({}):",
+            TASK_UNITS_READING,
+            text(&value["projectRef"]),
+            text(&value["taskRef"]),
+            value["runsRead"],
+            value["totalUnits"]
+        )];
+        for unit in value["units"].as_array().into_iter().flatten() {
+            lines.push(format!(
+                "  {} · {} — {} ({}, {} attempt(s))",
+                text(&unit["runRef"]),
+                text(&unit["workflowUnitRef"]),
+                unit["currentAttemptRef"]
+                    .as_str()
+                    .unwrap_or("no current attempt"),
+                unit["status"].as_str().unwrap_or("no status"),
+                unit["attempts"]
+            ));
+        }
+        if value["totalUnits"] == 0 {
+            lines.push("  none: Factory retains no attempt for this task".into());
+        }
+        return lines.join("\n");
+    }
     if value["contract"].as_str() == Some(TASK_LIST_READING) {
         let tasks = strings(&value["taskRefs"]);
         return format!(
@@ -308,13 +399,27 @@ pub fn render_reading(value: &Value) -> String {
 
 pub fn execute_cli(args: &[String]) -> Result<String, String> {
     let operation = args.first().map(String::as_str).unwrap_or_default();
+    if operation == "units" {
+        let usage = "Usage: factory attempt units <state> <task-ref> [--json]";
+        let (state, task) = match args {
+            [_, state, task] => (state, task),
+            [_, state, task, flag] if flag == "--json" => (state, task),
+            _ => return Err(usage.into()),
+        };
+        let reading = read_task_units(Path::new(state), task)?;
+        return if args.len() == 4 {
+            serde_json::to_string_pretty(&reading).map_err(|error| error.to_string())
+        } else {
+            Ok(render_reading(&reading))
+        };
+    }
     let required = match operation {
         "list" => 3,
         "task" | "return" => 4,
         _ => 0,
     };
     if required == 0 || args.len() < required {
-        return Err("Usage: factory attempt list <state> <run-ref> [--json] | factory attempt task|return <state> <run-ref> <task-ref|attempt-ref> [--json] [--limit N] [--cursor JSON]".into());
+        return Err("Usage: factory attempt list <state> <run-ref> [--json] | factory attempt task|return <state> <run-ref> <task-ref|attempt-ref> [--json] [--limit N] [--cursor JSON] | factory attempt units <state> <task-ref> [--json]".into());
     }
     let run: RunRef = args[2]
         .parse()

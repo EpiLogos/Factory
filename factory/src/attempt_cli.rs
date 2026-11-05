@@ -56,6 +56,7 @@ const CONTRACTS: &[&str] = &[
     crate::attempt_task::TASK_LIST_READING,
     crate::attempt_task::TASK_READING,
     crate::attempt_task::RETURN_READING,
+    crate::attempt_task::TASK_UNITS_READING,
     ARTIFACT_READING,
     crate::attempt_admission::ADMISSION_READING,
     crate::attempt_receiving::RECEIVING_ACTION,
@@ -134,7 +135,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
                 crate::attempt_owner_cli::execute_attempt_owner_cli(&args[1..], stdin)
                     .map_err(|error| error.to_string())
             }
-            Some("list" | "task" | "return") => crate::attempt_task::execute_cli(args),
+            Some("list" | "task" | "return" | "units") => crate::attempt_task::execute_cli(args),
             Some("receiving") => crate::attempt_receiving::execute_cli(&args[1..], stdin)
                 .map_err(|error| error.to_string()),
             Some("decision") => crate::attempt_native_receiving::execute_cli(&args[1..], stdin)
@@ -206,7 +207,7 @@ pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError>
 }
 
 fn task_help() -> &'static str {
-    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt artifacts <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt admission [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
+    "Native task and Return readings:\n  factory attempt prepare <state> <request-json|-> [--json]\n  factory attempt list <state> <run-ref> [--json]\n  factory attempt task <state> <run-ref> <task-ref> [--json] [--limit 1..100] [--cursor JSON]\n  factory attempt units <state> <task-ref> [--json]\n  factory attempt return <state> <run-ref> <attempt-ref> [--json]\n  factory attempt artifacts <state> <run-ref> <attempt-ref> [--json]\n  factory attempt receiving <state> <request-json|-> [--json]\n  factory attempt admission [--json]\n  factory attempt learn <state> <request-json|-> [--json]\n  factory attempt material <state> <request-json|-> [--json]\n\nThe development.attempt alias uses the same native operations. Page cursors pin the provider revision. Telemetry values come only from owner-validated correlations; missing observations are not zero usage. Receiving and archive links are not human Recognition or lifecycle proof."
 }
 
 // ---------------------------------------------------------------------------
