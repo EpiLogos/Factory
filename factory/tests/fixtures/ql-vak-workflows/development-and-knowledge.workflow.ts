@@ -43,7 +43,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the request needs an owner decision before it can be scoped",
       escalationConditions: "Escalate scope that crosses another repository's ownership",
       composition: {
-        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward",
+        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/anima-logos", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/logos",
         contextResolution: "context-resolution:development-and-knowledge/logos",
@@ -69,7 +69,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate any change to protected or authored ground",
       composition: {
         CPF: "authorised-undertaking", authority: placement,
-        CT: "CT2", CP: "4.2", CF: "CF5", CFP: "CFP2", CS: "CS2", direction: "forward",
+        CT: "CT2", CP: "4.2", CF: "CF5", CFP: "CFP2", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/anima-techne-helper", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/techne",
         contextResolution: "context-resolution:development-and-knowledge/techne",
@@ -94,7 +94,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the branch cannot be built",
       escalationConditions: "Escalate a gate that cannot be run in the available environment",
       composition: {
-        CPF: "dialogical", CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP2", CS: "CS2", direction: "returning",
+        CPF: "dialogical", CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP2", CS: "CS2", direction: "returning-inquiry",
         actor: "agent/anima-eros", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/eros",
         contextResolution: "context-resolution:development-and-knowledge/eros",
@@ -120,7 +120,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate a defect whose repair belongs to another owner",
       composition: {
         CPF: "authorised-undertaking", authority: placement,
-        CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP2", CS: "CS3", direction: "returning",
+        CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP2", CS: "CS3", direction: "returning-inquiry",
         actor: "agent/anima-mythos", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/mythos",
         contextResolution: "context-resolution:development-and-knowledge/mythos",
@@ -146,7 +146,7 @@ export default defineWorkflow({
       escalationConditions: "Escalate a protected-branch or permission refusal",
       composition: {
         CPF: "authorised-undertaking", authority: placement,
-        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "returning",
+        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "returning-inquiry",
         actor: "agent/anima-sophia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/sophia",
         contextResolution: "context-resolution:development-and-knowledge/sophia",
@@ -172,7 +172,7 @@ export default defineWorkflow({
       escalationConditions: "Never edit wiki.json directly; escalate promotion decisions to the wiki owner",
       composition: {
         CPF: "authorised-undertaking", authority: returnDoor,
-        CT: "CT4b'", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning",
+        CT: "CT4b'", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning-inquiry",
         actor: "agent/aletheia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:development-and-knowledge/aletheia",
         contextResolution: "context-resolution:development-and-knowledge/aletheia",

@@ -6,6 +6,7 @@ use crate::commission::FactoryCommissionRequest;
 use crate::core::run::RunRef;
 use crate::developmental_read::FactoryDevelopmentalFileProvider;
 use crate::project_development_store::read_developmental_state;
+use crate::vak_orchestration::c_prime_direction;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::{Read, Write};
@@ -189,7 +190,7 @@ pub fn execute(raw: &[String]) -> Result<Value, Diagnostic> {
                     if let Some(c)=&u.composition {
                         unit["composition"]=json!({"contract":c.contract,"actorRef":c.actor_ref,"frame":c.frame,
                             "thread":c.thread,"threadForm":c.thread_form().musical_role(),"sequence":c.sequence,
-                            "direction":c.direction,"participation":c.participation,"content":c.content,"position":c.position,
+                            "direction":c_prime_direction(&c.direction).unwrap_or(&c.direction),"participation":c.participation,"content":c.content,"position":c.position,
                             "qlBindingRef":c.ql_binding_ref,"qlBindingRevision":c.ql_binding_revision,"wholeRef":c.whole_ref});
                     }
                     unit

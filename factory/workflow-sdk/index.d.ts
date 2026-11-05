@@ -132,7 +132,7 @@ export type CPrimeExecutionBinding = {
   readonly frame: "CF1" | "CF2" | "CF3" | "CF4" | "CF5" | "CF6" | "CF7";
   readonly thread: "CFP0" | "CFP1" | "CFP2" | "CFP3" | "CFP4" | "CFP5";
   readonly sequence: "CS0" | "CS1" | "CS2" | "CS3" | "CS4" | "CS5";
-  readonly direction: "forward" | "returning";
+  readonly direction: "forward-synthesis" | "returning-inquiry";
   readonly aiKitScopeContract: "aikit.operative-scope/v1";
   readonly aiKitResolvePathRef: NonEmpty;
   readonly contextResolutionRef: NonEmpty;

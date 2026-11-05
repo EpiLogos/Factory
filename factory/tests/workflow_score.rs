@@ -205,7 +205,7 @@ fn the_score_is_the_song_its_run_performs() {
     assert_eq!(eros["dependencies"], json!(["techne-implement"]));
     assert_eq!(
         eros["heads"],
-        json!({"CPF": "dialogical", "CT": "CT2", "CP": "4.2", "CF": "CF3", "CFP": "CFP2", "CS": "CS2", "direction": "returning"})
+        json!({"CPF": "dialogical", "CT": "CT2", "CP": "4.2", "CF": "CF3", "CFP": "CFP2", "CS": "CS2", "direction": "returning-inquiry"})
     );
     assert_eq!(
         eros["concern"],
@@ -342,6 +342,59 @@ fn an_edit_the_compiler_refuses_leaves_the_song_as_it_was() {
     assert_eq!(
         (heads["CS"].as_str(), heads["CP"].as_str()),
         (Some("CS3"), Some("4.3"))
+    );
+}
+
+#[test]
+fn a_units_direction_is_qls_label_and_a_song_written_before_reads_as_it() {
+    // QL's law spells a direction `forward-synthesis` or `returning-inquiry`, the Vāk block's labels: the fill AIKit's decision
+    // model picks among them is written as it stands (it was refused, InvalidCPrimeProfile, while Factory spelled `returning`).
+    let p = anima();
+    let s = score(&p);
+    let receipt = edit(&p, json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&s),
+        "edits": [{"op": "heads", "unit": "logos-scope-plan", "heads": {"direction": "returning-inquiry"}}]}))
+    .unwrap();
+    assert_eq!(receipt["check"]["state"], "admitted");
+    assert_eq!(
+        unit(&score(&p), "logos-scope-plan")["heads"]["direction"],
+        "returning-inquiry"
+    );
+    let refused = edit(&p, json!({"contract": "factory.workflow-edit/v1", "expectedRevision": revision(&score(&p)),
+        "edits": [{"op": "heads", "unit": "logos-scope-plan", "heads": {"direction": "ascending"}}]}))
+    .unwrap_err();
+    assert_eq!(refused.code, "authoring.domain_lowering");
+    // A song written before the law's spelling reached Factory still compiles, and its score reads each direction as QL's label.
+    let dir = tempfile::tempdir().unwrap();
+    let older = dir.path().join(SONG);
+    let text = fs::read_to_string(fixture(SONG)).unwrap();
+    fs::write(
+        &older,
+        text.replace("direction: \"forward-synthesis\"", "direction: \"forward\"")
+            .replace(
+                "direction: \"returning-inquiry\"",
+                "direction: \"returning\"",
+            ),
+    )
+    .unwrap();
+    let before = project(
+        &older,
+        SONG,
+        "agent/anima-logos",
+        ANIMA,
+        "project:quaternal-logic",
+        true,
+    );
+    let read = score(&before);
+    assert!(fs::read_to_string(before.root.join(SONG))
+        .unwrap()
+        .contains("direction: \"forward\""));
+    assert_eq!(
+        unit(&read, "logos-scope-plan")["heads"]["direction"],
+        "forward-synthesis"
+    );
+    assert_eq!(
+        unit(&read, "eros-verify")["heads"]["direction"],
+        "returning-inquiry"
     );
 }
 

@@ -17,7 +17,20 @@ pub const C_PRIME_POSITION: [&str; 6] = ["4.0", "4.1", "4.2", "4.3", "4.4", "4.5
 pub const C_PRIME_FRAME: [&str; 7] = ["CF1", "CF2", "CF3", "CF4", "CF5", "CF6", "CF7"];
 pub const C_PRIME_THREAD: [&str; 6] = ["CFP0", "CFP1", "CFP2", "CFP3", "CFP4", "CFP5"];
 pub const C_PRIME_SEQUENCE: [&str; 6] = ["CS0", "CS1", "CS2", "CS3", "CS4", "CS5"];
-pub const C_PRIME_DIRECTION: [&str; 2] = ["forward", "returning"];
+pub const C_PRIME_DIRECTION: [&str; 2] = ["forward-synthesis", "returning-inquiry"];
+/// The direction a unit written before QL's law spelled it carries (`forward`,
+/// `returning`): Factory reads it as the law's label and writes only the law's.
+const C_PRIME_DIRECTION_BEFORE: [&str; 2] = ["forward", "returning"];
+
+/// The law's label for a direction a unit or a binding carries, whether it is
+/// written in the law's spelling or the one before it; `None` for any other.
+pub fn c_prime_direction(label: &str) -> Option<&'static str> {
+    C_PRIME_DIRECTION
+        .iter()
+        .zip(C_PRIME_DIRECTION_BEFORE)
+        .find(|(law, before)| label == **law || label == *before)
+        .map(|(law, _)| *law)
+}
 
 pub(crate) fn required(value: &str, field: &'static str) -> Result<(), VakOrchestrationError> {
     if value.trim().is_empty() || value.len() > 16_384 || value.contains('\0') {
@@ -78,7 +91,7 @@ impl CPrimeExecutionBinding {
             || !C_PRIME_FRAME.contains(&self.frame.as_str())
             || !C_PRIME_THREAD.contains(&self.thread.as_str())
             || !C_PRIME_SEQUENCE.contains(&self.sequence.as_str())
-            || !C_PRIME_DIRECTION.contains(&self.direction.as_str())
+            || c_prime_direction(&self.direction).is_none()
         {
             return Err(VakOrchestrationError::InvalidCPrimeProfile);
         }

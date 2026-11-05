@@ -311,7 +311,7 @@ impl<'a> Unit<'a> {
             format!(
                 r#"
       composition: {{
-        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "{frame}", CFP: "{thread}", CS: "CS2", direction: "forward",
+        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "{frame}", CFP: "{thread}", CS: "CS2", direction: "forward-synthesis",
         actor: "{actor}", interpretation: cprime, whole: "central:source:project:quaternal-logic:ProjectCentral/now",
         resolvePath: "resolve-scoped-path:test/{key}", contextResolution: "context-resolution:test/{key}",
         sources: ["central:source:project:quaternal-logic:AGENTS.md"],{extra}

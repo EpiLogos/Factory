@@ -42,7 +42,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the constellation cannot be bounded to named members",
       escalationConditions: "Escalate a gap that needs an authored owner decision",
       composition: {
-        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward",
+        CPF: "dialogical", CT: "CT1", CP: "4.1", CF: "CF2", CFP: "CFP2", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/aletheia-anansi", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/anansi",
         contextResolution: "context-resolution:techne-constellation/anansi",
@@ -68,7 +68,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the blueprint names no evidence-bearing member",
       escalationConditions: "Escalate contradictory sources",
       composition: {
-        CPF: "dialogical", CT: "CT3", CP: "4.0", CF: "CF1", CFP: "CFP3", CS: "CS1", direction: "forward",
+        CPF: "dialogical", CT: "CT3", CP: "4.0", CF: "CF1", CFP: "CFP3", CS: "CS1", direction: "forward-synthesis",
         actor: "agent/aletheia-moirai", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/moirai",
         contextResolution: "context-resolution:techne-constellation/moirai",
@@ -94,7 +94,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the constellation is single-domain",
       escalationConditions: "Escalate a translation that changes a canonical meaning",
       composition: {
-        CPF: "dialogical", CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP3", CS: "CS2", direction: "forward",
+        CPF: "dialogical", CT: "CT2", CP: "4.2", CF: "CF3", CFP: "CFP3", CS: "CS2", direction: "forward-synthesis",
         actor: "agent/aletheia-mercurius", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/mercurius",
         contextResolution: "context-resolution:techne-constellation/mercurius",
@@ -120,7 +120,7 @@ export default defineWorkflow({
       stopConditions: "Stop when no prior reading of the constellation exists",
       escalationConditions: "Escalate an archive gap instead of reconstructing it",
       composition: {
-        CPF: "dialogical", CT: "CT4b'", CP: "4.4", CF: "CF6", CFP: "CFP3", CS: "CS4", direction: "returning",
+        CPF: "dialogical", CT: "CT4b'", CP: "4.4", CF: "CF6", CFP: "CFP3", CS: "CS4", direction: "returning-inquiry",
         actor: "agent/aletheia-janus", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/janus",
         contextResolution: "context-resolution:techne-constellation/janus",
@@ -150,7 +150,7 @@ export default defineWorkflow({
       stopConditions: "Stop when fewer than two readings returned",
       escalationConditions: "Escalate an irreconcilable conflict",
       composition: {
-        CPF: "dialogical", CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP2", CS: "CS3", direction: "forward",
+        CPF: "dialogical", CT: "CT3", CP: "4.3", CF: "CF4", CFP: "CFP2", CS: "CS3", direction: "forward-synthesis",
         actor: "agent/aletheia-agora", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/agora",
         contextResolution: "context-resolution:techne-constellation/agora",
@@ -175,7 +175,7 @@ export default defineWorkflow({
       stopConditions: "Stop when the aggregate supports no change",
       escalationConditions: "Escalate a revision that would change authored ground",
       composition: {
-        CPF: "dialogical", CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "forward",
+        CPF: "dialogical", CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP2", CS: "CS5", direction: "forward-synthesis",
         actor: "agent/aletheia-zeithoven", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/zeithoven",
         contextResolution: "context-resolution:techne-constellation/zeithoven",
@@ -201,7 +201,7 @@ export default defineWorkflow({
       escalationConditions: "Never edit wiki.json directly; escalate promotion decisions to the wiki owner",
       composition: {
         CPF: "authorised-undertaking", authority: wikiLaw,
-        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning",
+        CT: "CT5", CP: "4.5", CF: "CF7", CFP: "CFP0", CS: "CS5", direction: "returning-inquiry",
         actor: "agent/aletheia", interpretation: cprime, whole: whole,
         resolvePath: "resolve-scoped-path:techne-constellation/aletheia",
         contextResolution: "context-resolution:techne-constellation/aletheia",

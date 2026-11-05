@@ -7,11 +7,11 @@
       "owner": "ql-mef",
       "typesContract": "ql.vak-workflow-types/v1",
       "declarations": "contracts/factory/upstream/ql-vak-workflow-types.d.ts",
-      "declarationsSha256": "047c20b98b44890245c076b707cba71e1dccef7d9aa8769037ff36892c2037d8",
+      "declarationsSha256": "ae2b89a1f4d7db6510c5ca5991054bcad65a3f0d0c118540ed17cc397759df65",
       "upstream": {
         "repository": "EpiLogos/QL-MEF",
         "path": "adapters/factory-workflow/index.d.ts",
-        "gitBlob": "ba022adffc728fe4ad62939994e5080ab6e37b11",
+        "gitBlob": "83c02dd3807b2fa596ed66adbdb33725b21aa949",
         "generator": "ql vak workflow-types"
       },
       "unitField": "composition",

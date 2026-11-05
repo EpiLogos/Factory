@@ -11,6 +11,7 @@
 //! Dropped on a track, a clip is one unit of the receiving song with the thread form canon (`factory workflow edit`'s `canon`
 //! op, workflow_score.rs): the receiving project keeps its own copy of a clip from another project (an import, which keeps where it
 //! came from), and the unit names it by its ref, so the score draws the clip's song inside the unit. Nothing here executes.
+use crate::vak_orchestration::c_prime_direction;
 use crate::workflow::WorkflowUnitSource;
 use crate::workflow_authoring::{error, load_workflow, AuthoredWorkflow, Diagnostic};
 use serde_json::{json, Value};
@@ -119,7 +120,7 @@ fn row_of(unit: &WorkflowUnitSource) -> Option<(&str, &'static str)> {
 fn heads(unit: &WorkflowUnitSource) -> Value {
     unit.composition.as_ref().map_or(Value::Null, |c| {
         json!({"CPF": c.participation, "CT": c.content, "CP": c.position, "CF": c.frame, "CFP": c.thread,
-            "CS": c.sequence, "direction": c.direction})
+            "CS": c.sequence, "direction": c_prime_direction(&c.direction).unwrap_or(&c.direction)})
     })
 }
 
