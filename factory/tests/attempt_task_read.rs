@@ -380,6 +380,66 @@ fn task_list_discovers_retained_native_task_refs_without_mutating_owner_state() 
     assert_eq!(before, std::fs::read(world.state()).unwrap());
 }
 
+/// Where a task stands (O-I #772): each Run and workflow unit its attempts stand on, the unit's current attempt as the
+/// Run's leg has it. A retry keeps the one unit and moves its current attempt; a task Factory retains nothing for stands on
+/// none, which is an answer. Nothing is written.
+#[test]
+fn a_tasks_units_name_each_run_and_unit_its_attempts_stand_on_without_mutating_owner_state() {
+    let world = World::new();
+    let before = std::fs::read(world.state()).unwrap();
+    let units = |task: &str| {
+        success(binary(
+            &[
+                "attempt".into(),
+                "units".into(),
+                world.state(),
+                task.into(),
+                "--json".into(),
+            ],
+            None,
+        ))
+    };
+    let unit = world
+        .workflow
+        .unit("inspect-source")
+        .unwrap()
+        .reference
+        .to_string();
+
+    let first = units(TASK);
+    assert_eq!(first["contract"], "factory.attempt-task-units-reading/v1");
+    assert_eq!(first["projectRef"], PROJECT);
+    assert_eq!(first["taskRef"], TASK);
+    assert_eq!(first["totalUnits"], 1);
+    assert_eq!(first["units"][0]["runRef"], RUN);
+    assert_eq!(first["units"][0]["workflowUnitRef"], unit.as_str());
+    assert_eq!(first["units"][0]["currentAttemptRef"], "attempt:z-old");
+    assert_eq!(first["units"][0]["attempts"], 1);
+    assert_eq!(before, std::fs::read(world.state()).unwrap());
+
+    world.retry();
+    let retried = units(TASK);
+    assert_eq!(retried["totalUnits"], 1, "a retry stands on the same unit");
+    assert_eq!(retried["units"][0]["currentAttemptRef"], "attempt:a-new");
+    assert_eq!(retried["units"][0]["attempts"], 2);
+
+    let none = units("task:never-dispatched");
+    assert_eq!(none["totalUnits"], 0);
+    assert_eq!(none["units"], json!([]));
+
+    let text = binary(
+        &["attempt".into(), "units".into(), world.state(), TASK.into()],
+        None,
+    );
+    assert!(text.status.success());
+    assert!(String::from_utf8_lossy(&text.stdout).contains("attempt:a-new"));
+    let refused = binary(
+        &["attempt".into(), "units".into(), world.state(), " ".into()],
+        None,
+    );
+    assert!(!refused.status.success());
+}
+
 #[test]
 fn task_reads_exact_native_source_and_absence_without_mutating_owner_state() {
     let world = World::new();

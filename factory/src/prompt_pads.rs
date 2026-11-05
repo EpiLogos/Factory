@@ -53,14 +53,31 @@ pub const PADS_RUN_BEGIN: &str = "factory.prompt-pads-run/v1";
 pub const PADS_RUN_RECORD: &str = "factory.prompt-pads-record/v1";
 pub const PADS_DUE: &str = "factory.prompt-pads-due/v1";
 pub const PADS_REFUSAL: &str = "factory.prompt-pads-refusal/v1";
-/// The five verbs, as `factory development <verb>`.
-pub const VERBS: [&str; 5] = ["pads", "pads-write", "pads-run", "pads-record", "pads-due"];
+/// A bank saved as a preset of the Prompt pads device (manual §16.4 Save as preset: "The preset
+/// stands under its device in the browser"), and its readings.
+pub const PADS_PRESET: &str = "factory.prompt-pads-preset/v1";
+pub const PADS_PRESETS_READING: &str = "factory.prompt-pads-presets/v1";
+pub const PADS_PRESET_RECEIPT: &str = "factory.prompt-pads-preset-write/v1";
+/// The verbs, as `factory development <verb>`.
+pub const VERBS: [&str; 8] = [
+    "pads",
+    "pads-write",
+    "pads-run",
+    "pads-record",
+    "pads-due",
+    "pads-presets",
+    "pads-preset-save",
+    "pads-preset-recall",
+];
 
 const EVENT_SCHEMA: &str = "factory.prompt-pad-event/v1";
 const PAD_COUNT: usize = 16;
 const RUN_REF_PREFIX: &str = "factory:pad-run:";
 const STATE_FOLDER: &str = "prompt-pads";
 const BANK_FILE: &str = "bank.json";
+/// The presets stand beside the projects' folders, so one is recalled into any project's bank.
+const PRESETS_FOLDER: &str = "presets";
+const MAX_PRESETS: usize = 256;
 const RECORD_FILE: &str = "runs.jsonl";
 const HOUR_MS: i64 = 3_600_000;
 /// How far ahead a pad's next run is looked for: the longest gap a schedule can
@@ -82,10 +99,15 @@ const USAGE_RUN: &str = "factory development pads-run <state> [request-file|-] [
 const USAGE_RECORD: &str = "factory development pads-record <state> [request-file|-] [--json]";
 const USAGE_DUE: &str =
     "factory development pads-due <state> <project-ref> --now <unix_ms> --since <unix_ms> [--json]";
+const USAGE_PRESETS: &str = "factory development pads-presets <state> [--json]";
+const USAGE_PRESET_SAVE: &str =
+    "factory development pads-preset-save <state> [request-file|-] [--json]";
+const USAGE_PRESET_RECALL: &str =
+    "factory development pads-preset-recall <state> [request-file|-] [--json]";
 
 pub fn help() -> String {
     format!(
-        "Prompt pads (a project's bank of sixteen pads; Factory keeps the bank and the record of every run, and never runs a pad):\n  {USAGE_PADS}\n                                    the bank: sixteen slots, each pad's settings, next run, running run and last run\n  {USAGE_WRITE}\n                                    write one slot, or empty it (a person only; compare-and-swap on the bank revision)\n  {USAGE_RUN}\n                                    record a run's begin; answers the pad as it stood\n  {USAGE_RECORD}\n                                    record a run's end: done, stalled, stopped or refused\n  {USAGE_DUE}\n                                    the scheduled occurrences in (since, now] and whether each has begun\n<state> is Factory's state directory for pads; the developmental state file of a project names its directory."
+        "Prompt pads (a project's bank of sixteen pads; Factory keeps the bank and the record of every run, and never runs a pad):\n  {USAGE_PADS}\n                                    the bank: sixteen slots, each pad's settings, next run, running run and last run\n  {USAGE_WRITE}\n                                    write one slot, or empty it (a person only; compare-and-swap on the bank revision)\n  {USAGE_RUN}\n                                    record a run's begin; answers the pad as it stood\n  {USAGE_RECORD}\n                                    record a run's end: done, stalled, stopped or refused\n  {USAGE_DUE}\n                                    the scheduled occurrences in (since, now] and whether each has begun\n  {USAGE_PRESETS}\n                                    the presets of the pads, as the browser shows them under the device\n  {USAGE_PRESET_SAVE}\n                                    save a project's bank as a named preset (a person only; compare-and-swap on the preset)\n  {USAGE_PRESET_RECALL}\n                                    recall a preset into a project's bank: Hot-swap's target (a person only; compare-and-swap on the bank)\n<state> is Factory's state directory for pads; the developmental state file of a project names its directory."
     )
 }
 
@@ -859,6 +881,88 @@ fn encode_bank(project_ref: &str, slots: &[Option<Pad>]) -> Vec<u8> {
     bytes
 }
 
+/// A preset: a bank's sixteen slots under a name, with the project it was saved from.
+struct Preset {
+    name: String,
+    saved_from: String,
+    revision: String,
+    slots: Vec<Option<Pad>>,
+}
+
+fn load_preset(bytes: &[u8], name: Option<&str>) -> Result<Preset, PadsRefusal> {
+    let corrupt = |why: &str| {
+        PadsRefusal::corrupt(format!(
+            "a preset of the pads is damaged ({why}); it is kept as it is and nothing is guessed from it"
+        ))
+    };
+    let document: Value = serde_json::from_slice(bytes).map_err(|_| corrupt("it is not JSON"))?;
+    if document.get("schema") != Some(&json!(PADS_PRESET)) {
+        return Err(corrupt("it is not a factory.prompt-pads-preset/v1"));
+    }
+    let named = document
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| corrupt("it has no name"))?;
+    if name.is_some_and(|name| name != named) {
+        return Err(corrupt("its name is another preset's"));
+    }
+    let saved_from = document
+        .get("saved_from")
+        .and_then(Value::as_str)
+        .ok_or_else(|| corrupt("it names no project it was saved from"))?;
+    let bank = load_bank(
+        Some(
+            &serde_json::to_vec(
+                &json!({"schema":PADS_BANK,"project_ref":saved_from,"slots":document.get("slots")}),
+            )
+            .unwrap_or_default(),
+        ),
+        saved_from,
+    )
+    .map_err(|refusal| corrupt(&refusal.message))?;
+    Ok(Preset {
+        name: named.to_owned(),
+        saved_from: saved_from.to_owned(),
+        revision: revision_of(bytes),
+        slots: bank.slots,
+    })
+}
+
+fn encode_preset(name: &str, saved_from: &str, slots: &[Option<Pad>]) -> Vec<u8> {
+    let document = json!({
+        "schema":PADS_PRESET,
+        "name":name,
+        "saved_from":saved_from,
+        "slots":slots.iter().map(|slot| slot.as_ref().map_or(Value::Null, Pad::to_json)).collect::<Vec<_>>(),
+    });
+    let mut bytes = serde_json::to_vec_pretty(&document).unwrap_or_default();
+    bytes.push(b'\n');
+    bytes
+}
+
+fn preset_name(object: &Map<String, Value>) -> Result<String, PadsRefusal> {
+    let name = object
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| PadsRefusal::invalid("name is the preset's name"))?;
+    check_text(name, "name", MAX_NAME_CHARS)?;
+    Ok(name.to_owned())
+}
+
+fn expected_of<'a>(object: &'a Map<String, Value>, what: &str) -> Result<&'a str, PadsRefusal> {
+    object
+        .get("expected_revision")
+        .and_then(Value::as_str)
+        .filter(|revision| !revision.is_empty())
+        .ok_or_else(|| {
+            PadsRefusal::invalid(format!(
+                "expected_revision is the revision {what}, or `absent`"
+            ))
+        })
+}
+
 struct Record {
     revision: String,
     events: Vec<Value>,
@@ -1352,6 +1456,227 @@ impl PadsStore {
             "written_by":written_by,
             "authority_ref":authority_ref,
             "pad":pad.as_ref().map(Pad::to_json),
+            "automatic_agent_or_model_invocation":false,
+        }))
+    }
+
+    fn presets_folder(&self) -> PathBuf {
+        self.root.join(STATE_FOLDER).join(PRESETS_FOLDER)
+    }
+
+    fn read_preset(&self, name: &str) -> Result<Option<Preset>, PadsRefusal> {
+        let path = self
+            .presets_folder()
+            .join(format!("{}.json", project_key(name)));
+        read_optional(&path)?
+            .map(|bytes| load_preset(&bytes, Some(name)))
+            .transpose()
+    }
+
+    /// `factory development pads-presets`: every preset of the pads, by name, as the browser
+    /// shows them under the device. A damaged preset is listed as damaged, never guessed from.
+    pub fn presets(&self) -> Result<Value, PadsRefusal> {
+        let folder = self.presets_folder();
+        let mut rows = Vec::new();
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries.flatten().collect::<Vec<_>>(),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(error) => {
+                return Err(io_refusal(
+                    &format!("could not read {}", folder.display()),
+                    error,
+                ))
+            }
+        };
+        for entry in entries {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            let Some(key) = file.strip_suffix(".json") else {
+                continue;
+            };
+            if !key_is_safe(key) {
+                continue;
+            }
+            let Some(bytes) = read_optional(&entry.path())? else {
+                continue;
+            };
+            rows.push(match load_preset(&bytes, None) {
+                Ok(preset) => json!({
+                    "name":preset.name,
+                    "revision":preset.revision,
+                    "filled":preset.slots.iter().filter(|slot| slot.is_some()).count(),
+                    "saved_from":preset.saved_from,
+                }),
+                Err(refusal) => json!({"key":key,"damaged":refusal.message}),
+            });
+        }
+        rows.sort_by(|left, right| {
+            left["name"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(right["name"].as_str().unwrap_or_default())
+        });
+        Ok(json!({
+            "schema":PADS_PRESETS_READING,
+            "presets":rows,
+            "automatic_agent_or_model_invocation":false,
+        }))
+    }
+
+    /// `factory development pads-preset-save`: a project's bank, as it stands, saved under a
+    /// name by a person, on the preset's revision as it was read (`absent` for a new name).
+    pub fn save_preset(&self, request: &Value) -> Result<Value, PadsRefusal> {
+        let object = object(request, "the preset request")?;
+        only_keys(
+            object,
+            &[
+                "project_ref",
+                "name",
+                "expected_revision",
+                "caller",
+                "authority",
+            ],
+            "the preset request",
+        )?;
+        let (written_by, authority_ref) = require_human(object)?;
+        let project_ref = project_of(object)?;
+        let name = preset_name(object)?;
+        let expected = expected_of(object, "the preset was read at")?;
+        let bank = self.read_bank(project_ref)?;
+        let path = self
+            .presets_folder()
+            .join(format!("{}.json", project_key(&name)));
+        let lock = transaction(&path, true)?;
+        let previous = match lock.current() {
+            Some(bytes) => load_preset(bytes, Some(&name))?.revision,
+            None => {
+                let count = std::fs::read_dir(self.presets_folder())
+                    .map(|entries| entries.flatten().count())
+                    .unwrap_or(0);
+                if count >= MAX_PRESETS {
+                    return Err(PadsRefusal::invalid(format!(
+                        "The pads keep at most {MAX_PRESETS} presets; save over one, or remove one first"
+                    )));
+                }
+                "absent".to_owned()
+            }
+        };
+        if previous != expected {
+            return Err(PadsRefusal::new(
+                "stale_revision",
+                format!(
+                    "The preset {name} changed: it is at {previous}, not {expected}; read the presets again"
+                ),
+            ));
+        }
+        let bytes = encode_preset(&name, project_ref, &bank.slots);
+        let changed = lock.current() != Some(bytes.as_slice());
+        if changed {
+            publish(&lock, &bytes, lock.current().is_none())?;
+        }
+        Ok(json!({
+            "schema":PADS_PRESET_RECEIPT,
+            "act":"save",
+            "name":name,
+            "project_ref":project_ref,
+            "bank_revision":bank.revision,
+            "previous_revision":previous,
+            "revision":revision_of(&bytes),
+            "changed":changed,
+            "filled":bank.slots.iter().filter(|slot| slot.is_some()).count(),
+            "written_by":written_by,
+            "authority_ref":authority_ref,
+            "automatic_agent_or_model_invocation":false,
+        }))
+    }
+
+    /// `factory development pads-preset-recall`: a preset written into a project's bank whole,
+    /// in place of what stood there (Hot-swap's target for the pads), by a person, on the bank's
+    /// revision as it was read and the preset's as it was chosen. Each scheduled pad's schedule
+    /// is Central's to admit, as a write's is; the record of runs is left as it is.
+    pub fn recall_preset(
+        &self,
+        request: &Value,
+        now_ms: i64,
+        central: &dyn OccurrenceResolver,
+    ) -> Result<Value, PadsRefusal> {
+        let object = object(request, "the recall request")?;
+        only_keys(
+            object,
+            &[
+                "project_ref",
+                "name",
+                "expected_revision",
+                "preset_revision",
+                "caller",
+                "authority",
+            ],
+            "the recall request",
+        )?;
+        let (written_by, authority_ref) = require_human(object)?;
+        let project_ref = project_of(object)?;
+        let name = preset_name(object)?;
+        let expected = expected_of(object, "the bank was read at")?;
+        let chosen = object
+            .get("preset_revision")
+            .and_then(Value::as_str)
+            .filter(|revision| !revision.is_empty())
+            .ok_or_else(|| {
+                PadsRefusal::invalid("preset_revision is the revision the preset was chosen at")
+            })?;
+        let preset = self.read_preset(&name)?.ok_or_else(|| {
+            PadsRefusal::new("no_preset", format!("The pads have no preset named {name}"))
+        })?;
+        if preset.revision != chosen {
+            return Err(PadsRefusal::new(
+                "stale_revision",
+                format!(
+                    "The preset {name} changed: it is at {}, not {chosen}; choose it again",
+                    preset.revision
+                ),
+            ));
+        }
+        for schedule in preset
+            .slots
+            .iter()
+            .flatten()
+            .filter_map(|pad| pad.runs_at.schedule())
+        {
+            central
+                .occurrences(&schedule, now_ms, now_ms + HORIZON_MS)
+                .map_err(schedule_refusal)?;
+        }
+        let path = self.folder(project_ref).join(BANK_FILE);
+        let lock = transaction(&path, true)?;
+        let bank = load_bank(lock.current(), project_ref)?;
+        if bank.revision != expected {
+            return Err(PadsRefusal::new(
+                "stale_revision",
+                format!(
+                    "The bank changed: it is at {}, not {expected}; read it again",
+                    bank.revision
+                ),
+            ));
+        }
+        let bytes = encode_bank(project_ref, &preset.slots);
+        let changed = lock.current() != Some(bytes.as_slice());
+        let revision = if changed {
+            publish(&lock, &bytes, lock.current().is_none())?;
+            revision_of(&bytes)
+        } else {
+            bank.revision.clone()
+        };
+        Ok(json!({
+            "schema":PADS_PRESET_RECEIPT,
+            "act":"recall",
+            "name":name,
+            "project_ref":project_ref,
+            "preset_revision":preset.revision,
+            "previous_revision":bank.revision,
+            "revision":revision,
+            "changed":changed,
+            "filled":preset.slots.iter().filter(|slot| slot.is_some()).count(),
+            "written_by":written_by,
+            "authority_ref":authority_ref,
             "automatic_agent_or_model_invocation":false,
         }))
     }
@@ -1888,10 +2213,22 @@ pub fn execute_with(
                 text_due as fn(&Value) -> String,
             )
         }
-        "pads-write" | "pads-run" | "pads-record" => {
+        "pads-presets" => {
+            let arguments = parse_arguments(rest, &[], USAGE_PRESETS)?;
+            let [state] = arguments.positional.as_slice() else {
+                return Err(PadsRefusal::usage("expected <state>", USAGE_PRESETS));
+            };
+            (
+                PadsStore::at(state).presets()?,
+                text_presets as fn(&Value) -> String,
+            )
+        }
+        "pads-write" | "pads-run" | "pads-record" | "pads-preset-save" | "pads-preset-recall" => {
             let usage = match verb {
                 "pads-write" => USAGE_WRITE,
                 "pads-run" => USAGE_RUN,
+                "pads-preset-save" => USAGE_PRESET_SAVE,
+                "pads-preset-recall" => USAGE_PRESET_RECALL,
                 _ => USAGE_RECORD,
             };
             let arguments = parse_arguments(rest, &[], usage)?;
@@ -1916,6 +2253,14 @@ pub fn execute_with(
                     store.begin(&request, now_ms, central)?,
                     text_run as fn(&Value) -> String,
                 ),
+                "pads-preset-save" => (
+                    store.save_preset(&request)?,
+                    text_preset as fn(&Value) -> String,
+                ),
+                "pads-preset-recall" => (
+                    store.recall_preset(&request, now_ms, central)?,
+                    text_preset as fn(&Value) -> String,
+                ),
                 _ => (
                     store.record_end(&request, now_ms)?,
                     text_record as fn(&Value) -> String,
@@ -1935,6 +2280,40 @@ pub fn execute_with(
         })
     } else {
         Ok(text(&document))
+    }
+}
+
+fn text_presets(reading: &Value) -> String {
+    let rows = reading["presets"].as_array().cloned().unwrap_or_default();
+    if rows.is_empty() {
+        return "No preset of the pads is saved.".into();
+    }
+    rows.iter()
+        .map(|row| match row["name"].as_str() {
+            Some(name) => format!(
+                "{name}: {} pads, saved from {}",
+                row["filled"],
+                row["saved_from"].as_str().unwrap_or_default()
+            ),
+            None => format!(
+                "{} is damaged: {}",
+                row["key"].as_str().unwrap_or_default(),
+                row["damaged"].as_str().unwrap_or_default()
+            ),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn text_preset(receipt: &Value) -> String {
+    let name = receipt["name"].as_str().unwrap_or_default();
+    let project = receipt["project_ref"].as_str().unwrap_or_default();
+    let changed = receipt["changed"] == true;
+    match (receipt["act"].as_str(), changed) {
+        (Some("save"), true) => format!("Saved the pads of {project} as the preset {name}."),
+        (Some("save"), false) => format!("The preset {name} already holds the pads of {project}."),
+        (_, true) => format!("Recalled the preset {name} into the pads of {project}."),
+        (_, false) => format!("The pads of {project} already hold the preset {name}."),
     }
 }
 
@@ -2402,6 +2781,122 @@ mod tests {
         let reading = store.reading(PROJECT, NOW, &central).unwrap();
         assert!(reading["slots"][1]["pad"].is_null());
         assert_eq!(reading["slots"][2]["pad"]["prompt"], "two");
+    }
+
+    #[test]
+    fn a_bank_saved_as_a_preset_is_recalled_whole_into_another_project_s_pads() {
+        let (dir, store) = store();
+        let central = FakeCentral::default();
+        let (caller, authority) = human();
+        put(
+            &store,
+            &central,
+            PROJECT,
+            0,
+            json!({"prompt":"Review the branch"}),
+        );
+        put(
+            &store,
+            &central,
+            PROJECT,
+            3,
+            json!({"prompt":"Say what failed","runs_at":{"kind":"daily","time":"08:00"}}),
+        );
+        assert_eq!(store.presets().unwrap()["presets"], json!([]));
+
+        // Save as preset: the bank as it stands, under a name, on the preset's revision.
+        let save = |expected: &str| {
+            store.save_preset(
+                &json!({"project_ref":PROJECT,"name":"Morning","expected_revision":expected,
+                "caller":caller,"authority":authority}),
+            )
+        };
+        let saved = save("absent").unwrap();
+        assert_eq!(
+            (saved["changed"].clone(), saved["filled"].clone()),
+            (json!(true), json!(2))
+        );
+        let listed = store.presets().unwrap();
+        assert_eq!(listed["presets"][0]["name"], "Morning");
+        assert_eq!(listed["presets"][0]["saved_from"], PROJECT);
+        assert_eq!(listed["presets"][0]["revision"], saved["revision"]);
+        // A second save of a name must name the revision it read; the same bank again writes nothing.
+        assert_eq!(refusal_of(save("absent")).code, "stale_revision");
+        let again = save(saved["revision"].as_str().unwrap()).unwrap();
+        assert_eq!(again["changed"], false);
+        // Saving is a person's act, as writing a pad is.
+        let by_agent = store.save_preset(
+            &json!({"project_ref":PROJECT,"name":"Other","expected_revision":"absent"}),
+        );
+        assert_eq!(refusal_of(by_agent).code, "not_human");
+
+        // Hot-swap's target: the preset recalled into another project's bank, whole, on both revisions.
+        let other = "project:Factory";
+        put(
+            &store,
+            &central,
+            other,
+            7,
+            json!({"prompt":"stands until the recall"}),
+        );
+        let bank = revision(&store, &central, other);
+        let recall = |expected: &str, chosen: &str| {
+            store.recall_preset(
+                &json!({"project_ref":other,"name":"Morning","expected_revision":expected,"preset_revision":chosen,
+                    "caller":caller,"authority":authority}),
+                NOW,
+                &central,
+            )
+        };
+        let preset = saved["revision"].as_str().unwrap();
+        assert_eq!(refusal_of(recall("absent", preset)).code, "stale_revision");
+        assert_eq!(
+            refusal_of(recall(&bank, "blake3:other")).code,
+            "stale_revision"
+        );
+        let recalled = recall(&bank, preset).unwrap();
+        assert_eq!(
+            (
+                recalled["changed"].clone(),
+                recalled["previous_revision"].clone()
+            ),
+            (json!(true), json!(bank))
+        );
+        let reading = store.reading(other, NOW, &central).unwrap();
+        assert_eq!(reading["slots"][0]["pad"]["prompt"], "Review the branch");
+        assert_eq!(reading["slots"][3]["pad"]["runs_at"]["kind"], "daily");
+        assert!(reading["slots"][7]["pad"].is_null());
+        // Central admitted the recalled schedule, as it admits a written one.
+        assert!(central
+            .asked
+            .borrow()
+            .iter()
+            .any(|asked| asked["schedule"]["kind"] == "daily"));
+        // A preset that is not there, or a damaged one, is refused or listed as damaged.
+        let missing = store.recall_preset(
+            &json!({"project_ref":other,"name":"Evening","expected_revision":reading["revision"],"preset_revision":preset,
+                "caller":caller,"authority":authority}),
+            NOW,
+            &central,
+        );
+        assert_eq!(refusal_of(missing).code, "no_preset");
+        std::fs::write(
+            dir.path()
+                .join("prompt-pads/presets/broken-0000000000000000.json"),
+            "not json",
+        )
+        .unwrap();
+        let listed = store.presets().unwrap();
+        assert_eq!(listed["presets"].as_array().unwrap().len(), 2);
+        assert!(listed["presets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["damaged"].is_string()));
+        // The verbs answer through the command line as the other pads verbs do.
+        let state = dir.path().to_string_lossy().into_owned();
+        let out = execute_with(&["pads-presets".into(), state], true, None, NOW, &central).unwrap();
+        assert!(out.contains(PADS_PRESETS_READING));
     }
 
     #[test]
