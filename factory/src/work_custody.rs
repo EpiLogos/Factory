@@ -235,7 +235,6 @@ impl Display for ClosureReason {
 /// The closure a closed custody carries: its reason and, where the reason
 /// needs one, its target (OpenRig `closure_reason` / `closure_target`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyClosure {
     pub reason: ClosureReason,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -243,13 +242,11 @@ pub struct CustodyClosure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyOrigin {
     pub communique_ref: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyHandoff {
     pub custody_ref: String,
     pub position_ref: String,
@@ -257,7 +254,6 @@ pub struct CustodyHandoff {
 
 /// One appended state change. `from` is absent only for the assignment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyTransition {
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -279,7 +275,6 @@ pub struct CustodyTransition {
 
 /// A body acting on custody from inside a World Position occupancy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyActor {
     pub position_ref: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -304,7 +299,6 @@ impl CustodyActor {
 /// A person's hold on work an agent holds (DLW §19.4 Hand back): who took it,
 /// what they edited, why, and when. Kept until they give it back.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct CustodyHold {
     pub held_by: String,
     pub authority_ref: String,
@@ -315,8 +309,15 @@ pub struct CustodyHold {
 }
 
 /// `factory.work-custody/v1`. Field names follow the cross-owner contract.
+///
+/// A reader of a record a newer Factory wrote keeps the fields it knows: the
+/// record and the records it carries (its transitions, closure, origin,
+/// hand-off, actor and hold) read past a field they do not name. What Factory
+/// itself writes stays exact: every mutation goes through
+/// `transact_developmental_state`, which refuses to rewrite a state carrying a
+/// stored field this Factory does not know, so a newer record's fields are
+/// never dropped by an older writer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 pub struct FactoryWorkCustody {
     pub schema: String,
     pub custody_ref: String,
@@ -2746,6 +2747,52 @@ mod tests {
             refusal.fact.contains("unknown option --autonomy"),
             "{}",
             refusal.fact
+        );
+    }
+
+    /// A record a newer Factory wrote still reads, keeping the fields this Factory knows; what this
+    /// Factory writes stays exact: it refuses to rewrite a state carrying a field it does not know, and
+    /// leaves the bytes as they were (DLW build ruling 2026-11-05).
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_custody_record_carrying_a_future_field_still_reads_and_is_never_rewritten_without_it() {
+        use crate::developmental_read::FactoryDevelopmentalFileProvider;
+        let mut kept = state();
+        let assigned = assign_in(&mut kept, request("work:future"), 1)
+            .unwrap()
+            .custody;
+        let mut newer = serde_json::to_value(&assigned).unwrap();
+        newer["a_field_a_newer_factory_writes"] = serde_json::json!({"kept": true});
+        newer["transitions"][0]["a_newer_transition_field"] = serde_json::json!(3);
+        let read: FactoryWorkCustody = serde_json::from_value(newer.clone()).unwrap();
+        assert_eq!(
+            read, assigned,
+            "the reader keeps exactly the fields it knows"
+        );
+
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("native-custody.json");
+        FactoryDevelopmentalFileProvider::create_new(&path, kept).unwrap();
+        let mut stored: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        stored["state"]["workCustody"][0] = newer;
+        std::fs::write(&path, serde_json::to_vec_pretty(&stored).unwrap()).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let opened = FactoryDevelopmentalFileProvider::open(&path).unwrap();
+        assert_eq!(opened.state().work_custody, vec![assigned]);
+
+        let refusal = assign(&path, request("work:another")).unwrap_err();
+        assert!(
+            refusal.fact.contains(
+                "unsupported stored field $.state.workCustody[0].a_field_a_newer_factory_writes"
+            ),
+            "{}",
+            refusal.fact
+        );
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            before,
+            "nothing was rewritten"
         );
     }
 }

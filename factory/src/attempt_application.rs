@@ -6,7 +6,12 @@
 
 use crate::attempt_runtime::*;
 use crate::core::run::{Run, WorkflowUnitRef};
+use crate::execution_intelligence::{
+    accept_aikit_selection, explicit_selection_refs, AikitModelRosterSelection, ExecutionDemand,
+    ExecutionInteropError, ExplicitSelectionRefs,
+};
 use crate::orchestration::LegStatus;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -460,6 +465,246 @@ fn invalid(message: &str) -> FactoryAttemptError {
     FactoryAttemptError::InvalidOperation(message.into())
 }
 
+// ---------------------------------------------------------------------------
+// Launch (O-I #842, DLW build ruling 2026-11-05): start a unit from its
+// owners' readings. The Run, the unit's law and the Journey come from
+// Factory's own state; the model, the participant and the body come from
+// AIKit's explicit selection receipt on the session that carries the unit;
+// the praxis a unit names comes from AIKit's NOW preparation, and the
+// placement of a writing unit from Central's. Factory assembles them into the
+// disposition `start-serial` takes and invents no value: a reading that is
+// missing is refused naming its owner, and the ordinary admission
+// (`validate_disposition`) judges the rest in Factory's words.
+
+/// The Launch request (`factory attempt launch <state> <request-json|->`).
+pub const FACTORY_ATTEMPT_LAUNCH: &str = "factory.attempt-launch/v1";
+/// AIKit's realisation of a model on a resident session (`aikit compose
+/// --realise`), which carries its explicit selection as `factory_selection`.
+pub const AIKIT_MODEL_REALISATION: &str = "aikit.model-realisation/v2";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FactoryAttemptLaunchRequest {
+    pub contract: String,
+    pub projection_ref: String,
+    pub caller: crate::action_projection::FactoryActionCaller,
+    pub run_ref: crate::core::run::RunRef,
+    pub expected_revision: u64,
+    pub authority: crate::action_projection::ProjectedFactoryActionAuthority,
+    pub workflow_unit_ref: WorkflowUnitRef,
+    pub attempt_ref: String,
+    pub task_ref: String,
+    /// AIKit's `aikit.model-realisation/v2`, whole.
+    pub aikit_realisation: Value,
+    /// AIKit's NOW-preparation praxis receipt and the prepared NOW context it
+    /// was resolved against, for a unit that names praxisRefs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub praxis_receipt: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub now_context_ref: Option<String>,
+    /// Central's placement for a unit whose effects write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement: Option<PlacementProtection>,
+}
+
+fn interop_message(error: &ExecutionInteropError) -> String {
+    match error {
+        ExecutionInteropError::InvalidExplicitSelection(message) => message.clone(),
+        ExecutionInteropError::WrongRosterVersion(version) => {
+            format!("it names the roster {version}, not AIKit's model roster")
+        }
+        ExecutionInteropError::EmptyModelRef => "it names no model".into(),
+        ExecutionInteropError::EmptyRunRef => "the demand names no Run".into(),
+        ExecutionInteropError::InvalidWorkflowUnitRef(unit) => {
+            format!("the demand names no workflow unit Factory knows ({unit})")
+        }
+    }
+}
+
+/// AIKit's explicit selection out of its realisation, verified against its
+/// own basis digests, or the refusal naming what AIKit's reading lacks.
+fn aikit_selection(
+    realisation: &Value,
+) -> Result<(AikitModelRosterSelection, ExplicitSelectionRefs), FactoryAttemptError> {
+    let refuse = |message: String| FactoryAttemptError::InvalidDisposition(message);
+    if realisation["schema"] != AIKIT_MODEL_REALISATION {
+        return Err(refuse(format!(
+            "AIKit's reading is not its model realisation ({AIKIT_MODEL_REALISATION}): a unit starts on the model AIKit opened on the session that carries it (aikit compose --realise)"
+        )));
+    }
+    if realisation["selected"] != true {
+        return Err(refuse("AIKit's realisation selected no model".into()));
+    }
+    let Some(selection) = realisation
+        .get("factory_selection")
+        .filter(|value| !value.is_null())
+    else {
+        let why = match realisation
+            .get("resolution")
+            .filter(|value| !value.is_null())
+        {
+            Some(resolution) => format!(
+                "AIKit's roster chose {} and issued no explicit selection receipt",
+                resolution["selected"]["model"]
+                    .as_str()
+                    .unwrap_or("the model")
+            ),
+            None => "AIKit's realisation carries no explicit selection receipt (factory_selection)"
+                .into(),
+        };
+        return Err(refuse(format!(
+            "{why}: a unit starts only on AIKit's explicit selection, whose basis names the route, harness and session that carry it (aikit compose --realise --model <ref>)"
+        )));
+    };
+    let selection: AikitModelRosterSelection = serde_json::from_value(selection.clone())
+        .map_err(|error| refuse(format!("AIKit's explicit selection is unreadable: {error}")))?;
+    let refs = explicit_selection_refs(&selection)
+        .map_err(|error| {
+            refuse(format!(
+                "AIKit's explicit selection does not verify: {}",
+                interop_message(&error)
+            ))
+        })?
+        .ok_or_else(|| {
+            refuse(format!(
+                "AIKit's selection is ranked ({}), not its explicit selection receipt: a unit starts only on the receipt whose basis names the route, harness and session",
+                selection.ranking_policy
+            ))
+        })?;
+    Ok((selection, refs))
+}
+
+/// The `start-serial` Action a Launch assembles, at the state revision the
+/// caller read. Nothing in it is the caller's but the Run, the unit, the
+/// attempt and task refs and the owners' readings it carries.
+pub fn launch_action(
+    path: &Path,
+    request: FactoryAttemptLaunchRequest,
+) -> Result<FactoryAttemptActionRequest, FactoryAttemptError> {
+    if request.contract != FACTORY_ATTEMPT_LAUNCH {
+        return Err(FactoryAttemptError::UnsupportedContract(request.contract));
+    }
+    nonempty(&request.attempt_ref, "attemptRef")?;
+    nonempty(&request.task_ref, "taskRef")?;
+    let store = FileAttemptStore::open_run(path, request.run_ref.clone())?;
+    let basis = store.launch_basis(&request.workflow_unit_ref)?;
+    let parent_journey_ref = basis.journey_ref.clone().ok_or_else(|| {
+        invalid(&format!(
+            "Factory links {} to no Journey: a unit starts under the Journey its Run was commissioned from",
+            request.run_ref
+        ))
+    })?;
+    let (selection, refs) = aikit_selection(&request.aikit_realisation)?;
+    let unit = &basis.unit;
+    let contribution = unit.contribution.as_ref();
+    let from_contribution =
+        |pick: fn(&crate::workflow::WorkflowContribution) -> &BTreeSet<String>| {
+            contribution.map(pick).cloned().unwrap_or_default()
+        };
+    // Factory's own demand: why this unit needs execution, named by the unit.
+    let demand = ExecutionDemand {
+        project_ref: basis.run.project_ref().to_string(),
+        run_ref: request.run_ref.to_string(),
+        workflow_unit_ref: Some(unit.reference.to_string()),
+        agency_ref: Some(refs.agency_ref.clone()),
+        profile_ref: None,
+        use_type: unit.key.clone(),
+        required_capabilities: unit.capability_refs.clone(),
+        required_modalities: from_contribution(|c| &c.required_modalities),
+        required_actions: from_contribution(|c| &c.required_actions),
+        required_tools: from_contribution(|c| &c.required_tools),
+        context_characteristics: BTreeSet::new(),
+        independence_from: unit
+            .independence_from
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        cost_ceiling_usd: None,
+        latency_preference_ms: None,
+        requires_local_materialisation: false,
+    };
+    let model_ref = selection.model_ref.clone();
+    let provider_ref = selection.provider_ref.clone();
+    let decided =
+        accept_aikit_selection(demand, selection, factory_admission_time()).map_err(|error| {
+            FactoryAttemptError::InvalidDisposition(format!(
+                "AIKit's selection does not meet the unit's demand: {}",
+                interop_message(&error)
+            ))
+        })?;
+    let disposition = SituatedExecutionDisposition {
+        selected_inputs: Vec::new(),
+        selection: decided,
+        participant: SituatedParticipant {
+            agent_ref: refs.agent_ref,
+            agency_ref: refs.agency_ref,
+            world_binding_ref: refs.world_binding_ref,
+            profile_ref: None,
+            position_ref: None,
+            source_ref: refs.source_ref,
+            source_revision: refs.source_revision,
+            source_digest: refs.source_digest,
+        },
+        context_refs: from_contribution(|c| &c.context_refs),
+        praxis_refs: unit.praxis_refs.clone(),
+        capability_refs: unit.capability_refs.clone(),
+        praxis_receipt: request.praxis_receipt,
+        now_context_ref: request.now_context_ref,
+        body: ExecutionBody {
+            model_ref,
+            provider_ref,
+            route_ref: refs.route_ref,
+            harness_ref: refs.harness_ref,
+            harness_composition_ref: refs.harness_composition_ref,
+            agent_session_ref: refs.agent_session_ref,
+            session_space_ref: refs.session_space_ref,
+            material_world_ref: None,
+            workcell_ref: None,
+        },
+        placement: request.placement,
+        permitted_effects: unit.permitted_effects.clone(),
+        verification_obligations: unit.verification_obligations.clone(),
+        return_address: unit.return_address.clone(),
+        stop_conditions: unit.stop_conditions.clone(),
+        escalation_conditions: unit.escalation_conditions.clone(),
+        budget: ExecutionBudget {
+            cost_ceiling_usd: None,
+            latency_preference_ms: None,
+            wall_clock_timeout_ms: None,
+            retry_grant_ref: None,
+            maximum_attempts: None,
+        },
+    };
+    Ok(FactoryAttemptActionRequest {
+        contract: FACTORY_ATTEMPT_ACTION.into(),
+        projection_ref: request.projection_ref,
+        caller: request.caller,
+        run_ref: request.run_ref,
+        expected_revision: request.expected_revision,
+        authority: request.authority,
+        operation: FactoryAttemptOperation::StartSerial {
+            attempt_ref: request.attempt_ref,
+            task_ref: request.task_ref,
+            parent_journey_ref,
+            workflow_unit_ref: unit.reference.clone(),
+            disposition,
+            retry_grant: None,
+            tracking: Vec::new(),
+            place_grant: None,
+        },
+    })
+}
+
+/// Launch one unit: assemble its `start-serial` and apply it through the one
+/// attempt store, as `attempt action` does.
+pub fn launch_attempt(
+    path: &Path,
+    request: FactoryAttemptLaunchRequest,
+) -> Result<FactoryAttemptActionReceipt, FactoryAttemptError> {
+    let action = launch_action(path, request)?;
+    apply_attempt_action(path, action)
+}
+
 /// Same public command grammar and native receipt type. Only admission and
 /// current readback are added; all semantic mutation remains in the coordinator.
 pub fn execute_attempt_cli(
@@ -538,7 +783,8 @@ pub fn execute_attempt_cli(
             Ok(output)
         };
     }
-    if positional.first().map(|value| value.as_str()) != Some("action") {
+    let launch = positional.first().map(|value| value.as_str()) == Some("launch");
+    if positional.first().map(|value| value.as_str()) != Some("action") && !launch {
         if positional.first().map(|value| value.as_str()) == Some("read") {
             let path = positional
                 .get(1)
@@ -609,8 +855,11 @@ pub fn execute_attempt_cli(
         io::stdin().read_to_string(&mut input)?;
         input
     };
-    let request = serde_json::from_str(&input)?;
-    let receipt = apply_attempt_action(Path::new(path), request)?;
+    let receipt = if launch {
+        launch_attempt(Path::new(path), serde_json::from_str(&input)?)?
+    } else {
+        apply_attempt_action(Path::new(path), serde_json::from_str(&input)?)?
+    };
     if args.iter().any(|arg| arg == "--json") {
         return Ok(serde_json::to_string_pretty(&receipt)?);
     }

@@ -668,6 +668,206 @@ fn a_praxis_unit_that_names_no_now_context_fails_admission_with_the_named_law() 
     );
 }
 
+// ---------------------------------------------------------------------------
+// Launch (O-I #842 round 21): `factory attempt launch` starts a unit from its
+// owners' readings and invents none of them.
+
+const JOURNEY: &str = "journey:01ARZ3NDEKTSV4RRFFQ69G5FC1";
+
+impl World {
+    /// The Run as a Journey commissioned it: Factory's own link from the
+    /// Journey to the Run, which Launch reads as the parent Journey.
+    fn commission_journey(&self) {
+        use epilogos_factory::journey::{Journey, JourneyCommission, JourneyRef};
+        let mut journey = Journey::new(
+            JOURNEY.parse::<JourneyRef>().unwrap(),
+            PROJECT.parse().unwrap(),
+            JourneyCommission {
+                purpose: "Inspect the exact source.".into(),
+                commission_ref: None,
+                why_refs: vec![],
+            },
+            "Return the inspection.",
+            "2026-11-05T09:00:00Z",
+        )
+        .unwrap();
+        journey
+            .add_run(RUN.parse().unwrap(), vec![], vec![])
+            .unwrap();
+        let path = self.dir.path().join("state.json");
+        let mut state: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        state["state"]["journeys"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(journey).unwrap());
+        fs::write(&path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    }
+    /// AIKit's realisation of the unit's model on its session: the checked
+    /// native explicit-selection fixture rebound to this controlled world, as
+    /// the absence cases rebind it. Not an issued live model receipt.
+    fn aikit_realisation(&self) -> Value {
+        let unit = self.workflow.unit("inspect-source").unwrap();
+        let mut selected: Value =
+            serde_json::from_str(include_str!("fixtures/aikit-explicit-pi-selection.json"))
+                .unwrap();
+        let digest = |v: &Value| {
+            format!(
+                "blake3:{}",
+                blake3::hash(&serde_json::to_vec(v).unwrap()).to_hex()
+            )
+        };
+        let receipt = &mut selected["ranking_explanation"];
+        let b = &mut receipt["basis"];
+        b["native"]["agent_session"] = json!(SESSION);
+        b["native"]["native_session_id"] = json!("controlled-native-uuid");
+        b["native"]["space"] = json!("space:test");
+        b["harness_composition"]["agent"] =
+            json!(unit.agent_requirements.agent_refs.iter().next().unwrap());
+        b["harness_composition"]["agency"] = json!("agency:transport");
+        b["harness_composition"]["session"] = json!(SESSION);
+        let target = &mut b["composition_target_basis"];
+        target["world_binding_ref"] = json!("world-binding:test");
+        target["agency_source"] = json!({"source_ref":self.workflow.source.reference,
+            "revision":self.workflow.source.revision,"content_digest":format!("blake3:{}",self.workflow.source.digest),
+            "path":self.dir.path().join("controlled-source.json")});
+        let target_revision = digest(target);
+        b["harness_composition"]["target_revision"] = json!(target_revision);
+        receipt["basis_digest"] = json!(digest(&receipt["basis"]));
+        json!({"schema":"aikit.model-realisation/v2","model_ref":selected["model_ref"],"selected":true,
+            "executed":false,"resident":{"inference_observed":false},"factory_selection":selected})
+    }
+    fn launch(&self, realisation: Value) -> Output {
+        let unit = self.workflow.unit("inspect-source").unwrap();
+        let request = json!({"contract":"factory.attempt-launch/v1","projectionRef":"projection:launch",
+            "caller":caller(),"runRef":RUN,"expectedRevision":self.reading().revision,"authority":authority(),
+            "workflowUnitRef":unit.reference,"attemptRef":"attempt:launch","taskRef":"task:inspect",
+            "aikitRealisation":realisation,
+            "praxisReceipt":praxis_receipt_fixture::resolved_receipt(&unit.reference.to_string(), &unit.praxis_refs),
+            "nowContextRef":"now:test"});
+        self.call("launch", Some(&request))
+    }
+}
+
+#[test]
+fn a_launch_starts_the_unit_from_aikit_s_explicit_selection_and_factory_s_own_unit() {
+    let world = World::new();
+    world.commission_journey();
+    let realisation = world.aikit_realisation();
+    let before = world.reading().revision;
+    let receipt = success(world.launch(realisation.clone()));
+    assert_eq!(receipt["operation"], "start-serial");
+    assert_eq!(receipt["attemptRefs"], json!(["attempt:launch"]));
+    let reading = world.reading();
+    assert!(reading.revision > before);
+    let unit = world.workflow.unit("inspect-source").unwrap();
+    let attempt = reading
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_ref == "attempt:launch")
+        .expect("the launched attempt is Factory's");
+    let d = &attempt.disposition;
+    let explanation = &realisation["factory_selection"]["ranking_explanation"];
+    // The participant and the body are AIKit's, from its explicit selection.
+    assert_eq!(d.participant.agency_ref, "agency:transport");
+    assert_eq!(d.participant.world_binding_ref, "world-binding:test");
+    assert_eq!(
+        d.participant.source_ref,
+        world.workflow.source.reference.to_string()
+    );
+    assert_eq!(d.body.route_ref, explanation["route_ref"].as_str().unwrap());
+    assert_eq!(
+        d.body.harness_ref,
+        explanation["harness_ref"].as_str().unwrap()
+    );
+    assert_eq!(
+        d.body.harness_composition_ref,
+        explanation["harness_composition_ref"].as_str().unwrap()
+    );
+    assert_eq!(d.body.agent_session_ref, SESSION);
+    assert_eq!(d.body.session_space_ref, "space:test");
+    assert_eq!(
+        d.body.model_ref,
+        realisation["factory_selection"]["model_ref"]
+            .as_str()
+            .unwrap()
+    );
+    // The demand and the law are Factory's own, from the unit.
+    assert_eq!(d.selection.demand.use_type, unit.key);
+    assert_eq!(
+        d.selection.demand.agency_ref.as_deref(),
+        Some("agency:transport")
+    );
+    assert_eq!(d.permitted_effects, unit.permitted_effects);
+    assert_eq!(d.return_address, unit.return_address);
+    assert_eq!(
+        d.budget.wall_clock_timeout_ms, None,
+        "no budget is invented"
+    );
+    // The parent Journey is the one that commissioned the Run.
+    let leg = &reading.legs[&unit.reference];
+    assert_eq!(leg.delegation.parent_journey_ref, JOURNEY);
+}
+
+#[test]
+fn a_launch_without_aikit_s_explicit_selection_is_refused_naming_aikit_and_moves_nothing() {
+    let world = World::new();
+    world.commission_journey();
+    let mut realisation = world.aikit_realisation();
+    realisation["factory_selection"] = Value::Null;
+    realisation["resolution"] = json!({"selected":{"model":"model:ranked"}});
+    let before = world.reading().revision;
+    let output = world.launch(realisation);
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic
+            .contains("AIKit's roster chose model:ranked and issued no explicit selection receipt"),
+        "AIKit's reading not named: {diagnostic}"
+    );
+    assert_eq!(world.reading().revision, before);
+    assert!(world.reading().attempts.is_empty());
+
+    let output = world.launch(json!({"schema":"aikit.model-plan/v1"}));
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic
+            .contains("AIKit's reading is not its model realisation (aikit.model-realisation/v2)"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_launch_whose_aikit_selection_was_altered_is_refused_in_the_receipt_s_own_terms() {
+    let world = World::new();
+    world.commission_journey();
+    let mut realisation = world.aikit_realisation();
+    realisation["factory_selection"]["ranking_explanation"]["basis"]["native"]["space"] =
+        json!("space:elsewhere");
+    let output = world.launch(realisation);
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains("AIKit's explicit selection does not verify: explicit selection basis changed after AIKit issued it"),
+        "{diagnostic}"
+    );
+    assert!(world.reading().attempts.is_empty());
+}
+
+#[test]
+fn a_launch_of_a_run_no_journey_commissioned_is_refused_before_any_move() {
+    let world = World::new();
+    let output = world.launch(world.aikit_realisation());
+    assert!(!output.status.success());
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        diagnostic.contains(
+            "to no Journey: a unit starts under the Journey its Run was commissioned from"
+        ),
+        "{diagnostic}"
+    );
+    assert!(world.reading().attempts.is_empty());
+}
+
 #[path = "support/attempt_central_cases.rs"]
 mod central_cases;
 

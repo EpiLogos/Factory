@@ -37,6 +37,10 @@ const RETRY_NATIVE_ACTION: &str = "factory.attempt.retry";
 /// host authenticates against the person's grant itself, as a retry (Central lists it among the host-checked actions a project
 /// grant holds). The request stops nothing by itself: Factory's lifecycle accepts it or records the process's termination.
 const CANCEL_NATIVE_ACTION: &str = "factory.attempt.request-cancellation";
+/// What launching a unit is at the host: Factory's own `start-serial`, assembled by `factory attempt launch <state> -` from the
+/// owners' readings (the Run and the unit's law, AIKit's explicit model selection on the session that carries it, AIKit's praxis
+/// and Central's placement where the unit names them), which the host authenticates against the person's grant itself.
+const LAUNCH_NATIVE_ACTION: &str = "factory.attempt.launch";
 /// Where the scope comes from, said when no state is named.
 const SCOPE_RULE: &str = "the project the Run's Factory state stands in: project:<id> of the ProjectCentral manifest beside its .factory, or control:root for a state at a Central ground's own root (factory attempt admission <state>)";
 
@@ -145,6 +149,15 @@ pub fn reading_for(scope: Option<&str>) -> Value {
             "scopeRef": scope,
             "actorKind": "human",
             "meaning": "The person asks a unit's current attempt to stop: Factory's own request-cancellation operation moves its leg to cancel-requested. It stops no process by itself: Factory's lifecycle accepts the request or records the process's termination, and an attempt that is not running is refused in Factory's words.",
+        }, {
+            "actionRef": "attempt-launch",
+            "contract": crate::attempt_application::FACTORY_ATTEMPT_LAUNCH,
+            "command": "factory attempt launch <state> -",
+            "operation": "start-serial",
+            "nativeAction": LAUNCH_NATIVE_ACTION,
+            "scopeRef": scope,
+            "actorKind": "human",
+            "meaning": "The person launches a unit: Factory starts it with its own start-serial, assembled from the owners' readings: the Run, the unit's law and the Journey from Factory's state, the model, participant and body from AIKit's explicit selection on the session that carries it, the praxis from AIKit's NOW preparation and the placement from Central's where the unit names them. Factory invents none of them; a missing reading is refused naming its owner.",
         }],
         "standing": "A reading of what Factory expects of a desktop caller. It grants nothing: the grant is the owner's, in the contract named here.",
     })
@@ -397,5 +410,30 @@ mod tests {
         assert_eq!(cancel["operation"], tag["operation"]);
         assert_eq!(tag["attempt_ref"], "attempt:x", "its field is snake_case");
         assert_ne!(CANCEL_NATIVE_ACTION, RETRY_NATIVE_ACTION);
+    }
+
+    /// Launch (O-I #842 round 21): a desktop starts a unit through Factory's own `start-serial`, which
+    /// `factory attempt launch` assembles from the owners' readings, under its own native action, at the Run's project.
+    #[test]
+    fn a_launch_is_admitted_as_factory_s_own_start_from_the_owners_readings() {
+        let disclosed = reading_for(Some("project:field-notes"));
+        let launch = disclosed["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|action| action["actionRef"] == "attempt-launch")
+            .expect("a desktop's launch is admitted");
+        assert_eq!(
+            launch["contract"],
+            crate::attempt_application::FACTORY_ATTEMPT_LAUNCH
+        );
+        assert_eq!(launch["command"], "factory attempt launch <state> -");
+        assert_eq!(launch["operation"], "start-serial");
+        assert_eq!(launch["nativeAction"], LAUNCH_NATIVE_ACTION);
+        assert_eq!(launch["actorKind"], "human");
+        assert_eq!(launch["scopeRef"], "project:field-notes");
+        for other in [RETRY_NATIVE_ACTION, CANCEL_NATIVE_ACTION] {
+            assert_ne!(LAUNCH_NATIVE_ACTION, other);
+        }
     }
 }
