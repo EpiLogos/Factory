@@ -26,6 +26,13 @@ fn main() -> std::process::ExitCode {
     if epilogos_factory::rack_macros::is_rack_macros_command(&args) {
         return epilogos_factory::rack_macros::main(&args);
     }
+    // A work shown in the field, and a task offered at a star, refuse the same way.
+    if epilogos_factory::shown_work::is_show_command(&args) {
+        return epilogos_factory::shown_work::main(&args);
+    }
+    if epilogos_factory::task_offer::is_offer_command(&args) {
+        return epilogos_factory::task_offer::main(&args);
+    }
     match epilogos_factory::attempt_cli::execute(&args, None) {
         Ok(output) => {
             if !output.is_empty() {
