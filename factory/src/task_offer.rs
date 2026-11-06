@@ -1009,7 +1009,10 @@ impl OfferStore {
     }
 
     /// `offer-return {offer_ref, made: {label, summary, refs}}`: what the task
-    /// made, under the taker's name, within the grant, before it lapses.
+    /// made, under the taker's name, within the grant, before it lapses. The
+    /// same made brought back again answers the return already given, as a
+    /// take, a receipt, an acceptance and a revocation answer their repeats:
+    /// what went back here and never reached the field goes on from here.
     pub fn give_back(&self, request: &Value, now: i64) -> Result<Value, OfferRefusal> {
         let object = object(request, "what was made")?;
         only_keys(object, &["offer_ref", "made"], "offer-return")?;
@@ -1025,10 +1028,15 @@ impl OfferStore {
                     ))
                 }
                 Some("returned") => {
+                    let again = checked_made(made, &record["offer"]["grant"])?;
+                    if record["return"]["made"] == again {
+                        let back = record["return"].clone();
+                        return Ok((record, back));
+                    }
                     return Err(OfferRefusal::new(
                         "returned",
                         "What the task made has gone back already",
-                    ))
+                    ));
                 }
                 _ => {}
             }
@@ -1454,6 +1462,42 @@ mod tests {
                 .code,
             "revoked"
         );
+    }
+
+    #[test]
+    fn bringing_back_the_same_made_again_answers_the_return_already_given_and_another_made_is_refused(
+    ) {
+        // The taker's Factory gave it back, and the field did not hear: the person brings
+        // back the same again, and the field must be given what this Factory gave.
+        let two = two();
+        let offer = make(&two, NOW + 2 * HOUR);
+        let offer_ref = offer["offer_ref"].clone();
+        take(&two, &offer, NOW + HOUR).unwrap();
+        let request = json!({"offer_ref": offer_ref, "made": made(json!(["project:river/maps"]))});
+        let back = two.taker.give_back(&request, NOW + HOUR).unwrap();
+        assert_eq!(
+            two.taker.give_back(&request, NOW + HOUR + 60_000).unwrap(),
+            back,
+            "a repeat answers the return already given, at the time it was given"
+        );
+        assert_eq!(
+            two.taker.give_back(&request, NOW + 3 * HOUR).unwrap(),
+            back,
+            "it went back before the grant lapsed, so a repeat after still answers it"
+        );
+        let other = json!({"offer_ref": offer_ref, "made": {"label": "Another chart", "summary": "Something else.", "refs": []}});
+        assert_eq!(
+            two.taker.give_back(&other, NOW + HOUR).unwrap_err().code,
+            "returned",
+            "what was made went back already; another made is refused"
+        );
+        let theirs = two.taker.reading().unwrap();
+        assert_eq!(
+            theirs["taken"][0]["return"], back,
+            "the record keeps the one return"
+        );
+        let received = two.offerer.receive(&json!({"return": back})).unwrap();
+        assert_eq!(received["state"], "returned");
     }
 
     /// The same offer taken on a third machine, which has heard nothing yet.
