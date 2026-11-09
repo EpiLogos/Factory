@@ -1046,6 +1046,126 @@ mod unix {
         bytes(&file)
     }
 
+    /// The directory a granted read starts from: its physical address bound
+    /// once, then every component opened with no link followed (`directory`).
+    pub(crate) fn open_directory(path: &Path) -> io::Result<File> {
+        directory(path, false)
+    }
+
+    /// One step of a granted read: `step` opened in the held `parent` with
+    /// no link followed (a link at this step fails to open) and no wait on a
+    /// pipe. The caller checks what the handle is; nothing is read here.
+    pub(crate) fn open_step(parent: &File, step: &OsStr) -> io::Result<File> {
+        let step = name(step)?;
+        // SAFETY: the parent descriptor is held; step is a live NUL-terminated
+        // component. Success transfers a fresh descriptor to exactly one File.
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                step.as_ptr(),
+                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a new, uniquely owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    fn clear_errno() {
+        // SAFETY: the thread's own errno slot, written before a readdir call.
+        #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+        unsafe {
+            *libc::__error() = 0;
+        }
+        // SAFETY: as above.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        unsafe {
+            *libc::__errno_location() = 0;
+        }
+    }
+
+    /// The names a held directory holds, read through its handle; never `.`
+    /// or `..`.
+    pub(crate) fn entry_names(dir: &File) -> io::Result<Vec<OsString>> {
+        // SAFETY: dup returns a new descriptor; fdopendir owns it from here,
+        // and closedir closes it.
+        let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fd is a live descriptor of a directory this call owns.
+        let stream = unsafe { libc::fdopendir(fd) };
+        if stream.is_null() {
+            let error = io::Error::last_os_error();
+            // SAFETY: fdopendir failed, so fd is still this call's to close.
+            unsafe { libc::close(fd) };
+            return Err(error);
+        }
+        // SAFETY: stream is live until closedir below; each entry is read
+        // before the next readdir call.
+        unsafe { libc::rewinddir(stream) };
+        let mut names = Vec::new();
+        let read = loop {
+            clear_errno();
+            // SAFETY: as above.
+            let entry = unsafe { libc::readdir(stream) };
+            if entry.is_null() {
+                let error = io::Error::last_os_error();
+                break match error.raw_os_error() {
+                    Some(0) | None => Ok(()),
+                    Some(_) => Err(error),
+                };
+            }
+            // SAFETY: readdir returned a live entry whose name is NUL-terminated.
+            let entry = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+            if entry != b"." && entry != b".." {
+                names.push(OsStr::from_bytes(entry).to_os_string());
+            }
+        };
+        // SAFETY: stream came from fdopendir and is closed once.
+        unsafe { libc::closedir(stream) };
+        read.map(|()| names)
+    }
+
+    /// What one entry of a held directory is: a folder, a file or neither.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum EntryKind {
+        Folder,
+        File,
+        Other,
+    }
+
+    /// One entry of a held directory as it stands, read without following
+    /// it: its kind, its length and how many names its file has.
+    #[allow(clippy::unnecessary_cast)]
+    pub(crate) fn entry_stat(dir: &File, entry: &OsStr) -> io::Result<(EntryKind, u64, u64)> {
+        let entry = name(entry)?;
+        let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+        // SAFETY: the directory descriptor is held, entry is a live component
+        // and stat is written in full on success.
+        let result = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                entry.as_ptr(),
+                stat.as_mut_ptr(),
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        };
+        if result != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: fstatat succeeded.
+        let stat = unsafe { stat.assume_init() };
+        let kind = match stat.st_mode & libc::S_IFMT {
+            libc::S_IFDIR => EntryKind::Folder,
+            libc::S_IFREG => EntryKind::File,
+            _ => EntryKind::Other,
+        };
+        Ok((kind, stat.st_size as u64, stat.st_nlink as u64))
+    }
+
     // Tests observe an actual successful rename and mutate the real published
     // inode. There is no substitute IO result or production injection path.
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -1728,6 +1848,8 @@ mod unix {
         }
     }
 }
+#[cfg(unix)]
+pub(crate) use unix::{entry_names, entry_stat, open_directory, open_step, EntryKind};
 #[cfg(unix)]
 pub(crate) use unix::{lock_name, read_native, NativeFileTransaction};
 
