@@ -26,6 +26,10 @@
 //! field told it, after which nothing is allowed; `offer-return` answers what
 //! the task made, under the taker's name, within the grant.
 //!
+//! The offerer's Factory also serves what a grant lets the task read:
+//! `offer-read` answers the bytes of one granted ref of its own project,
+//! checked against its own record of the grant, never the taker's copy.
+//!
 //! A person makes, revokes, accepts and takes (a desktop-human caller on
 //! Factory's authority, as a rack's macros are turned); what an agent checks
 //! and returns is the agent's, within the grant. Every document says
@@ -52,17 +56,25 @@ pub const TASK_OFFER_RETURN: &str = "factory.task-offer-return/v1";
 pub const TASK_OFFER_CHECK: &str = "factory.task-offer-check/v1";
 pub const TASK_OFFERS_READING: &str = "factory.task-offers-reading/v1";
 pub const TASK_OFFER_REFUSAL: &str = "factory.task-offer-refusal/v1";
+pub const TASK_OFFER_READ: &str = "factory.task-offer-read/v1";
+/// The most one `offer-read` carries: a file larger is refused, never cut.
+/// Its bytes go base64 in one document, so the field carries at most about
+/// 1.4 MB of text for one read.
+pub const MAX_READ_BYTES: u64 = 1024 * 1024;
+/// The most entries one `offer-read` of a folder names.
+const MAX_READ_ENTRIES: usize = 512;
 /// What a person presents to make, revoke or accept an offer.
 pub const OFFER_CAPABILITY_REF: &str = "capability/factory/offer-task";
 /// What a person presents to take one up.
 pub const TAKE_CAPABILITY_REF: &str = "capability/factory/take-task";
 
-pub const VERBS: [&str; 9] = [
+pub const VERBS: [&str; 10] = [
     "offers",
     "offer-make",
     "offer-revoke",
     "offer-receive",
     "offer-accept",
+    "offer-read",
     "offer-take",
     "offer-check",
     "offer-revoked",
@@ -77,7 +89,7 @@ const MAX_NAME_CHARS: usize = 200;
 const MAX_GRANT_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 pub fn help() -> String {
-    "A task offered at a star (the offerer's side, then the taker's; each request a document, `-` for stdin):\n  factory development offers <state> [--json]\n  factory development offer-make|offer-revoke|offer-receive|offer-accept <state> [request-file|-] [--json]\n  factory development offer-take|offer-check|offer-revoked|offer-return <state> [request-file|-] [--json]".into()
+    "A task offered at a star (the offerer's side, then the taker's; each request a document, `-` for stdin):\n  factory development offers <state> [--json]\n  factory development offer-make|offer-revoke|offer-receive|offer-accept|offer-read <state> [request-file|-] [--json]\n  factory development offer-take|offer-check|offer-revoked|offer-return <state> [request-file|-] [--json]".into()
 }
 
 // ---- refusals ------------------------------------------------------------------
@@ -621,6 +633,31 @@ impl OfferStore {
     }
 }
 
+/// Factory's state and the repository's own records: never the work a grant
+/// names.
+fn machinery(name: &str) -> bool {
+    name == ".factory" || name == ".git"
+}
+
+/// Standard base64, padded.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+            | u32::from(*chunk.get(2).unwrap_or(&0));
+        for (index, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if index <= chunk.len() {
+                out.push(ALPHABET[(n >> shift & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
 fn decode(bytes: &[u8]) -> Result<Value, OfferRefusal> {
     serde_json::from_slice(bytes).map_err(|error| {
         OfferRefusal::new(
@@ -771,6 +808,190 @@ impl OfferStore {
             let answer = receipt("revoke", &record, Some((&caller, &authority)));
             Ok((record, answer))
         })
+    }
+
+    /// `offer-read {offer_ref, ref}`: the bytes of one ref the grant lets the
+    /// task read (what it reads or touches), served by the offerer's Factory
+    /// from its own record of the grant (O-I #858 SF13; Factory#312). A ref
+    /// `project:<id>/<path>` names `<path>` under this placed project's root,
+    /// where `<id>` is the project's key or its Central project's name. A
+    /// file is answered whole, base64, at most `MAX_READ_BYTES`; a folder by
+    /// its entries. The project's `.factory` and `.git` are never served: a
+    /// grant names the work, not its machinery. No person act is needed per
+    /// read; a revoked, lapsed or spent grant serves nothing.
+    pub fn read_granted(&self, request: &Value, now: i64) -> Result<Value, OfferRefusal> {
+        let object = object(request, "the read")?;
+        only_keys(object, &["offer_ref", "ref"], "offer-read")?;
+        let offer_ref = offer_ref_of(object)?;
+        let subject = reference(
+            object
+                .get("ref")
+                .ok_or_else(|| OfferRefusal::invalid("a read names one `ref`"))?,
+            "ref",
+        )?;
+        let record = decode(
+            &read_optional(&self.path(Side::Made, &offer_ref))?
+                .ok_or_else(|| unknown(&offer_ref, Side::Made))?,
+        )?;
+        let grant = &record["offer"]["grant"];
+        match record["state"].as_str() {
+            Some("revoked") => {
+                return Err(OfferRefusal::new(
+                    "revoked",
+                    "The offer was revoked; its grant serves nothing",
+                ))
+            }
+            Some("returned" | "accepted") => {
+                return Err(OfferRefusal::new(
+                    "spent",
+                    "What the task made has come back; the grant is spent",
+                ))
+            }
+            _ => {}
+        }
+        if grant["lapses_at"]
+            .as_i64()
+            .is_none_or(|lapses| lapses <= now)
+        {
+            return Err(OfferRefusal::new("lapsed", "The grant has lapsed"));
+        }
+        let mut granted = strings(&grant["touches"]);
+        granted.extend(strings(&grant["reads"]));
+        if !covers(&granted, &subject) {
+            return Err(OfferRefusal::new(
+                "not_granted",
+                format!("The grant does not let the task read {subject}"),
+            ));
+        }
+        let path = self.granted_path(&subject)?;
+        let meta = std::fs::symlink_metadata(&path).map_err(|error| {
+            OfferRefusal::new(
+                "not_here",
+                format!("{subject} names nothing this project holds ({error})"),
+            )
+        })?;
+        let mut answer = json!({
+            "schema": TASK_OFFER_READ,
+            "offer_ref": offer_ref,
+            "ref": subject,
+            "automatic_agent_or_model_invocation": false,
+        });
+        if meta.is_dir() {
+            let mut entries = Vec::new();
+            let listing = std::fs::read_dir(&path)
+                .map_err(|error| io_refusal(&format!("could not list {subject}"), error))?;
+            for entry in listing {
+                let entry = entry.map_err(|error| io_refusal("could not list", error))?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let kind = match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => "folder",
+                    Ok(kind) if kind.is_file() => "file",
+                    _ => continue,
+                };
+                if machinery(&name) {
+                    continue;
+                }
+                let byte_len = entry.metadata().map_or(0, |meta| meta.len());
+                entries.push(
+                    json!({"ref": format!("{subject}/{name}"), "kind": kind, "byte_len": byte_len}),
+                );
+            }
+            entries.sort_by(|a, b| a["ref"].as_str().cmp(&b["ref"].as_str()));
+            let more = entries.len() > MAX_READ_ENTRIES;
+            entries.truncate(MAX_READ_ENTRIES);
+            answer["kind"] = json!("folder");
+            answer["entries"] = json!(entries);
+            answer["more"] = json!(more);
+            return Ok(answer);
+        }
+        if !meta.is_file() {
+            return Err(OfferRefusal::new(
+                "not_here",
+                format!("{subject} is neither a file nor a folder of this project"),
+            ));
+        }
+        if meta.len() > MAX_READ_BYTES {
+            return Err(OfferRefusal::new(
+                "too_large",
+                format!(
+                    "{subject} holds {} bytes; one read carries at most {MAX_READ_BYTES}",
+                    meta.len()
+                ),
+            ));
+        }
+        let bytes = std::fs::read(&path)
+            .map_err(|error| io_refusal(&format!("could not read {subject}"), error))?;
+        if bytes.len() as u64 > MAX_READ_BYTES {
+            return Err(OfferRefusal::new(
+                "too_large",
+                format!("{subject} grew past {MAX_READ_BYTES} bytes while it was read"),
+            ));
+        }
+        use sha2::Digest;
+        answer["kind"] = json!("file");
+        answer["byte_len"] = json!(bytes.len());
+        answer["sha256"] = json!(format!("{:x}", sha2::Sha256::digest(&bytes)));
+        answer["content_base64"] = json!(base64(&bytes));
+        Ok(answer)
+    }
+
+    /// Where a granted ref stands under this placed project's root: refused
+    /// unless `<state>` is the project's own placed state, the ref names this
+    /// project, and every step under the root is a plain name that is no
+    /// link and no machinery.
+    fn granted_path(&self, subject: &str) -> Result<PathBuf, OfferRefusal> {
+        let not_here = |why: String| OfferRefusal::new("not_here", why);
+        let state = self.state_path()?;
+        let root = state
+            .parent()
+            .filter(|dir| dir.file_name().is_some_and(|name| name == ".factory"))
+            .and_then(Path::parent)
+            .ok_or_else(|| not_here("<state> is not a placed project's (.factory/development-state.json), so no granted ref stands here".into()))?;
+        let located = crate::project_setup::locate(root).map_err(|error| {
+            not_here(format!("this project's placement cannot be read ({error})"))
+        })?;
+        let placed = std::fs::canonicalize(state).ok();
+        if located["statePath"].as_str().map(PathBuf::from) != placed {
+            return Err(not_here(
+                "the project's placement names another developmental state".into(),
+            ));
+        }
+        let names: Vec<String> = [
+            located["projectKey"].as_str().map(str::to_owned),
+            located["centralProjectRef"]
+                .as_str()
+                .and_then(crate::build::central_project_name),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let body = subject
+            .strip_prefix("project:")
+            .ok_or_else(|| not_here(format!("{subject} names no project")))?;
+        let (id, rest) = body.split_once('/').unwrap_or((body, ""));
+        if !names.iter().any(|name| name == id) {
+            return Err(not_here(format!(
+                "{subject} names another project than this one"
+            )));
+        }
+        let mut path = PathBuf::from(located["projectRoot"].as_str().unwrap_or_default());
+        for step in rest.split('/').filter(|step| !step.is_empty()) {
+            if step == "."
+                || step == ".."
+                || step.contains('\\')
+                || step.contains('\0')
+                || machinery(step)
+            {
+                return Err(not_here(format!(
+                    "{subject} names no plain path of the project's work"
+                )));
+            }
+            path.push(step);
+            if std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+                return Err(not_here(format!("{subject} passes through a link; a grant serves only what stands in the project")));
+            }
+        }
+        Ok(path)
     }
 
     /// `offer-receive {return}`: what came back, as the field carried it,
@@ -1172,6 +1393,7 @@ pub fn execute(args: &[String], stdin: Option<&str>, now: i64) -> Result<Value, 
         "offer-revoke" => store.revoke(&request, now),
         "offer-receive" => store.receive(&request),
         "offer-accept" => store.accept(&request, now),
+        "offer-read" => store.read_granted(&request, now),
         "offer-take" => store.take(&request, now),
         "offer-check" => store.check(&request, now),
         "offer-revoked" => store.revoked(&request),
@@ -1236,6 +1458,176 @@ mod tests {
             .make(&with(request, OFFER_CAPABILITY_REF), NOW)
             .unwrap()["offer"]
             .clone()
+    }
+
+    /// The offerer's project placed on its machine (`river`), holding what the
+    /// grant names, with the offer made from it kept beside its state.
+    fn served(two: &Two, offer: &Value) -> (tempfile::TempDir, OfferStore) {
+        let dir = tempfile::tempdir().unwrap();
+        crate::project_setup::setup(dir.path(), "river", None).unwrap();
+        let root = dir.path();
+        for (path, bytes) in [
+            ("docs/brief.md", b"The brief.\n".to_vec()),
+            ("docs/deep/note.md", b"A note.".to_vec()),
+            ("docs/.git/config", b"[remote]".to_vec()),
+            ("maps/delta", b"chart".to_vec()),
+            ("README.md", b"Not granted.".to_vec()),
+            ("docs/big.bin", vec![7; MAX_READ_BYTES as usize + 1]),
+        ] {
+            std::fs::create_dir_all(root.join(path).parent().unwrap()).unwrap();
+            std::fs::write(root.join(path), bytes).unwrap();
+        }
+        let store = OfferStore::at(root.join(".factory/development-state.json"));
+        let offer_ref = offer["offer_ref"].as_str().unwrap();
+        let kept = store.path(Side::Made, offer_ref);
+        std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        std::fs::copy(two.offerer.path(Side::Made, offer_ref), &kept).unwrap();
+        (dir, store)
+    }
+
+    #[test]
+    fn the_offerer_serves_the_bytes_of_a_granted_ref_from_its_own_record_and_nothing_else() {
+        let two = two();
+        let offer = make(&two, NOW + HOUR);
+        let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
+        let (dir, store) = served(&two, &offer);
+        let read = |subject: &str, at: i64| {
+            store.read_granted(&json!({"offer_ref": offer_ref, "ref": subject}), at)
+        };
+        let code = |subject: &str| read(subject, NOW).unwrap_err().code;
+
+        let file = read("project:river/docs/brief.md", NOW).unwrap();
+        assert_eq!(file["schema"], TASK_OFFER_READ);
+        assert_eq!(file["kind"], "file");
+        assert_eq!(file["byte_len"], 11);
+        assert_eq!(file["content_base64"], "VGhlIGJyaWVmLgo=");
+        use sha2::Digest;
+        assert_eq!(
+            file["sha256"],
+            format!("{:x}", sha2::Sha256::digest(b"The brief.\n"))
+        );
+        assert_eq!(file["automatic_agent_or_model_invocation"], false);
+        assert_eq!(
+            read("project:river/maps/delta", NOW).unwrap()["content_base64"],
+            "Y2hhcnQ=",
+            "what the task touches it may read"
+        );
+        let folder = read("project:river/docs", NOW).unwrap();
+        assert_eq!(folder["kind"], "folder");
+        assert_eq!(
+            folder["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["ref"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "project:river/docs/big.bin",
+                "project:river/docs/brief.md",
+                "project:river/docs/deep"
+            ],
+            "a folder answers its entries, never the repository's or Factory's own records"
+        );
+
+        assert_eq!(code("project:river/README.md"), "not_granted");
+        assert_eq!(code("project:river/docsets/x"), "not_granted");
+        assert_eq!(code("project:river"), "not_granted");
+        assert_eq!(code("project:river/docs/../README.md"), "not_here");
+        assert_eq!(code("project:river/docs/.git/config"), "not_here");
+        assert_eq!(code("project:river/docs/absent.md"), "not_here");
+        assert_eq!(code("project:river/docs/big.bin"), "too_large");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dir.path().join("README.md"), dir.path().join("docs/link"))
+                .unwrap();
+            assert_eq!(
+                code("project:river/docs/link"),
+                "not_here",
+                "a link is never followed out"
+            );
+        }
+        assert_eq!(
+            read("project:river/docs/brief.md", NOW + HOUR)
+                .unwrap_err()
+                .code,
+            "lapsed"
+        );
+
+        // The taker's copy of the grant is never what serves: a wider grant
+        // taken on this machine changes nothing the offerer's record allows.
+        let mut wider = offer.clone();
+        wider["grant"]["reads"] = json!(["project:river"]);
+        store
+            .take(
+                &with(
+                    json!({"offer": wider, "by": {"world_ref": "world:ada", "name": "Ada"}}),
+                    TAKE_CAPABILITY_REF,
+                ),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(code("project:river/README.md"), "not_granted");
+
+        // Through the verb, as the field's relay asks it.
+        let state = dir.path().join(".factory/development-state.json");
+        let answer = execute(
+            &["offer-read".into(), state.display().to_string(), "-".into()],
+            Some(
+                json!({"offer_ref": offer_ref, "ref": "project:river/docs/deep/note.md"})
+                    .to_string()
+                    .as_str(),
+            ),
+            NOW,
+        )
+        .unwrap();
+        assert_eq!(answer["content_base64"], "QSBub3RlLg==");
+
+        store
+            .revoke(
+                &with(json!({"offer_ref": offer_ref}), OFFER_CAPABILITY_REF),
+                NOW,
+            )
+            .unwrap();
+        assert_eq!(code("project:river/docs/brief.md"), "revoked");
+    }
+
+    #[test]
+    fn a_read_is_refused_where_the_state_is_no_placed_project_or_the_ref_names_another() {
+        let two = two();
+        let offer = make(&two, NOW + HOUR);
+        let offer_ref = offer["offer_ref"].as_str().unwrap();
+        assert_eq!(
+            two.offerer
+                .read_granted(
+                    &json!({"offer_ref": offer_ref, "ref": "project:river/docs"}),
+                    NOW
+                )
+                .unwrap_err()
+                .code,
+            "not_here",
+            "a state that is no placed project's serves nothing"
+        );
+        let (_dir, store) = served(&two, &offer);
+        let kept = store.path(Side::Made, offer_ref);
+        let mut record: Value = serde_json::from_slice(&std::fs::read(&kept).unwrap()).unwrap();
+        record["offer"]["grant"]["reads"] = json!(["project:delta/docs"]);
+        std::fs::write(&kept, encode(&record)).unwrap();
+        assert_eq!(
+            store
+                .read_granted(
+                    &json!({"offer_ref": offer_ref, "ref": "project:delta/docs"}),
+                    NOW
+                )
+                .unwrap_err()
+                .code,
+            "not_here",
+            "a ref of another project is not this Factory's to serve"
+        );
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"f"), "Zg==");
+        assert_eq!(base64(b"fo"), "Zm8=");
+        assert_eq!(base64(b"foo"), "Zm9v");
+        assert_eq!(base64(&[0xff, 0xfe, 0xfd, 0xfc]), "//79/A==");
     }
 
     fn take(two: &Two, offer: &Value, at: i64) -> Result<Value, OfferRefusal> {
