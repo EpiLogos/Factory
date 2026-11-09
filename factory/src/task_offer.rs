@@ -145,6 +145,36 @@ fn io_refusal(what: &str, error: io::Error) -> OfferRefusal {
     OfferRefusal::new(code, format!("{what}: {error}"))
 }
 
+/// The same, for the made side, whose refusals go toward another world: the
+/// OS error in its own words alone (its message and its code, else its
+/// kind), never the text a layer above it added, such as the stage path
+/// a failed publication names (SF13.3d, F6 in full).
+fn os_refusal(what: &str, error: &io::Error) -> OfferRefusal {
+    let code = if error.kind() == io::ErrorKind::TimedOut {
+        "busy"
+    } else {
+        "io"
+    };
+    OfferRefusal::new(code, format!("{what}: {}", os_words(error)))
+}
+
+/// The OS's own words for an error: the first OS error code in its chain,
+/// as the OS says it, else only its kind. Nothing an annotation added is
+/// repeated.
+fn os_words(error: &io::Error) -> String {
+    let mut cause: Option<&(dyn std::error::Error + 'static)> = Some(error);
+    while let Some(current) = cause {
+        if let Some(code) = current
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::raw_os_error)
+        {
+            return io::Error::from_raw_os_error(code).to_string();
+        }
+        cause = current.source();
+    }
+    error.kind().to_string()
+}
+
 // ---- reading a request -----------------------------------------------------------
 
 fn object<'a>(value: &'a Value, what: &str) -> Result<&'a Map<String, Value>, OfferRefusal> {
@@ -627,15 +657,20 @@ impl OfferStore {
     ) -> Result<Value, OfferRefusal> {
         let path = self.path(side, offer_ref);
         // The made side answers the relay, whose refusals go toward another
-        // world: it names no local path (SF13.3c, F6).
+        // world: it names no local path, and says an OS error in the OS's
+        // words alone (SF13.3c and SF13.3d, F6).
         let record = match side {
             Side::Made => "the offer's record".to_owned(),
             Side::Taken => path.display().to_string(),
         };
+        let refuse = |what: &str, error: io::Error| match side {
+            Side::Made => os_refusal(what, &error),
+            Side::Taken => io_refusal(what, error),
+        };
         let name = lock_name(&path)
-            .map_err(|error| io_refusal(&format!("could not name the lock of {record}"), error))?;
+            .map_err(|error| refuse(&format!("could not name the lock of {record}"), error))?;
         let lock = NativeFileTransaction::acquire(&path, &name, true)
-            .map_err(|error| io_refusal(&format!("could not open {record}"), error))?;
+            .map_err(|error| refuse(&format!("could not open {record}"), error))?;
         let current = lock.current().map(decode).transpose()?;
         let (record, answer) = change(current)?;
         let bytes = encode(&record);
@@ -643,7 +678,7 @@ impl OfferStore {
             match lock.publish(&bytes, lock.current().is_none()) {
                 Ok(()) => {}
                 Err(PublicationError::Before(error)) => {
-                    return Err(io_refusal("the change was not published", error))
+                    return Err(refuse("the change was not published", error))
                 }
                 Err(PublicationError::Uncertain(uncertain)) => {
                     let said = "publication is uncertain after the replacement; read the offers back before trying again";
@@ -1137,7 +1172,10 @@ impl OfferStore {
     /// its own is refused, and `by.name` is only the name it is shown by
     /// (SF13.3c, F1). Only that world reads under the grant (`offer-read`)
     /// and returns to it (`offer-receive`). The same take told again answers
-    /// as before; another world's is refused.
+    /// as before; another world's is refused. An offer already returned that
+    /// keeps no taker (a record written before #314, or a take told only
+    /// once its return came) is told it too, and its state stays as it is,
+    /// so what came back can be received (SF13.3d, H1).
     pub fn taken_by(&self, request: &Value, world_ref: &str) -> Result<Value, OfferRefusal> {
         let object = object(request, "the take")?;
         only_keys(object, &["offer_ref", "by", "taken_at"], "offer-taken")?;
@@ -1358,7 +1396,10 @@ impl OfferStore {
     /// which the relay names beside the request; only the world this
     /// Factory keeps as the one that took the offer (`offer-taken`) returns
     /// to it, under its own name (SF13.3c, F2). Any other return is refused
-    /// before it is read, and spends nothing.
+    /// before it is read, and spends nothing. The same return received
+    /// again, by the world it names, is answered as before ahead of that
+    /// check: it changes nothing and spends nothing, so a return received
+    /// before this Factory kept its taker answers again (SF13.3d, H1).
     pub fn receive(&self, request: &Value, world_ref: &str) -> Result<Value, OfferRefusal> {
         let object = object(request, "what came back")?;
         only_keys(object, &["return"], "offer-receive")?;
@@ -1367,6 +1408,15 @@ impl OfferStore {
         let world_ref = reference(&json!(world_ref), "by")?;
         self.transact(Side::Made, &offer_ref, |current| {
             let mut record = current.ok_or_else(|| unknown(&offer_ref, Side::Made))?;
+            let repeat = matches!(record["state"].as_str(), Some("returned" | "accepted"))
+                && checked_return(back, &record["offer"]).is_ok_and(|same| {
+                    same == record["return"]
+                        && same["by"]["world_ref"].as_str() == Some(world_ref.as_str())
+                });
+            if repeat {
+                let answer = receipt("receive", &record, None);
+                return Ok((record, answer));
+            }
             match record["taken"]["world_ref"].as_str() {
                 Some(taker) if taker == world_ref => {}
                 Some(_) => {
@@ -1879,7 +1929,15 @@ mod tests {
     /// The offerer's project placed on its machine (`river`), holding what the
     /// grant names, with the offer made from it kept beside its state.
     fn served(two: &Two, offer: &Value) -> (tempfile::TempDir, OfferStore) {
-        let dir = tempfile::tempdir().unwrap();
+        served_in(two, offer, tempfile::tempdir().unwrap())
+    }
+
+    /// The same, placed in `dir`.
+    fn served_in(
+        two: &Two,
+        offer: &Value,
+        dir: tempfile::TempDir,
+    ) -> (tempfile::TempDir, OfferStore) {
         crate::project_setup::setup(dir.path(), "river", None).unwrap();
         let root = dir.path();
         for (path, bytes) in [
@@ -1900,6 +1958,52 @@ mod tests {
         std::fs::copy(two.offerer.path(Side::Made, offer_ref), &kept).unwrap();
         told_taken(&store, offer_ref, "world:ada").unwrap();
         (dir, store)
+    }
+
+    /// A temporary folder whose paths leave room for a Unix socket's name
+    /// (`sun_path` holds 104 bytes on macOS): the temporary folder when its
+    /// path is short enough, else the user's own temporary folder on macOS
+    /// (`/tmp` elsewhere), so a long `TMPDIR` never fails a bind (SF13.3d;
+    /// the review's Info 5).
+    #[cfg(unix)]
+    fn short_tempdir() -> tempfile::TempDir {
+        let fits = |base: &Path| base.as_os_str().len() + "/.tmpXXXXXX/docs/sock".len() < 100;
+        let base = std::env::temp_dir();
+        let base = if fits(&base) {
+            base
+        } else {
+            user_temp_dir()
+                .filter(|dir| fits(dir))
+                .unwrap_or_else(|| PathBuf::from("/tmp"))
+        };
+        tempfile::Builder::new().tempdir_in(base).unwrap()
+    }
+
+    /// macOS's per-user temporary folder (`confstr(_CS_DARWIN_USER_TEMP_DIR)`),
+    /// whatever `TMPDIR` says.
+    #[cfg(target_vendor = "apple")]
+    fn user_temp_dir() -> Option<PathBuf> {
+        use std::os::unix::ffi::OsStringExt;
+        let mut buf = vec![0u8; 1024];
+        // SAFETY: `buf` is writable for `buf.len()` bytes; confstr writes at
+        // most that many, NUL included, and returns the length it needed.
+        let needed = unsafe {
+            libc::confstr(
+                libc::_CS_DARWIN_USER_TEMP_DIR,
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        };
+        if needed == 0 || needed > buf.len() {
+            return None;
+        }
+        buf.truncate(needed - 1);
+        Some(PathBuf::from(std::ffi::OsString::from_vec(buf)))
+    }
+
+    #[cfg(all(unix, not(target_vendor = "apple")))]
+    fn user_temp_dir() -> Option<PathBuf> {
+        None
     }
 
     /// The field's word that `world` took the offer, as the relay passes it.
@@ -2414,7 +2518,8 @@ mod tests {
         let two = two();
         let offer = make(&two, NOW + HOUR);
         let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
-        let (dir, store) = served(&two, &offer);
+        // under a short folder, so the socket's name fits whatever TMPDIR is
+        let (dir, store) = served_in(&two, &offer, short_tempdir());
         let docs = dir.path().join("docs");
         let pipe = std::ffi::CString::new(docs.join("pipe").as_os_str().as_bytes()).unwrap();
         // SAFETY: a live NUL-terminated path; mkfifo only makes the node.
@@ -3176,6 +3281,31 @@ mod tests {
         let two = two();
         let offer = make_granting(&two, json!(["project:river/docs//deep/"]), NOW + HOUR);
         assert_eq!(offer["grant"]["reads"], json!(["project:river/docs/deep"]));
+        // what a task touches is kept as a read reaches it too, and served so (SF13.3d; the review's Info 5)
+        let touching = two
+            .offerer
+            .make(
+                &with(
+                    json!({"run_ref": two.run_ref, "workflow_unit_ref": two.unit_ref, "star_ref": "star:river-maps",
+                        "grant": {"reads": ["project:river/docs"], "touches": ["project:river//maps/"], "lapses_at": NOW + HOUR}}),
+                    OFFER_CAPABILITY_REF,
+                ),
+                NOW,
+            )
+            .unwrap()["offer"]
+            .clone();
+        assert_eq!(touching["grant"]["touches"], json!(["project:river/maps"]));
+        let (_touched, touched) = served(&two, &touching);
+        assert_eq!(
+            touched
+                .read_granted(
+                    &json!({"offer_ref": touching["offer_ref"], "ref": "project:river/maps/delta"}),
+                    "world:ada",
+                    NOW,
+                )
+                .unwrap()["content_base64"],
+            "Y2hhcnQ="
+        );
         let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
         let (_dir, store) = served(&two, &offer);
         let read = |offer_ref: &str, subject: &str| {
@@ -3234,6 +3364,108 @@ mod tests {
                 "{refused}"
             );
         }
+
+        // A failure before publication (the record's folder read-only, so no
+        // stage name can be made there) is said in the OS's words alone,
+        // never with the stage path (SF13.3d, F6 in full).
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let fresh = self::two();
+            let offer = make(&fresh, NOW + HOUR);
+            let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
+            let root = fresh.state.parent().unwrap().to_path_buf();
+            let made = root.join(FOLDER).join("made");
+            std::fs::set_permissions(&made, std::fs::Permissions::from_mode(0o555)).unwrap();
+            let refused = told_taken(&fresh.offerer, &offer_ref, "world:ada");
+            std::fs::set_permissions(&made, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let refused = refused.unwrap_err();
+            assert_eq!(refused.code, "io", "{refused}");
+            assert!(
+                refused
+                    .message
+                    .starts_with("the change was not published: "),
+                "{refused}"
+            );
+            assert!(refused.message.contains("os error"), "{refused}");
+            assert!(
+                !refused.message.contains(root.to_str().unwrap()),
+                "{refused}"
+            );
+            assert!(!refused.message.contains(".factory-owner-"), "{refused}");
+            let mine = fresh.offerer.reading().unwrap();
+            assert!(mine["made"][0]["taken"].is_null(), "nothing was kept");
+        }
+    }
+
+    /// SF13.3d H1: an offer returned and received before this Factory kept
+    /// who took it (a record as #313 wrote it: returned, its return kept, no
+    /// `taken`) is told its taker without its state moving back; the same
+    /// return received again, by the world it names, answers as before
+    /// ahead of the taker check, and any other return meets that check
+    /// first.
+    #[test]
+    fn an_offer_returned_before_its_taker_was_kept_is_told_it_and_its_return_answers_again() {
+        let two = two();
+        let offer = make(&two, NOW + 2 * HOUR);
+        let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
+        take(&two, &offer, NOW + HOUR).unwrap();
+        let back = two
+            .taker
+            .give_back(
+                &json!({"offer_ref": offer_ref, "made": made(json!(["project:river/maps/delta"]))}),
+                NOW + HOUR,
+            )
+            .unwrap();
+        received(&two, &back).unwrap();
+        change_kept(&two.offerer, &offer_ref, |record| {
+            record.as_object_mut().unwrap().remove("taken");
+        });
+        let kept = || std::fs::read(two.offerer.path(Side::Made, &offer_ref)).unwrap();
+        let before = kept();
+        let receive = |back: &Value, by: &str| two.offerer.receive(&json!({"return": back}), by);
+
+        // The same return again answers as before, though no taker is kept,
+        // and changes nothing.
+        let again = receive(&back, "world:ada").unwrap();
+        assert_eq!(
+            (&again["act"], &again["state"]),
+            (&json!("receive"), &json!("returned"))
+        );
+        assert_eq!(
+            kept(),
+            before,
+            "a repeat spends nothing and changes nothing"
+        );
+        // Any other return, or the same one brought by another world, meets
+        // the taker check first.
+        let mut other = back.clone();
+        other["made"]["summary"] = json!("Charted other channels.");
+        let refused = receive(&other, "world:ada").unwrap_err();
+        assert_eq!(refused.code, "not_the_taker", "{refused}");
+        assert!(refused.message.contains("keeps no world"), "{refused}");
+        assert_eq!(
+            receive(&back, "world:bob").unwrap_err().code,
+            "not_the_taker"
+        );
+        assert_eq!(kept(), before);
+
+        // The take is told on the returned record: kept, and its state stays.
+        told_taken(&two.offerer, &offer_ref, "world:ada").unwrap();
+        let mine = two.offerer.reading().unwrap();
+        assert_eq!(mine["made"][0]["state"], "returned");
+        assert_eq!(mine["made"][0]["taken"]["world_ref"], "world:ada");
+        assert!(!mine["made"][0]["return"].is_null(), "what came back stays");
+        // and what came back is received and accepted, as the window does
+        receive(&back, "world:ada").unwrap();
+        let accepted = two
+            .offerer
+            .accept(
+                &with(json!({"offer_ref": offer_ref}), OFFER_CAPABILITY_REF),
+                NOW + HOUR,
+            )
+            .unwrap();
+        assert_eq!(accepted["state"], "accepted");
     }
 
     #[test]
