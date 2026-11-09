@@ -1053,8 +1053,9 @@ mod unix {
     }
 
     /// One step of a granted read: `step` opened in the held `parent` with
-    /// no link followed (a link at this step fails to open) and no wait on a
-    /// pipe. The caller checks what the handle is; nothing is read here.
+    /// no link followed (a link at this step fails to open), no wait on a
+    /// pipe and no terminal taken as the process's own. The caller checks
+    /// what the handle is; nothing is read here.
     pub(crate) fn open_step(parent: &File, step: &OsStr) -> io::Result<File> {
         let step = name(step)?;
         // SAFETY: the parent descriptor is held; step is a live NUL-terminated
@@ -1063,7 +1064,11 @@ mod unix {
             libc::openat(
                 parent.as_raw_fd(),
                 step.as_ptr(),
-                libc::O_RDONLY | libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK,
+                libc::O_RDONLY
+                    | libc::O_CLOEXEC
+                    | libc::O_NOFOLLOW
+                    | libc::O_NONBLOCK
+                    | libc::O_NOCTTY,
             )
         };
         if fd < 0 {
@@ -1129,11 +1134,13 @@ mod unix {
         read.map(|()| names)
     }
 
-    /// What one entry of a held directory is: a folder, a file or neither.
+    /// What one entry of a held directory is: a folder, a file, a link, or
+    /// none of these (a pipe, a socket or a device).
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum EntryKind {
         Folder,
         File,
+        Link,
         Other,
     }
 
@@ -1161,6 +1168,7 @@ mod unix {
         let kind = match stat.st_mode & libc::S_IFMT {
             libc::S_IFDIR => EntryKind::Folder,
             libc::S_IFREG => EntryKind::File,
+            libc::S_IFLNK => EntryKind::Link,
             _ => EntryKind::Other,
         };
         Ok((kind, stat.st_size as u64, stat.st_nlink as u64))
