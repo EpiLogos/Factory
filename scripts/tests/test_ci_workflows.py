@@ -58,7 +58,7 @@ class NativeWorkflowTests(unittest.TestCase):
 
     def test_actual_macos_native_gate_and_foreign_owner_case_are_required_for_publication(self):
         mac = self.workflow['jobs']['factory-native-macos']
-        self.assertEqual('macos-14', mac['runs-on'])
+        self.assertEqual('macos-15', mac['runs-on'])
         commands = '\n'.join(step.get('run', '') for step in mac['steps'])
         self.assertIn('cargo test --workspace --all-targets --locked', commands)
         self.assertIn('cargo clippy --workspace --all-targets --locked -- -D warnings', commands)
@@ -74,7 +74,7 @@ class NativeEvidenceWorkflowTests(unittest.TestCase):
         self.steps = self.job['steps']
 
     def test_real_both_platforms_keep_distinct_failure_evidence(self):
-        self.assertEqual(['ubuntu-latest', 'macos-14'], self.job['strategy']['matrix']['os'])
+        self.assertEqual(['ubuntu-latest', 'macos-15'], self.job['strategy']['matrix']['os'])
         self.assertEqual('false', self.job['strategy']['fail-fast'])
         upload = next(step for step in self.steps if step.get('uses') == 'actions/upload-artifact@v4')
         self.assertEqual("${{ always() && steps.evidence_paths.outcome == 'success' }}", upload['if'])
