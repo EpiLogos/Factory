@@ -1174,6 +1174,79 @@ mod unix {
         Ok((kind, stat.st_size as u64, stat.st_nlink as u64))
     }
 
+    /// A folder `step` made in the held `parent` with `mode` (less the
+    /// umask); one standing there already is left as it is, whatever it is
+    /// (the caller reads what stands).
+    pub(crate) fn make_folder_at(parent: &File, step: &OsStr, mode: u32) -> io::Result<()> {
+        let step = name(step)?;
+        // SAFETY: the parent descriptor is held; step is a live NUL-terminated
+        // component; no pathname is traversed.
+        let made =
+            unsafe { libc::mkdirat(parent.as_raw_fd(), step.as_ptr(), mode as libc::mode_t) };
+        if made != 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::AlreadyExists {
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
+    /// A new file `step` in the held `parent`, created with `mode` (less the
+    /// umask) and opened to be written: never one that stands already, and
+    /// never through a link.
+    pub(crate) fn create_new_at(parent: &File, step: &OsStr, mode: u32) -> io::Result<File> {
+        let step = name(step)?;
+        // SAFETY: the parent descriptor is held; step is a live NUL-terminated
+        // component. Success transfers a fresh descriptor to exactly one File.
+        let fd = unsafe {
+            libc::openat(
+                parent.as_raw_fd(),
+                step.as_ptr(),
+                libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                mode as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a new, uniquely owned descriptor.
+        Ok(unsafe { File::from_raw_fd(fd) })
+    }
+
+    /// `from` renamed to `to` within the held `dir`: whatever stands at
+    /// `to`, a link included, is replaced as a name, never followed.
+    pub(crate) fn rename_at(dir: &File, from: &OsStr, to: &OsStr) -> io::Result<()> {
+        let (from, to) = (name(from)?, name(to)?);
+        // SAFETY: the directory descriptor is held; both names are live
+        // NUL-terminated components beneath it.
+        let renamed =
+            unsafe { libc::renameat(dir.as_raw_fd(), from.as_ptr(), dir.as_raw_fd(), to.as_ptr()) };
+        if renamed != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// The entry `step` of the held `parent` removed as a name, never
+    /// followed: an empty folder when `folder`, else a file or a link.
+    pub(crate) fn remove_at(parent: &File, step: &OsStr, folder: bool) -> io::Result<()> {
+        let step = name(step)?;
+        // SAFETY: the parent descriptor is held; step is a live NUL-terminated
+        // component; unlinkat never follows a link at it.
+        let removed = unsafe {
+            libc::unlinkat(
+                parent.as_raw_fd(),
+                step.as_ptr(),
+                if folder { libc::AT_REMOVEDIR } else { 0 },
+            )
+        };
+        if removed != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     // Tests observe an actual successful rename and mutate the real published
     // inode. There is no substitute IO result or production injection path.
     #[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
@@ -1856,6 +1929,8 @@ mod unix {
         }
     }
 }
+#[cfg(unix)]
+pub(crate) use unix::{create_new_at, make_folder_at, remove_at, rename_at};
 #[cfg(unix)]
 pub(crate) use unix::{entry_names, entry_stat, open_directory, open_step, EntryKind};
 #[cfg(unix)]
