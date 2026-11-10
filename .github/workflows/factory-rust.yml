@@ -104,7 +104,7 @@ jobs:
   factory-native-macos:
     # Mac descriptor/ACL/fcopyfile/rename paths need actual Mac qualification.
     # Keep the existing required Linux check name stable.
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
