@@ -1927,6 +1927,130 @@ mod unix {
                 .to_string_lossy()
                 .ends_with(".tmp")));
         }
+
+        /// A held folder moved away after it was opened, with a link beside
+        /// it to a folder and to a file outside (SF13.5c, item 9): each
+        /// helper acts in the folder it holds, wherever its path now leads.
+        fn held_and_moved() -> (tempfile::TempDir, File, PathBuf, PathBuf) {
+            let root = tempfile::tempdir().unwrap();
+            let (first, moved, outside) = (
+                root.path().join("held"),
+                root.path().join("moved"),
+                root.path().join("outside"),
+            );
+            std::fs::create_dir(&first).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            std::fs::write(outside.join("kept"), b"kept").unwrap();
+            let held = open_directory(&first).unwrap();
+            std::fs::rename(&first, &moved).unwrap();
+            std::fs::create_dir(&first).unwrap();
+            symlink(&outside, moved.join("to-folder")).unwrap();
+            symlink(outside.join("kept"), moved.join("to-file")).unwrap();
+            (root, held, moved, outside)
+        }
+
+        fn names(folder: &Path) -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        }
+
+        #[test]
+        fn make_folder_at_makes_in_the_held_folder_and_never_through_a_link_at_its_name() {
+            let (root, held, moved, outside) = held_and_moved();
+            make_folder_at(&held, OsStr::new("made"), 0o700).unwrap();
+            assert!(moved.join("made").is_dir(), "made where the held folder is");
+            assert!(
+                names(&root.path().join("held")).is_empty(),
+                "not where its path led first"
+            );
+            let mode = std::fs::metadata(moved.join("made"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "the mode asked for, less the umask: {mode:o}"
+            );
+            // A link at the name is left as it is, for the caller to refuse: nothing is made through it.
+            make_folder_at(&held, OsStr::new("to-folder"), 0o700).unwrap();
+            assert!(std::fs::symlink_metadata(moved.join("to-folder"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(names(&outside), ["kept"]);
+            let gone = open_directory(&moved.join("made")).unwrap();
+            std::fs::remove_dir(moved.join("made")).unwrap();
+            let error = make_folder_at(&gone, OsStr::new("within"), 0o700).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::ENOENT), "{error}");
+        }
+
+        #[test]
+        fn create_new_at_makes_a_new_file_in_the_held_folder_and_never_one_through_a_link() {
+            let (root, held, moved, outside) = held_and_moved();
+            let mut file = create_new_at(&held, OsStr::new("new"), 0o600).unwrap();
+            file.write_all(b"new").unwrap();
+            assert_eq!(std::fs::read(moved.join("new")).unwrap(), b"new");
+            assert!(names(&root.path().join("held")).is_empty());
+            for (name, code) in [("new", libc::EEXIST), ("to-file", libc::EEXIST)] {
+                let error = create_new_at(&held, OsStr::new(name), 0o600).unwrap_err();
+                assert_eq!(error.raw_os_error(), Some(code), "{name}: {error}");
+            }
+            assert_eq!(
+                std::fs::read(outside.join("kept")).unwrap(),
+                b"kept",
+                "the link's file is untouched"
+            );
+            assert_eq!(names(&outside), ["kept"]);
+        }
+
+        #[test]
+        fn rename_at_replaces_a_link_as_a_name_in_the_held_folder_and_answers_its_error() {
+            let (root, held, moved, outside) = held_and_moved();
+            std::fs::write(moved.join("stage"), b"placed").unwrap();
+            rename_at(&held, OsStr::new("stage"), OsStr::new("to-file")).unwrap();
+            assert!(!std::fs::symlink_metadata(moved.join("to-file"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+            assert_eq!(std::fs::read(moved.join("to-file")).unwrap(), b"placed");
+            assert_eq!(
+                std::fs::read(outside.join("kept")).unwrap(),
+                b"kept",
+                "the link was replaced, not followed"
+            );
+            assert!(names(&root.path().join("held")).is_empty());
+            let error = rename_at(&held, OsStr::new("absent"), OsStr::new("there")).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(libc::ENOENT), "{error}");
+        }
+
+        #[test]
+        fn remove_at_removes_a_link_as_a_name_in_the_held_folder_and_answers_its_error() {
+            let (root, held, moved, outside) = held_and_moved();
+            remove_at(&held, OsStr::new("to-file"), false).unwrap();
+            remove_at(&held, OsStr::new("to-folder"), false).unwrap();
+            assert!(names(&moved).is_empty());
+            assert_eq!(names(&outside), ["kept"], "what the links named stands");
+            std::fs::create_dir(moved.join("full")).unwrap();
+            std::fs::write(moved.join("full/one"), b"1").unwrap();
+            std::fs::create_dir(root.path().join("held/absent")).unwrap();
+            for (name, folder, code) in [
+                ("full", true, libc::ENOTEMPTY),
+                ("absent", true, libc::ENOENT),
+                ("absent", false, libc::ENOENT),
+            ] {
+                let error = remove_at(&held, OsStr::new(name), folder).unwrap_err();
+                assert_eq!(error.raw_os_error(), Some(code), "{name}: {error}");
+            }
+            assert!(
+                root.path().join("held/absent").is_dir(),
+                "never the folder its path led to first"
+            );
+        }
     }
 }
 #[cfg(unix)]
