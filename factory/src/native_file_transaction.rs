@@ -322,6 +322,20 @@ mod unix {
     fn name(value: &OsStr) -> io::Result<CString> {
         CString::new(value.as_bytes()).map_err(|_| invalid("NUL in native file name"))
     }
+    /// One step within a held folder, as `make_folder_at`, `create_new_at`,
+    /// `rename_at` and `remove_at` take it: one name, never a path. A step
+    /// that is empty, is `.` or `..`, or holds a slash is refused, so none of
+    /// them reaches outside the folder it holds or through a link within it
+    /// (SF13.5d, item 5).
+    fn one_step(value: &OsStr) -> io::Result<CString> {
+        let bytes = value.as_bytes();
+        if bytes.is_empty() || bytes == b"." || bytes == b".." || bytes.contains(&b'/') {
+            return Err(invalid(
+                "a step within a held folder is one name: not empty, not `.` or `..`, and with no slash",
+            ));
+        }
+        name(value)
+    }
     fn open_at(parent: &File, name: &CStr, flags: libc::c_int) -> io::Result<File> {
         // SAFETY: the parent descriptor is held; name is a live NUL-terminated
         // component. Success transfers a fresh descriptor to exactly one File.
@@ -1178,7 +1192,7 @@ mod unix {
     /// umask); one standing there already is left as it is, whatever it is
     /// (the caller reads what stands).
     pub(crate) fn make_folder_at(parent: &File, step: &OsStr, mode: u32) -> io::Result<()> {
-        let step = name(step)?;
+        let step = one_step(step)?;
         // SAFETY: the parent descriptor is held; step is a live NUL-terminated
         // component; no pathname is traversed.
         let made =
@@ -1196,7 +1210,7 @@ mod unix {
     /// umask) and opened to be written: never one that stands already, and
     /// never through a link.
     pub(crate) fn create_new_at(parent: &File, step: &OsStr, mode: u32) -> io::Result<File> {
-        let step = name(step)?;
+        let step = one_step(step)?;
         // SAFETY: the parent descriptor is held; step is a live NUL-terminated
         // component. Success transfers a fresh descriptor to exactly one File.
         let fd = unsafe {
@@ -1217,7 +1231,7 @@ mod unix {
     /// `from` renamed to `to` within the held `dir`: whatever stands at
     /// `to`, a link included, is replaced as a name, never followed.
     pub(crate) fn rename_at(dir: &File, from: &OsStr, to: &OsStr) -> io::Result<()> {
-        let (from, to) = (name(from)?, name(to)?);
+        let (from, to) = (one_step(from)?, one_step(to)?);
         // SAFETY: the directory descriptor is held; both names are live
         // NUL-terminated components beneath it.
         let renamed =
@@ -1231,7 +1245,7 @@ mod unix {
     /// The entry `step` of the held `parent` removed as a name, never
     /// followed: an empty folder when `folder`, else a file or a link.
     pub(crate) fn remove_at(parent: &File, step: &OsStr, folder: bool) -> io::Result<()> {
-        let step = name(step)?;
+        let step = one_step(step)?;
         // SAFETY: the parent descriptor is held; step is a live NUL-terminated
         // component; unlinkat never follows a link at it.
         let removed = unsafe {
@@ -2050,6 +2064,101 @@ mod unix {
                 root.path().join("held/absent").is_dir(),
                 "never the folder its path led to first"
             );
+        }
+
+        /// SF13.5d, item 5: each helper takes one name within the folder it
+        /// holds. A step that is empty, is `.` or `..`, or holds a slash is
+        /// refused before the OS is asked, so nothing is made, replaced or
+        /// removed beside the held folder or through a link within it.
+        const NO_STEPS: [&str; 6] = ["", ".", "..", "to-folder/made", "../escaped", "a/"];
+
+        fn refused_step(error: io::Error, step: &str) {
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::InvalidData,
+                "{step:?}: {error}"
+            );
+            assert!(error.to_string().contains("one name"), "{step:?}: {error}");
+        }
+
+        #[test]
+        fn make_folder_at_refuses_a_step_that_is_no_single_name() {
+            let (root, held, moved, outside) = held_and_moved();
+            for step in NO_STEPS {
+                refused_step(
+                    make_folder_at(&held, OsStr::new(step), 0o700).unwrap_err(),
+                    step,
+                );
+            }
+            assert_eq!(
+                names(&outside),
+                ["kept"],
+                "nothing is made through the link"
+            );
+            assert_eq!(names(&moved), ["to-file", "to-folder"]);
+            assert_eq!(names(root.path()), ["held", "moved", "outside"]);
+        }
+
+        #[test]
+        fn create_new_at_refuses_a_step_that_is_no_single_name() {
+            let (root, held, moved, outside) = held_and_moved();
+            for step in NO_STEPS {
+                refused_step(
+                    create_new_at(&held, OsStr::new(step), 0o600).unwrap_err(),
+                    step,
+                );
+            }
+            assert_eq!(names(&outside), ["kept"]);
+            assert_eq!(names(&moved), ["to-file", "to-folder"]);
+            assert_eq!(names(root.path()), ["held", "moved", "outside"]);
+        }
+
+        #[test]
+        fn rename_at_refuses_a_step_that_is_no_single_name_on_either_side() {
+            let (root, held, moved, outside) = held_and_moved();
+            std::fs::write(moved.join("stage"), b"placed").unwrap();
+            for step in NO_STEPS {
+                refused_step(
+                    rename_at(&held, OsStr::new("stage"), OsStr::new(step)).unwrap_err(),
+                    step,
+                );
+                refused_step(
+                    rename_at(&held, OsStr::new(step), OsStr::new("there")).unwrap_err(),
+                    step,
+                );
+            }
+            refused_step(
+                rename_at(&held, OsStr::new("stage"), OsStr::new("to-folder/kept")).unwrap_err(),
+                "to-folder/kept",
+            );
+            assert_eq!(std::fs::read(outside.join("kept")).unwrap(), b"kept");
+            assert_eq!(names(&outside), ["kept"]);
+            assert_eq!(names(&moved), ["stage", "to-file", "to-folder"]);
+            assert_eq!(names(root.path()), ["held", "moved", "outside"]);
+        }
+
+        #[test]
+        fn remove_at_refuses_a_step_that_is_no_single_name() {
+            let (root, held, moved, outside) = held_and_moved();
+            for step in NO_STEPS {
+                for folder in [false, true] {
+                    refused_step(
+                        remove_at(&held, OsStr::new(step), folder).unwrap_err(),
+                        step,
+                    );
+                }
+            }
+            refused_step(
+                remove_at(&held, OsStr::new("to-folder/kept"), false).unwrap_err(),
+                "to-folder/kept",
+            );
+            assert_eq!(
+                names(&outside),
+                ["kept"],
+                "nothing is removed through the link"
+            );
+            assert_eq!(names(&moved), ["to-file", "to-folder"]);
+            assert_eq!(names(root.path()), ["held", "moved", "outside"]);
         }
     }
 }
