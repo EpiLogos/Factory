@@ -63,6 +63,12 @@
 //! file found gone is `missing`; either is wanted again. A folder answered
 //! with `more` is paged by a want naming `after`. The record keeps at most
 //! `MAX_SETTLED` settled reads, by their digests and words alone.
+//! No bytes stand under a read that says nothing of them (SF13.5f): a file
+//! can land while its record does not, so a read that expires, is refused or
+//! is unwanted has the file at its key removed first, and where that fails,
+//! or the folder cannot be looked into, the read is `drop_pending` with its
+//! path (`unseen` where no file is known to stand there) until it is gone;
+//! `offers` and `offer-check` list it under `left_on_disk` meanwhile.
 //! No receipt or refusal carries what was read: each names the ref and its
 //! size.
 //!
@@ -85,6 +91,10 @@
 //! offer. Narrowing takes the group's and the others' bits away and adds
 //! none; a record is narrowed only by the verb that holds its lock; and what
 //! could not be narrowed is said in the act's answer (`left_wide`, SF13.5e).
+//! `reads` and the offer's reads folder are narrowed with the record, and
+//! the files of a reads folder that stood wider with it; a placement narrows
+//! as every verb does and is never refused for it; and `offer-check`, which
+//! holds no lock, names a record that stands wider (SF13.5f).
 //! A taken or made record that cannot be read is listed by `offers` with its
 //! error in words (`unreadable`), beside the others.
 //!
@@ -822,9 +832,18 @@ impl OfferStore {
         // publication it would read as changed beneath the lock, and
         // narrowed by a verb that does not hold the lock it would change
         // inside the holder's read-back, whose publication would then be
-        // answered as uncertain.
+        // answered as uncertain. The reads folders are narrowed with the
+        // record, in the one pass whose findings the answer carries
+        // (SF13.5f, item 4).
+        let offer = key_of(offer_ref);
         let narrow = |record: bool| match side {
-            Side::Taken => reads::keep_private(&self.root, path.file_name().filter(|_| record)),
+            Side::Taken => reads::keep_private(
+                &self.root,
+                path.file_name()
+                    .filter(|_| record)
+                    .map(|record| (record, true)),
+                record.then_some(offer.as_str()),
+            ),
             Side::Made => Vec::new(),
         };
         narrow(false);
@@ -2057,7 +2076,7 @@ mod reads {
     use std::fs::{File, Permissions};
     use std::io::{self, Write};
     use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn in_the_way(step: &str) -> io::Error {
         io::Error::other(format!(
@@ -2089,40 +2108,99 @@ mod reads {
     /// The held folder or file narrowed to its owner, whatever the umask made
     /// it: the group's and the others' bits are taken away, and no bit is
     /// added (SF13.5e, item 2). One the owner made read-only stays read-only,
-    /// and is refused where it was refused before.
-    fn private(held: &File) -> io::Result<()> {
+    /// and is refused where it was refused before. Answers whether it stood
+    /// wider.
+    fn private(held: &File) -> io::Result<bool> {
         let mode = held.metadata()?.permissions().mode() & 0o7777;
-        if mode & 0o077 != 0 {
+        let wide = mode & 0o077 != 0;
+        if wide {
             held.set_permissions(Permissions::from_mode(mode & !0o077))?;
         }
-        Ok(())
+        Ok(wide)
     }
 
     /// The reads folder of the offer keyed `offer` under the state folder
     /// `root`, or None when it is not there. When `make`, it is made where it
-    /// is missing, and it, `reads`, `task-offers` and `taken` beside them are
-    /// narrowed to their owner (SF13.5b, F11; SF13.5c, item 4; `private`).
+    /// is missing (`made`).
     pub(super) fn open(root: &Path, offer: &str, make: bool) -> io::Result<Option<File>> {
+        if make {
+            return made(root, offer)
+                .map(Some)
+                .map_err(|unplaced| unplaced.error);
+        }
         let mut dir = open_directory(root)?;
         for step in [FOLDER, READS, offer] {
-            if make {
-                make_folder_at(&dir, OsStr::new(step), 0o700)?;
-            }
             let Some(held) = folder(&dir, step)? else {
                 return Ok(None);
             };
-            if make {
-                private(&held)?;
-                if step == FOLDER {
-                    if let Some(taken) = folder(&held, Side::Taken.folder())? {
-                        private(&taken)?;
-                    }
-                }
-            }
             dir = held;
         }
         Ok(Some(dir))
     }
+
+    /// A placement stopped on its way to the reads folder: the folder that
+    /// stopped it, by its path, and the OS's reason.
+    pub(super) struct Unplaced {
+        pub(super) at: PathBuf,
+        pub(super) error: io::Error,
+    }
+
+    /// The reads folder of the offer keyed `offer`, made where it is missing
+    /// with `reads` and `task-offers` above it, each 0700 at its making. A
+    /// placement narrows nothing here: its verb narrows what stands wider
+    /// at its end, and says what it could not narrow, as every verb on a
+    /// taken offer does (SF13.5f, item 2); a file is placed 0600. What
+    /// stops the way is answered by the folder it is: the one a step could
+    /// not be made or seen in, or the one that could not be opened.
+    pub(super) fn made(root: &Path, offer: &str) -> Result<File, Unplaced> {
+        let mut at = root.to_path_buf();
+        let mut dir = open_directory(root).map_err(|error| Unplaced {
+            at: at.clone(),
+            error,
+        })?;
+        for step in [FOLDER, READS, offer] {
+            let name = OsStr::new(step);
+            let within = |error| Unplaced {
+                at: at.clone(),
+                error,
+            };
+            make_folder_at(&dir, name, 0o700).map_err(within)?;
+            entry_stat(&dir, name).map_err(within)?;
+            let reached = at.join(step);
+            dir = match folder(&dir, step) {
+                Ok(Some(held)) => held,
+                Ok(None) => {
+                    return Err(Unplaced {
+                        at: reached,
+                        error: io::ErrorKind::NotFound.into(),
+                    })
+                }
+                Err(error) => return Err(Unplaced { at: reached, error }),
+            };
+            at = reached;
+        }
+        Ok(dir)
+    }
+
+    /// What the folder at `at` is, for the words of a refusal: its mode,
+    /// and whether it carries a flag that forbids any change within it (the
+    /// user's or the system's immutable flag, where the host tells it). None
+    /// when it cannot be looked at.
+    pub(super) fn stood(at: &Path) -> Option<(u32, bool)> {
+        let meta = std::fs::symlink_metadata(at).ok()?;
+        #[cfg(target_os = "macos")]
+        let flagged = {
+            use std::os::macos::fs::MetadataExt;
+            meta.st_flags() & (libc::UF_IMMUTABLE | libc::SF_IMMUTABLE) != 0
+        };
+        #[cfg(not(target_os = "macos"))]
+        let flagged = false;
+        Some((meta.permissions().mode() & 0o7777, flagged))
+    }
+
+    /// How many files of a reads folder a narrowing names when it cannot
+    /// narrow them; the rest are counted.
+    const MAX_WIDE_NAMED: usize = 8;
 
     /// `task-offers` and `taken` under the state folder `root`, and the
     /// taken record `record`, narrowed to their owner where they stand wider
@@ -2133,17 +2211,73 @@ mod reads {
     /// item 5): each thing left is answered, by its path and the reason. A
     /// folder that cannot be opened hides what stands beneath it, which is
     /// then neither narrowed nor named.
-    pub(super) fn keep_private(root: &Path, record: Option<&OsStr>) -> Vec<(String, String)> {
+    ///
+    /// With `offer`, `reads` and the reads folder of the offer so keyed are
+    /// narrowed with them, and where that folder stood wider, each file in
+    /// it too: a file in a folder that is private is reached by no other
+    /// user, and is not looked for (SF13.5f, item 4). `record` is narrowed
+    /// when its flag says the caller holds its lock; a caller that does not
+    /// (a check) has a record that stands wider named, and leaves its mode
+    /// alone.
+    pub(super) fn keep_private(
+        root: &Path,
+        record: Option<(&OsStr, bool)>,
+        offer: Option<&str>,
+    ) -> Vec<(String, String)> {
         let mut left = Vec::new();
-        let mut at = root.join(FOLDER);
-        let mut held = match open_directory(root) {
-            Ok(root) => root,
+        let at = root.join(FOLDER);
+        let offers = match open_directory(root).map(|root| folder(&root, FOLDER)) {
+            Ok(Ok(Some(offers))) => offers,
+            Ok(Ok(None)) => return left,
+            Ok(Err(error)) => {
+                left.push((at.display().to_string(), error.to_string()));
+                return left;
+            }
             Err(error) => {
                 left.push((root.display().to_string(), error.to_string()));
                 return left;
             }
         };
-        for step in [FOLDER, Side::Taken.folder()] {
+        if let Err(error) = private(&offers) {
+            left.push((at.display().to_string(), error.to_string()));
+        }
+        let taken_at = at.join(Side::Taken.folder());
+        match folder(&offers, Side::Taken.folder()) {
+            Ok(Some(taken)) => {
+                if let Err(error) = private(&taken) {
+                    left.push((taken_at.display().to_string(), error.to_string()));
+                }
+                if let Some((record, locked)) = record {
+                    if matches!(entry_stat(&taken, record), Ok((EntryKind::File, ..))) {
+                        let narrowed = open_step(&taken, record).and_then(|file| {
+                            if locked {
+                                return private(&file).map(|_| false);
+                            }
+                            Ok(file.metadata()?.permissions().mode() & 0o077 != 0)
+                        });
+                        let why = match narrowed {
+                            Ok(false) => None,
+                            Ok(true) => Some(
+                                "a check holds no lock on the record, and a record is narrowed only under its lock"
+                                    .to_owned(),
+                            ),
+                            Err(error) => Some(error.to_string()),
+                        };
+                        if let Some(why) = why {
+                            left.push((taken_at.join(record).display().to_string(), why));
+                        }
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(error) => left.push((taken_at.display().to_string(), error.to_string())),
+        }
+        let Some(offer) = offer else {
+            return left;
+        };
+        let mut at = at.join(READS);
+        let mut held = offers;
+        for step in [READS, offer] {
             held = match folder(&held, step) {
                 Ok(Some(held)) => held,
                 Ok(None) => return left,
@@ -2152,22 +2286,48 @@ mod reads {
                     return left;
                 }
             };
-            if let Err(error) = private(&held) {
+            let wide = private(&held).unwrap_or_else(|error| {
                 left.push((at.display().to_string(), error.to_string()));
-            }
-            if step == FOLDER {
-                at.push(Side::Taken.folder());
-            }
-        }
-        let Some(record) = record else {
-            return left;
-        };
-        if matches!(entry_stat(&held, record), Ok((EntryKind::File, ..))) {
-            if let Err(error) = open_step(&held, record).and_then(|file| private(&file)) {
-                left.push((at.join(record).display().to_string(), error.to_string()));
+                true
+            });
+            if step == READS {
+                at.push(offer);
+            } else if wide {
+                files_private(&held, &at, &mut left);
             }
         }
         left
+    }
+
+    /// Each file of the held reads folder narrowed to its owner; what cannot
+    /// be is told in `left` by its path (`at` is the folder's), the first
+    /// `MAX_WIDE_NAMED` each and the rest counted under the folder's path.
+    fn files_private(dir: &File, at: &Path, left: &mut Vec<(String, String)>) {
+        let names = match entry_names(dir) {
+            Ok(names) => names,
+            Err(error) => {
+                left.push((at.display().to_string(), error.to_string()));
+                return;
+            }
+        };
+        let mut more = 0;
+        for name in names {
+            if !matches!(entry_stat(dir, &name), Ok((EntryKind::File, ..))) {
+                continue;
+            }
+            if let Err(error) = open_step(dir, &name).and_then(|file| private(&file)) {
+                if more < MAX_WIDE_NAMED {
+                    left.push((at.join(&name).display().to_string(), error.to_string()));
+                }
+                more += 1;
+            }
+        }
+        if more > MAX_WIDE_NAMED {
+            left.push((
+                at.display().to_string(),
+                format!("{} more files in it", more - MAX_WIDE_NAMED),
+            ));
+        }
     }
 
     /// Whether the held reads folder holds the file `key`: a link, or
@@ -2342,7 +2502,24 @@ mod reads {
     pub(super) fn open(_: &Path, _: &str, _: bool) -> io::Result<Option<File>> {
         Err(unsupported())
     }
-    pub(super) fn keep_private(_: &Path, _: Option<&std::ffi::OsStr>) -> Vec<(String, String)> {
+    pub(super) struct Unplaced {
+        pub(super) at: std::path::PathBuf,
+        pub(super) error: io::Error,
+    }
+    pub(super) fn made(root: &Path, _: &str) -> Result<File, Unplaced> {
+        Err(Unplaced {
+            at: root.to_path_buf(),
+            error: unsupported(),
+        })
+    }
+    pub(super) fn stood(_: &Path) -> Option<(u32, bool)> {
+        None
+    }
+    pub(super) fn keep_private(
+        _: &Path,
+        _: Option<(&std::ffi::OsStr, bool)>,
+        _: Option<&str>,
+    ) -> Vec<(String, String)> {
         Vec::new()
     }
     pub(super) fn holds(_: &File, _: &str) -> io::Result<bool> {
@@ -2376,15 +2553,50 @@ fn stands(opened: &io::Result<Option<std::fs::File>>, key: &str) -> bool {
     matches!(opened, Ok(Some(dir)) if matches!(reads::holds(dir, key), Ok(true)))
 }
 
+/// The file at `key` of a reads folder removed, as `opened` found the
+/// folder: nothing to remove where the folder is not there, and the reason
+/// where it could not be opened or the file could not be removed.
+fn drop_at(opened: &io::Result<Option<std::fs::File>>, key: &str) -> io::Result<()> {
+    match opened {
+        Ok(Some(dir)) => reads::drop_file(dir, key),
+        Ok(None) => Ok(()),
+        Err(error) => Err(io::Error::new(error.kind(), error.to_string())),
+    }
+}
+
 /// The states of a read that holds nothing on disk and waits on nothing.
 const SETTLED: [&str; 4] = ["refused", "dropped", "expired", "missing"];
+
+fn is_settled(read: &Value) -> bool {
+    read["state"]
+        .as_str()
+        .is_some_and(|state| SETTLED.contains(&state))
+}
+
+/// One read kept as still to be dropped: the file at `key` of the reads
+/// folder `folder` could not be removed, or could not be looked for. The
+/// record keeps its path until it is gone, and `unseen` where no file is
+/// known to stand there: the read was only waited on and its folder could
+/// not be looked into (SF13.5f, items 1 and 3).
+fn pending_at(read: &mut Value, key: &str, folder: &Path, unseen: bool) {
+    read["state"] = json!("drop_pending");
+    read["file"] = json!(key);
+    read["path"] = json!(folder.join(key).display().to_string());
+    if let Some(fields) = read.as_object_mut() {
+        if unseen {
+            fields.insert("unseen".into(), json!(true));
+        } else {
+            fields.remove("unseen");
+        }
+    }
+}
 
 /// One read settled as `state` at `now`: it keeps its digest and its words,
 /// never a listing, a file or a path (SF13.5b, F7 and F8); a paged want that
 /// expired keeps where it would have continued.
 fn settled_as(read: &mut Value, state: &str, now: i64) {
     if let Some(fields) = read.as_object_mut() {
-        for key in ["entries", "more", "file", "path"] {
+        for key in ["entries", "more", "file", "path", "unseen"] {
             fields.remove(key);
         }
         if state != "expired" {
@@ -2396,18 +2608,17 @@ fn settled_as(read: &mut Value, state: &str, now: i64) {
 }
 
 /// At most `MAX_SETTLED` settled reads kept, the oldest gone first (SF13.5b,
-/// F7).
+/// F7). None of them has a file: a read is settled only once the file at its
+/// key is gone or its folder is not there, and one settled by an earlier
+/// Factory whose file is found standing is dropped or kept `drop_pending`
+/// by `settle` before this runs (SF13.5f, item 1).
 fn bounded(record: &mut Value) {
     let Some(reads) = record.get_mut("reads").and_then(Value::as_object_mut) else {
         return;
     };
     let mut settled: Vec<(i64, String)> = reads
         .iter()
-        .filter(|(_, read)| {
-            read["state"]
-                .as_str()
-                .is_some_and(|state| SETTLED.contains(&state))
-        })
+        .filter(|(_, read)| is_settled(read))
         .map(|(subject, read)| (read["settled_at"].as_i64().unwrap_or(0), subject.clone()))
         .collect();
     if settled.len() > MAX_SETTLED {
@@ -2443,26 +2654,48 @@ struct Undropped {
 /// earlier may have a file behind it, so the words say the folder could not
 /// be looked into (SF13.5e, item 3). The next act tries again; whether it
 /// will remove what is left is the reason's to say, not this sentence's
-/// (SF13.5d, item 4).
+/// (SF13.5d, item 4). "Its bytes are still on disk" is said only of a read
+/// whose bytes may be: one kept `unseen` (waited on, its folder never looked
+/// into) is named apart, as not known (SF13.5f, item 3).
 fn left_on_disk(record: &Value, undropped: Option<&Undropped>, folder: &Path) -> Option<Value> {
     let reads: Vec<Value> = record["reads"]
         .as_object()
         .into_iter()
         .flatten()
         .filter(|(_, read)| read["state"] == "drop_pending")
-        .map(|(subject, read)| json!({"ref": subject, "path": read["path"]}))
+        .map(|(subject, read)| {
+            let mut left = json!({"ref": subject, "path": read["path"]});
+            if read["unseen"] == true {
+                left["unseen"] = json!(true);
+            }
+            left
+        })
         .collect();
     if reads.is_empty() && undropped.is_none() {
         return None;
     }
-    let paths: Vec<&str> = reads
-        .iter()
-        .filter_map(|read| read["path"].as_str())
-        .collect();
+    let at = |unseen: bool| {
+        reads
+            .iter()
+            .filter(|read| (read["unseen"] == true) == unseen)
+            .filter_map(|read| read["path"].as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (paths, unseen) = (at(false), at(true));
     let why = undropped
         .map(|undropped| format!(" ({})", undropped.why))
         .unwrap_or_default();
-    let message = if paths.is_empty() {
+    let message = if !unseen.is_empty() {
+        let seen = if paths.is_empty() {
+            String::new()
+        } else {
+            format!("its bytes are still on disk at {paths}; and ")
+        };
+        format!(
+            "What was read under the grant could not all be dropped{why}: {seen}the folder could not be looked into, so whether bytes stand at {unseen} is not known; the next act on this offer tries again"
+        )
+    } else if paths.is_empty() {
         let known = if undropped.is_some_and(|undropped| undropped.unseen) {
             "it could not be looked into, so whether a read's bytes are left in it is not known"
         } else {
@@ -2474,8 +2707,7 @@ fn left_on_disk(record: &Value, undropped: Option<&Undropped>, folder: &Path) ->
         )
     } else {
         format!(
-            "What was read under the grant could not all be dropped{why}: its bytes are still on disk at {}; the next act on this offer tries again",
-            paths.join(", ")
+            "What was read under the grant could not all be dropped{why}: its bytes are still on disk at {paths}; the next act on this offer tries again"
         )
     };
     Some(json!({"reads": reads, "message": message}))
@@ -2554,6 +2786,51 @@ impl OfferStore {
         self.root.join(FOLDER).join(READS).join(key_of(offer_ref))
     }
 
+    /// Why the folder `at` refused a placement and what mends it, in words
+    /// (SF13.5f, item 2): the folder by its path and by what it is, the OS's
+    /// reason where there is one, and the mend that fits how it stands. A
+    /// mode its owner shut is mended by the mode; a folder that carries a
+    /// flag forbidding change, or whose mode already lets its owner in, is
+    /// not, and the words say so. Only a reads folder may be removed
+    /// instead: the others hold the records.
+    fn unplaced(&self, offer_ref: &str, at: &Path, error: Option<&io::Error>) -> String {
+        let offers = self.root.join(FOLDER);
+        let (what, removable) = if at == self.reads_folder(offer_ref) {
+            ("the folder for what is read under this grant", true)
+        } else if at == offers.join(READS) {
+            ("the folder that holds what is read under grants", true)
+        } else if at == offers.join(Side::Taken.folder()) {
+            (
+                "the folder that holds what was taken, where this read's record is kept",
+                false,
+            )
+        } else if at == offers {
+            ("the folder of this Factory's offers", false)
+        } else {
+            ("the state folder", false)
+        };
+        let named = format!("{what}, {}", at.display());
+        let why = error.map(|error| format!(" ({error})")).unwrap_or_default();
+        let or_remove = if removable { " or remove it" } else { "" };
+        match reads::stood(at) {
+            Some((mode, true)) => format!(
+                "{named}, cannot be changed{why}: it carries a flag that forbids any change within it, and its mode is {mode:04o}, so no mode mends it; clear the flag (`chflags nouchg` for the user's), then bring the answer again"
+            ),
+            Some((mode, false)) if mode & 0o300 != 0o300 => format!(
+                "{named}, cannot be written by its owner{why}: it is mode {mode:04o}; make it writable by its owner (mode 0700){or_remove}, then bring the answer again"
+            ),
+            Some((mode, false)) if mode & 0o700 != 0o700 => format!(
+                "{named}, cannot be opened by its owner{why}: it is mode {mode:04o}; make it readable by its owner (mode 0700){or_remove}, then bring the answer again"
+            ),
+            Some((mode, false)) => format!(
+                "{named}, refused it{why} though its mode, {mode:04o}, lets its owner write: what forbids it is not its mode, so no mode mends it; once it can be written, bring the answer again"
+            ),
+            None => format!(
+                "{named}, refused it{why} and could not be looked at to say what mends it; once it can be written, bring the answer again"
+            ),
+        }
+    }
+
     /// The reads of one taken offer brought up to `now`, under its record's
     /// lock (SF13.5b). A grant that stands no more keeps nothing read under
     /// it: the reads folder is removed, and only then does the record say
@@ -2570,6 +2847,12 @@ impl OfferStore {
     /// standing, whatever its read's state (SF13.5c, item 1). A read left
     /// `drop_pending` is dropped again while the grant stands too, so a clock
     /// that goes back loses no bytes (item 6).
+    ///
+    /// While the grant stands, no read is settled over a file (SF13.5f, item
+    /// 1): a want that expires has the file at its key removed first, and is
+    /// `drop_pending` with its path where that fails or the folder cannot be
+    /// looked into; a read an earlier Factory settled whose file is found
+    /// standing has it removed, or is kept `drop_pending` the same way.
     fn settle(&self, offer_ref: &str, record: &mut Value, now: i64) -> Option<Undropped> {
         let barred = read_barred(record, now).is_some();
         let offer = key_of(offer_ref);
@@ -2625,9 +2908,15 @@ impl OfferStore {
                     let key = read["file"]
                         .as_str()
                         .map_or_else(|| key_of(subject), str::to_owned);
-                    read["state"] = json!("drop_pending");
-                    read["file"] = json!(key);
-                    read["path"] = json!(folder.join(&key).display().to_string());
+                    // A placed read's bytes were placed; any other's are
+                    // known only where a file is found standing.
+                    let unseen = !stands(&opened, &key)
+                        && match read["state"].as_str() {
+                            Some("placed") => false,
+                            Some("drop_pending") => read["unseen"] == true,
+                            _ => true,
+                        };
+                    pending_at(read, &key, &folder, unseen);
                 } else if held(read) {
                     settled_as(read, "dropped", now);
                 }
@@ -2638,32 +2927,49 @@ impl OfferStore {
             });
         }
         let placed_file = |read: &Value| read["state"] == "placed" && read["kind"] == "file";
-        let opened = if reads
-            .values()
-            .any(|read| placed_file(read) || pending(read))
-        {
+        let opened = if reads.values().any(|read| {
+            placed_file(read) || pending(read) || expired(read, now) || is_settled(read)
+        }) {
             reads::open(&self.root, &offer, false)
         } else {
             Ok(None)
         };
         let mut why = None;
-        for read in reads.values_mut() {
+        for (subject, read) in reads.iter_mut() {
             if pending(read) {
                 let key = read["file"].as_str().unwrap_or_default().to_owned();
-                let dropped = match &opened {
-                    Ok(Some(dir)) => reads::drop_file(dir, &key),
-                    Ok(None) => Ok(()),
-                    Err(error) => Err(io::Error::new(error.kind(), error.to_string())),
-                };
-                match dropped {
+                match drop_at(&opened, &key) {
                     Ok(()) => settled_as(read, "dropped", now),
-                    Err(error) => why = Some(error.to_string()),
+                    Err(error) => {
+                        // Found standing now, it is unseen no more.
+                        if stands(&opened, &key) {
+                            pending_at(read, &key, &folder, false);
+                        }
+                        why = Some(error.to_string());
+                    }
                 }
             } else if expired(read, now) {
-                settled_as(read, "expired", now);
+                // A file can stand at its key: it landed while its record
+                // did not. It goes before the want is said expired.
+                let key = key_of(subject);
+                match drop_at(&opened, &key) {
+                    Ok(()) => settled_as(read, "expired", now),
+                    Err(error) => {
+                        pending_at(read, &key, &folder, !stands(&opened, &key));
+                        why = Some(error.to_string());
+                    }
+                }
             } else if placed_file(read) && gone(&opened, read["file"].as_str().unwrap_or_default())
             {
                 settled_as(read, "missing", now);
+            } else if is_settled(read) && stands(&opened, &key_of(subject)) {
+                // Settled by an earlier Factory over a file that stands: it
+                // goes now, and the read stays as it settled.
+                let key = key_of(subject);
+                if let Err(error) = drop_at(&opened, &key) {
+                    pending_at(read, &key, &folder, false);
+                    why = Some(error.to_string());
+                }
             }
         }
         why.map(|why| Undropped {
@@ -2686,17 +2992,25 @@ impl OfferStore {
             return false;
         };
         let mut opened = None;
-        reads.values().any(|read| match read["state"].as_str() {
-            Some("drop_pending") => true,
-            Some("placed" | "wanted") if barred => true,
-            Some("wanted") => expired(read, now),
-            Some("placed") if read["kind"] == "file" => {
-                let opened = opened
-                    .get_or_insert_with(|| reads::open(&self.root, &key_of(offer_ref), false));
-                gone(opened, read["file"].as_str().unwrap_or_default())
-            }
-            _ => false,
-        })
+        reads
+            .iter()
+            .any(|(subject, read)| match read["state"].as_str() {
+                Some("drop_pending") => true,
+                Some("placed" | "wanted") if barred => true,
+                Some("wanted") => expired(read, now),
+                Some("placed") if read["kind"] == "file" => {
+                    let opened = opened
+                        .get_or_insert_with(|| reads::open(&self.root, &key_of(offer_ref), false));
+                    gone(opened, read["file"].as_str().unwrap_or_default())
+                }
+                // A read settled over a file that stands (SF13.5f, item 1).
+                Some(state) if SETTLED.contains(&state) => {
+                    let opened = opened
+                        .get_or_insert_with(|| reads::open(&self.root, &key_of(offer_ref), false));
+                    stands(opened, &key_of(subject))
+                }
+                _ => false,
+            })
     }
 
     /// One verb on a taken offer, under its record's lock: its reads settled
@@ -2744,22 +3058,31 @@ impl OfferStore {
             }
         };
         let mut record = self.taken(&offer_ref)?;
-        // A check writes nothing, and still narrows the folders where they
-        // stand wider; a record that does is narrowed by the next verb that
-        // writes, under its own lock (SF13.5d, item 3; SF13.5e, item 1).
-        let mut wide = left_wide(&reads::keep_private(&self.root, None));
         let mut left = None;
-        if self.unsettled(&offer_ref, &record, now) {
+        let wide = if self.unsettled(&offer_ref, &record, now) {
             let mut settled = self.on_taken(&offer_ref, now, |record, undropped| {
                 let left = left_on_disk(record, undropped.as_ref(), &self.reads_folder(&offer_ref));
                 Ok(json!({"record": record.clone(), "left": left}))
             })?;
             left = Some(settled["left"].take()).filter(|left| !left.is_null());
-            // The settling verb narrowed after this check did: what it found
-            // left wide is what stands.
-            wide = Some(settled["left_wide"].take()).filter(|wide| !wide.is_null());
             record = settled["record"].take();
-        }
+            // The settling verb held the record's lock and narrowed it with
+            // the folders: what it found left wide is what stands.
+            Some(settled["left_wide"].take()).filter(|wide| !wide.is_null())
+        } else {
+            // A check that settles nothing writes nothing and holds no lock.
+            // It still narrows the folders where they stand wider; a record
+            // that does is not its to narrow (SF13.5d, item 3; SF13.5e, item
+            // 1), so it is named, and the next verb on the offer narrows it
+            // under its own lock (SF13.5f, item 4).
+            left_wide(&reads::keep_private(
+                &self.root,
+                self.path(Side::Taken, &offer_ref)
+                    .file_name()
+                    .map(|record| (record, false)),
+                Some(&key_of(&offer_ref)),
+            ))
+        };
         let grant = &record["offer"]["grant"];
         let why = if record["state"] == "revoked" {
             Some("The offerer revoked the grant".to_owned())
@@ -2936,7 +3259,11 @@ impl OfferStore {
             if standing["state"] == "drop_pending" {
                 return Err(OfferRefusal::new(
                     "drop_pending",
-                    format!("What was read for {subject} under this grant is still on disk and could not be dropped; it is wanted again once it is"),
+                    if standing["unseen"] == true {
+                        format!("The folder for what is read under this grant could not be looked into, so whether bytes read for {subject} stand in it is not known; it is wanted again once the folder can be looked into")
+                    } else {
+                        format!("What was read for {subject} under this grant is still on disk and could not be dropped; it is wanted again once it is")
+                    },
                 ));
             }
             let continues = |after: &str| standing["after"].as_str() == Some(after);
@@ -2959,16 +3286,26 @@ impl OfferStore {
                 }
             };
             if wanted {
-                let open = record["reads"].as_object().map_or(0, |reads| {
-                    reads
-                        .values()
-                        .filter(|read| read["state"] == "wanted")
-                        .count()
-                });
-                if open >= MAX_WANTED {
+                // A read still to be dropped holds its place as a want does:
+                // each expiry behind a folder that cannot be looked into
+                // leaves one, and the record stays bounded (SF13.5f, item 1).
+                let count = |state: &str| {
+                    record["reads"].as_object().map_or(0, |reads| {
+                        reads.values().filter(|read| read["state"] == state).count()
+                    })
+                };
+                let (open, pending) = (count("wanted"), count("drop_pending"));
+                if open + pending >= MAX_WANTED {
                     return Err(OfferRefusal::new(
                         "too_many",
-                        format!("This task waits on {MAX_WANTED} reads already; ask again once one is placed"),
+                        if pending == 0 {
+                            format!("This task waits on {MAX_WANTED} reads already; ask again once one is placed")
+                        } else {
+                            format!(
+                                "This task waits on {open} reads, and {pending} more of the {MAX_WANTED} it may wait on are reads whose bytes could not be removed from {}; once that folder lets its owner remove them, any act on this offer drops them and a read can be wanted again",
+                                self.reads_folder(&offer_ref).display()
+                            )
+                        },
                     ));
                 }
                 let mut read = json!({"state": "wanted", "wanted_at": now});
@@ -2990,7 +3327,9 @@ impl OfferStore {
     /// did not): it is removed before the read is said dropped, and where it
     /// cannot be removed, or the reads folder cannot be opened to look, the
     /// read is `drop_pending` with its path and the answer says so, as a
-    /// revocation's does (SF13.5e, item 4).
+    /// revocation's does (SF13.5e, item 4). A read still to be dropped is
+    /// dropped again before this answers, as before every verb, and the
+    /// answer says whatever is still left (SF13.5f, item 1).
     pub fn unwant(&self, request: &Value, now: i64) -> Result<Value, OfferRefusal> {
         let object = object(request, "the unwant")?;
         only_keys(object, &["offer_ref", "ref"], "offer-unwant")?;
@@ -3001,7 +3340,8 @@ impl OfferStore {
                 .ok_or_else(|| OfferRefusal::invalid("an unwant names one `ref`"))?,
             "ref",
         )?;
-        self.on_taken(&offer_ref, now, |record, _| {
+        self.on_taken(&offer_ref, now, |record, mut undropped| {
+            let folder = self.reads_folder(&offer_ref);
             let read = record
                 .get_mut("reads")
                 .and_then(|reads| reads.get_mut(subject.as_str()))
@@ -3011,36 +3351,24 @@ impl OfferStore {
                         format!("This task is not waiting to read {subject}"),
                     )
                 })?;
-            let mut undropped = None;
             if read["state"] == "wanted" {
                 let key = key_of(&subject);
-                let dropped = match reads::open(&self.root, &key_of(&offer_ref), false) {
-                    Ok(Some(dir)) => reads::drop_file(&dir, &key).map_err(|error| (error, false)),
-                    Ok(None) => Ok(()),
-                    Err(error) => Err((error, true)),
-                };
-                match dropped {
+                let opened = reads::open(&self.root, &key_of(&offer_ref), false);
+                match drop_at(&opened, &key) {
                     Ok(()) => settled_as(read, "dropped", now),
-                    Err((error, unseen)) => {
-                        let path = self.reads_folder(&offer_ref).join(&key);
-                        read["state"] = json!("drop_pending");
-                        read["file"] = json!(key);
-                        read["path"] = json!(path.display().to_string());
+                    Err(error) => {
+                        pending_at(read, &key, &folder, !stands(&opened, &key));
                         undropped = Some(Undropped {
                             why: error.to_string(),
-                            unseen,
+                            unseen: opened.is_err(),
                         });
                     }
                 }
             }
             let mut answer = receipt("unwant", record, None);
             answer["read"] = read_seen(&subject, &record["reads"][subject.as_str()]);
-            if let Some(undropped) = &undropped {
-                if let Some(left) =
-                    left_on_disk(record, Some(undropped), &self.reads_folder(&offer_ref))
-                {
-                    answer["left_on_disk"] = left;
-                }
+            if let Some(left) = left_on_disk(record, undropped.as_ref(), &folder) {
+                answer["left_on_disk"] = left;
             }
             Ok(answer)
         })
@@ -3172,35 +3500,68 @@ impl OfferStore {
                 }
                 return Err(not_wanted());
             }
+            let folder = self.reads_folder(&offer_ref);
             if let Answered::File { bytes, .. } = &read {
-                let refuse = |error: io::Error| {
-                    io_refusal(
-                        &format!(
-                            "could not place the {} bytes read for {subject}",
-                            bytes.len()
+                // A folder its owner shut is left as it stands (narrowing
+                // adds no bit: SF13.5e, item 2), so a placement it refuses
+                // names it and says what mends it, whichever folder on the
+                // way it is (SF13.5f, item 2). Any other failure keeps the
+                // OS's words.
+                let refuse = |at: &Path, error: Option<io::Error>| {
+                    let what = format!(
+                        "could not place the {} bytes read for {subject}",
+                        bytes.len()
+                    );
+                    match error {
+                        Some(error) if error.kind() != io::ErrorKind::PermissionDenied => {
+                            io_refusal(&what, error)
+                        }
+                        error => OfferRefusal::new(
+                            "io",
+                            format!("{what}: {}", self.unplaced(&offer_ref, at, error.as_ref())),
                         ),
-                        error,
-                    )
-                };
-                let dir = reads::open(&self.root, &key_of(&offer_ref), true)
-                    .map_err(refuse)?
-                    .ok_or_else(|| refuse(io::ErrorKind::NotFound.into()))?;
-                // A reads folder its owner cannot write is left as it stands
-                // (narrowing adds no bit: SF13.5e, item 2), so the refusal
-                // names it and says what mends it.
-                reads::place(&dir, &key_of(&subject), bytes).map_err(|error| {
-                    if error.kind() != io::ErrorKind::PermissionDenied {
-                        return refuse(error);
                     }
-                    OfferRefusal::new(
-                        "io",
-                        format!(
-                            "could not place the {} bytes read for {subject}: the folder for what is read under this grant, {}, cannot be written by its owner ({error}); make it writable by its owner (mode 0700) or remove it, then bring the answer again",
-                            bytes.len(),
-                            self.reads_folder(&offer_ref).display()
-                        ),
-                    )
-                })?;
+                };
+                // The record is published in `taken` once the bytes are
+                // placed: where its owner cannot write there, nothing is
+                // placed that no record would then name.
+                let taken = self.root.join(FOLDER).join(Side::Taken.folder());
+                if reads::stood(&taken)
+                    .is_some_and(|(mode, flagged)| flagged || mode & 0o300 != 0o300)
+                {
+                    return Err(refuse(&taken, None));
+                }
+                let dir = reads::made(&self.root, &key_of(&offer_ref))
+                    .map_err(|unplaced| refuse(&unplaced.at, Some(unplaced.error)))?;
+                reads::place(&dir, &key_of(&subject), bytes)
+                    .map_err(|error| refuse(&folder, Some(error)))?;
+            } else {
+                // A file can stand at a wanted read's key (it landed while
+                // its record did not): it goes before a refusal or a folder
+                // is kept over it, and where it cannot, or the folder cannot
+                // be looked into, the read is `drop_pending` with its path
+                // and the answer says so (SF13.5f, item 1). A refusal keeps
+                // its words.
+                let key = key_of(&subject);
+                let opened = reads::open(&self.root, &key_of(&offer_ref), false);
+                if let Err(error) = drop_at(&opened, &key) {
+                    let mut left = standing.clone();
+                    if !kept["why"].is_null() {
+                        left["why"] = kept["why"].clone();
+                    }
+                    pending_at(&mut left, &key, &folder, !stands(&opened, &key));
+                    record["reads"][subject.as_str()] = left;
+                    let undropped = Undropped {
+                        why: error.to_string(),
+                        unseen: opened.is_err(),
+                    };
+                    let mut answer = receipt("read-received", record, None);
+                    answer["read"] = read_seen(&subject, &record["reads"][subject.as_str()]);
+                    if let Some(left) = left_on_disk(record, Some(&undropped), &folder) {
+                        answer["left_on_disk"] = left;
+                    }
+                    return Ok(answer);
+                }
             }
             kept["wanted_at"] = standing["wanted_at"].clone();
             kept["placed_at"] = json!(now);
@@ -3231,29 +3592,50 @@ impl OfferStore {
     /// taken offer that cannot be settled now (its lock held past the
     /// deadline, its record not published) blanks no other: it is listed as
     /// it was read, with the refusal beside it, in words, as `unsettled`
-    /// (SF13.5c, item 7).
+    /// (SF13.5c, item 7). A taken offer with a read still to be dropped is
+    /// listed with where its bytes are, as `left_on_disk`, until they are
+    /// gone (SF13.5f, item 1).
     pub fn offers(&self, now: i64) -> Result<Value, OfferRefusal> {
         let mut unsettled = Map::new();
+        let mut left = Map::new();
         for record in self.records(Side::Taken)? {
             let Some(offer_ref) = record["offer"]["offer_ref"].as_str() else {
                 continue;
             };
             if self.unsettled(offer_ref, &record, now) {
-                if let Err(refusal) = self.on_taken(offer_ref, now, |_, _| Ok(Value::Null)) {
-                    unsettled.insert(
-                        offer_ref.to_owned(),
-                        json!({"code": refusal.code, "message": refusal.message}),
-                    );
+                let folder = self.reads_folder(offer_ref);
+                // In a document of its own: the verb's answer may gain a field.
+                match self.on_taken(offer_ref, now, |record, undropped| {
+                    Ok(json!({"left": left_on_disk(record, undropped.as_ref(), &folder)}))
+                }) {
+                    Ok(mut settled) => {
+                        left.insert(offer_ref.to_owned(), settled["left"].take());
+                    }
+                    Err(refusal) => {
+                        unsettled.insert(
+                            offer_ref.to_owned(),
+                            json!({"code": refusal.code, "message": refusal.message}),
+                        );
+                    }
                 }
             }
         }
         let mut reading = self.reading()?;
         for record in reading["taken"].as_array_mut().into_iter().flatten() {
-            if let Some(refusal) = record["offer"]["offer_ref"]
-                .as_str()
-                .and_then(|offer_ref| unsettled.get(offer_ref))
-            {
+            let Some(offer_ref) = record["offer"]["offer_ref"].as_str().map(str::to_owned) else {
+                continue;
+            };
+            if let Some(refusal) = unsettled.get(&offer_ref) {
                 record["unsettled"] = refusal.clone();
+            }
+            // What the settling found left; for an offer not settled now,
+            // what its record holds as still to be dropped.
+            let left = match left.remove(&offer_ref) {
+                Some(left) => Some(left).filter(|left| !left.is_null()),
+                None => left_on_disk(record, None, &self.reads_folder(&offer_ref)),
+            };
+            if let Some(left) = left {
+                record["left_on_disk"] = left;
             }
         }
         Ok(reading)
@@ -7558,15 +7940,20 @@ mod tests {
     /// and its read-back changes nothing of the fresh record, so the take is
     /// answered. The meeting is made, not waited for: the second take runs
     /// inside the first one's publication, after the rename and before the
-    /// read-back, where it finds the lock held and answers `busy`. The umask
-    /// is the whole process's and is read, not set: where it leaves a new
-    /// record no wider than 0600 there is nothing to narrow and no verb could
-    /// ever have changed it.
+    /// read-back, where it finds the lock held and answers `busy`. Where the
+    /// umask leaves a new record no wider than 0600 there is nothing to
+    /// narrow and no verb could ever have changed it, so the test runs under
+    /// umask 022 in a process of its own, whatever the umask it is started
+    /// under (SF13.5f, item 5).
     #[test]
     fn a_verb_that_meets_a_take_before_its_read_back_leaves_the_fresh_record_as_it_is() {
         use crate::native_file_transaction::observe_next_publication;
         use std::cell::RefCell;
         use std::rc::Rc;
+        let name = "a_verb_that_meets_a_take_before_its_read_back_leaves_the_fresh_record_as_it_is";
+        if ran_in_a_process_of_its_own(name, 0o022) {
+            return;
+        }
         let two = two();
         let offer = make(&two, NOW + 24 * HOUR);
         let offer_ref = offer["offer_ref"].as_str().unwrap().to_owned();
@@ -7601,6 +7988,10 @@ mod tests {
             second.unwrap_err(),
             "busy",
             "the second take found the lock held"
+        );
+        assert_eq!(
+            before, 0o644,
+            "the umask made the fresh record wider, as the test needs"
         );
         assert_eq!(
             after, before,
@@ -7845,17 +8236,31 @@ mod tests {
                 assert_eq!(read["path"], path, "{bits:03o}");
             }
             let left = &unwanted["left_on_disk"];
-            assert_eq!(
-                left["reads"],
-                json!([{"ref": brief, "path": path}]),
-                "{bits:03o}"
-            );
             let said = left["message"].as_str().unwrap();
-            assert!(
-                said.contains(&format!("still on disk at {path}"))
-                    && said.contains("Permission denied"),
-                "{bits:03o}: {said}"
-            );
+            assert!(said.contains("Permission denied"), "{bits:03o}: {said}");
+            if bits == 0o500 {
+                // The folder opened: the file was found standing.
+                assert_eq!(
+                    left["reads"],
+                    json!([{"ref": brief, "path": path}]),
+                    "{bits:03o}"
+                );
+                assert!(
+                    said.contains(&format!("still on disk at {path}")),
+                    "{bits:03o}: {said}"
+                );
+            } else {
+                // It did not: whether a file stands is not known (SF13.5f, item 3).
+                assert_eq!(
+                    left["reads"],
+                    json!([{"ref": brief, "path": path, "unseen": true}]),
+                    "{bits:03o}"
+                );
+                assert!(
+                    said.contains("could not be looked into") && !said.contains("still on disk"),
+                    "{bits:03o}: {said}"
+                );
+            }
             assert_eq!(
                 again.unwrap_err().code,
                 "drop_pending",
@@ -7930,7 +8335,14 @@ mod tests {
                 .unwrap(),
             "a check that settles",
         );
-        assert_eq!(read_state(&two, &offer_ref, brief), "expired");
+        // The reads folder cannot be looked into through the link, so the
+        // want that expired is kept as still to be dropped (SF13.5f, item 1).
+        let kept = kept_record(&two, &offer_ref)["reads"][brief].clone();
+        assert_eq!(
+            (&kept["state"], &kept["unseen"]),
+            (&json!("drop_pending"), &json!(true)),
+            "{kept}"
+        );
         let back = two
             .taker
             .give_back(
@@ -8047,22 +8459,25 @@ mod tests {
         let brief = "project:river/docs/brief.md";
         let two = two();
         let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
-        landed_unrecorded(&two, &offer_ref, brief);
+        want(&two, &offer_ref, brief, NOW + HOUR).unwrap();
         two.taker.offers(NOW + HOUR + 10 * MINUTE).unwrap();
         assert_eq!(read_state(&two, &offer_ref, brief), "expired");
+        // A file of it stands all the same, as an earlier Factory left one,
+        // and the lapse is the first act to find it.
+        landed(&two, &offer_ref, brief);
         let folder = two.taker.reads_folder(&offer_ref);
         let path = folder.join(key_of(brief)).display().to_string();
         chmod(&folder, 0o500);
-        let revoked = revoke(&two, &offer_ref, NOW + 2 * HOUR);
+        let lapsed = check_of(&two, &offer_ref, NOW + 24 * HOUR);
         let kept = kept_record(&two, &offer_ref)["reads"][brief].clone();
         chmod(&folder, 0o700);
         assert_eq!(kept["state"], "drop_pending", "{kept}");
         assert_eq!(kept["path"], path);
-        let left = &revoked["left_on_disk"];
+        let left = &lapsed["left_on_disk"];
         assert_eq!(left["reads"], json!([{"ref": brief, "path": path}]));
         let said = left["message"].as_str().unwrap();
         assert!(said.contains(&format!("still on disk at {path}")), "{said}");
-        two.taker.offers(NOW + 3 * HOUR).unwrap();
+        two.taker.offers(NOW + 25 * HOUR).unwrap();
         assert!(!folder.exists());
         assert_eq!(read_state(&two, &offer_ref, brief), "dropped");
     }
@@ -8186,5 +8601,982 @@ mod tests {
             let again = arrived(&two, &offer_ref, brief, &answer, NOW + HOUR).unwrap();
             assert_eq!(again["read"]["state"], "placed", "{bits:03o}");
         }
+    }
+
+    // ---- SF13.5f: the second review of #319 followed up (DLW build ruling 2026-11-12) ----------
+
+    const BRIEF: &str = "project:river/docs/brief.md";
+    const NOTE: &str = "project:river/docs/deep/note.md";
+
+    /// The mode of what stands at `path`, its special bits with it.
+    fn bits_of(path: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::symlink_metadata(path)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777
+    }
+
+    /// A test that depends on the umask runs in a process of its own under
+    /// the umask it names, since the umask is the whole process's and other
+    /// tests run beside this one. In the test's own process this runs the
+    /// test binary again for the test `name` alone, under `umask`, asserts
+    /// that one test ran there and passed, and answers true: the caller
+    /// returns. In that second process it answers false, and the caller's
+    /// body runs.
+    fn ran_in_a_process_of_its_own(name: &str, umask: u32) -> bool {
+        const UNDER: &str = "FACTORY_TEST_UNDER_UMASK";
+        let wanted = format!("{umask:03o}");
+        if std::env::var(UNDER).as_deref() == Ok(wanted.as_str()) {
+            // The second process: the umask is in force, or the test says so.
+            let probe = tempfile::tempdir().unwrap();
+            let file = probe.path().join("umask-probe");
+            std::fs::write(&file, b"").unwrap();
+            assert_eq!(
+                0o666 & !bits_of(&file),
+                umask & 0o666,
+                "the umask asked for is in force"
+            );
+            return false;
+        }
+        let path = module_path!();
+        let module = path.split_once("::").map_or(path, |(_, rest)| rest);
+        let ran = std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                "umask \"$1\" && shift && exec \"$@\"",
+                "sh",
+                wanted.as_str(),
+            ])
+            .arg(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                format!("{module}::{name}").as_str(),
+                "--test-threads=1",
+                "--nocapture",
+            ])
+            .env(UNDER, &wanted)
+            .output()
+            .unwrap();
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&ran.stdout),
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        eprintln!("{name} under umask {wanted}, in a process of its own:\n{said}");
+        assert!(
+            ran.status.success() && said.contains("test result: ok. 1 passed"),
+            "{name} under umask {wanted}: one test ran and passed"
+        );
+        true
+    }
+
+    fn check_of(two: &Two, offer_ref: &str, at: i64) -> Value {
+        two.taker
+            .check(&json!({"offer_ref": offer_ref, "read": BRIEF}), at)
+            .unwrap()
+    }
+
+    fn listed(two: &Two, offer_ref: &str, at: i64) -> Value {
+        two.taker.offers(at).unwrap()["taken"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["offer"]["offer_ref"] == offer_ref)
+            .cloned()
+            .unwrap()
+    }
+
+    /// A file placed by hand at the key of `subject`, as a placing that
+    /// landed while its record did not leaves it.
+    fn landed(two: &Two, offer_ref: &str, subject: &str) {
+        let dir = reads::open(&two.taker.root, &key_of(offer_ref), true)
+            .unwrap()
+            .unwrap();
+        reads::place(&dir, &key_of(subject), b"The brief.\n").unwrap();
+    }
+
+    /// Item 1, the reviewer's measure: a want that expires while its landed
+    /// file stands. The file goes before the want is said expired; nothing
+    /// is left to list, and 90 later wants that expire find no file with no
+    /// read.
+    #[test]
+    fn a_want_that_expires_over_a_landed_file_has_the_file_removed_first() {
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        landed_unrecorded(&two, &offer_ref, BRIEF);
+        let file = two.taker.reads_folder(&offer_ref).join(key_of(BRIEF));
+        assert!(file.exists());
+        let mut at = NOW + HOUR + 10 * MINUTE;
+        let first = listed(&two, &offer_ref, at);
+        assert_eq!(first["reads"][BRIEF]["state"], "expired", "{first}");
+        assert!(!file.exists(), "the landed file went with the want");
+        assert!(first["left_on_disk"].is_null(), "{first}");
+        assert!(first["reads"][BRIEF]["path"].is_null());
+        for batch in 0..3 {
+            for n in 0..30 {
+                let subject = format!("project:river/docs/f{batch}-{n}.md");
+                want(&two, &offer_ref, &subject, at).unwrap();
+            }
+            at += 11 * MINUTE;
+            two.taker.offers(at).unwrap();
+        }
+        let kept = kept_record(&two, &offer_ref);
+        assert_eq!(kept["reads"].as_object().unwrap().len(), MAX_SETTLED);
+        assert!(
+            kept["reads"][BRIEF].is_null(),
+            "the oldest settled read went"
+        );
+        assert!(!file.exists(), "and no file stands with no read");
+    }
+
+    /// Item 1: where the file cannot be removed at the expiry, the read is
+    /// `drop_pending` with its path. `offers` and `offer-check` list it under
+    /// `left_on_disk` for as long as it stands, however many reads settle
+    /// after it; `offer-unwant` on it removes the file once it can.
+    #[test]
+    fn a_want_that_expires_over_a_file_that_cannot_be_removed_keeps_its_path_until_it_is_gone() {
+        if root() {
+            eprintln!("skipped: root removes from a read-only folder");
+            return;
+        }
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        landed_unrecorded(&two, &offer_ref, BRIEF);
+        let folder = two.taker.reads_folder(&offer_ref);
+        let file = folder.join(key_of(BRIEF));
+        let path = file.display().to_string();
+        chmod(&folder, 0o500);
+        let mut at = NOW + HOUR + 10 * MINUTE;
+        let says = |left: &Value, by: &str| {
+            assert_eq!(
+                left["reads"],
+                json!([{"ref": BRIEF, "path": path}]),
+                "{by}: {left}"
+            );
+            let said = left["message"].as_str().unwrap();
+            assert!(
+                said.contains(&format!("its bytes are still on disk at {path}"))
+                    && said.contains("Permission denied"),
+                "{by}: {said}"
+            );
+        };
+        for (later, by) in [
+            (0, "at the expiry"),
+            (MINUTE, "a minute on"),
+            (2 * HOUR, "two hours on"),
+            (20 * HOUR, "twenty hours on"),
+        ] {
+            at += later;
+            let entry = listed(&two, &offer_ref, at);
+            assert_eq!(entry["reads"][BRIEF]["state"], "drop_pending", "{by}");
+            assert_eq!(entry["reads"][BRIEF]["path"], path, "{by}");
+            assert!(
+                entry["reads"][BRIEF]["unseen"].is_null(),
+                "{by}: it was seen"
+            );
+            says(&entry["left_on_disk"], by);
+            says(&check_of(&two, &offer_ref, at)["left_on_disk"], by);
+            assert!(file.exists(), "{by}");
+        }
+        // 90 later wants expire: the read whose bytes stand is never the one that goes.
+        for batch in 0..3 {
+            for n in 0..30 {
+                let subject = format!("project:river/docs/f{batch}-{n}.md");
+                want(&two, &offer_ref, &subject, at).unwrap();
+            }
+            at += 11 * MINUTE;
+            two.taker.offers(at).unwrap();
+        }
+        let kept = kept_record(&two, &offer_ref);
+        assert_eq!(kept["reads"].as_object().unwrap().len(), MAX_SETTLED + 1);
+        assert_eq!(
+            kept["reads"][BRIEF]["path"], path,
+            "the record keeps the path"
+        );
+        assert!(file.exists());
+        // An offer that cannot be settled now is listed with what its record holds as still to be dropped.
+        let record = two.taker.path(Side::Taken, &offer_ref);
+        chmod(&record, 0o400);
+        let entry = listed(&two, &offer_ref, at);
+        chmod(&record, 0o600);
+        assert!(entry["unsettled"]["message"].is_string(), "{entry}");
+        assert_eq!(
+            entry["left_on_disk"]["reads"],
+            json!([{"ref": BRIEF, "path": path}])
+        );
+        // An unwant on it while it cannot be removed says where it still is, and why.
+        let unwanted = two
+            .taker
+            .unwant(&json!({"offer_ref": offer_ref, "ref": BRIEF}), at)
+            .unwrap();
+        assert_eq!(unwanted["read"]["state"], "drop_pending", "{unwanted}");
+        says(
+            &unwanted["left_on_disk"],
+            "an unwant while it cannot be removed",
+        );
+        // It can be removed again: an unwant on it removes the file and says so.
+        chmod(&folder, 0o700);
+        let unwanted = two
+            .taker
+            .unwant(&json!({"offer_ref": offer_ref, "ref": BRIEF}), at)
+            .unwrap();
+        assert_eq!(unwanted["read"]["state"], "dropped", "{unwanted}");
+        assert!(unwanted["left_on_disk"].is_null(), "{unwanted}");
+        assert!(!file.exists());
+        assert!(listed(&two, &offer_ref, at)["left_on_disk"].is_null());
+    }
+
+    /// Item 1: a refusal, or a folder's entries, kept over a wanted read
+    /// whose file landed: the file goes first. Where it cannot, the read is
+    /// `drop_pending` with its path, a refusal's words kept, and the answer
+    /// says where the bytes are.
+    #[test]
+    fn an_answer_that_is_no_file_removes_the_file_that_landed_for_its_read() {
+        let deep = "project:river/docs/deep";
+        let refusal = refusal_answer("not_here", "Nothing stands at that ref");
+        let answers = |offer_ref: &str| {
+            [
+                (BRIEF, refusal.clone(), "refused"),
+                (
+                    deep,
+                    folder_answer(
+                        offer_ref,
+                        deep,
+                        json!([{"ref": NOTE, "kind": "file", "byte_len": 7}]),
+                        false,
+                    ),
+                    "placed",
+                ),
+            ]
+        };
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        for (subject, answer, state) in answers(&offer_ref) {
+            landed_unrecorded(&two, &offer_ref, subject);
+            let file = two.taker.reads_folder(&offer_ref).join(key_of(subject));
+            assert!(file.exists(), "{subject}");
+            let kept = arrived(&two, &offer_ref, subject, &answer, NOW + HOUR).unwrap();
+            assert_eq!(kept["read"]["state"], state, "{subject}: {kept}");
+            assert!(!file.exists(), "{subject}: the landed file went first");
+            assert!(kept["left_on_disk"].is_null(), "{subject}");
+            assert!(check_of(&two, &offer_ref, NOW + 2 * HOUR)["left_on_disk"].is_null());
+        }
+        if root() {
+            eprintln!("skipped: root removes from a read-only folder");
+            return;
+        }
+        let two = self::two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        let folder = two.taker.reads_folder(&offer_ref);
+        std::fs::create_dir_all(&folder).unwrap();
+        for (subject, answer, _) in answers(&offer_ref) {
+            chmod(&folder, 0o700);
+            landed_unrecorded(&two, &offer_ref, subject);
+            let path = folder.join(key_of(subject)).display().to_string();
+            chmod(&folder, 0o500);
+            let kept = arrived(&two, &offer_ref, subject, &answer, NOW + HOUR).unwrap();
+            assert_eq!(kept["read"]["state"], "drop_pending", "{subject}: {kept}");
+            assert_eq!(kept["read"]["path"], path, "{subject}");
+            assert!(kept["read"]["entries"].is_null(), "{subject}");
+            let left = &kept["left_on_disk"];
+            assert!(
+                left["reads"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!({"ref": subject, "path": path})),
+                "{subject}: {left}"
+            );
+            assert!(
+                left["message"]
+                    .as_str()
+                    .unwrap()
+                    .contains("its bytes are still on disk at"),
+                "{subject}: {left}"
+            );
+            assert!(Path::new(&path).exists(), "{subject}");
+        }
+        assert_eq!(
+            kept_record(&two, &offer_ref)["reads"][BRIEF]["why"]["code"],
+            "not_here",
+            "the refusal's words are kept"
+        );
+        chmod(&folder, 0o700);
+        let entry = listed(&two, &offer_ref, NOW + HOUR);
+        assert!(entry["left_on_disk"].is_null(), "{entry}");
+        for subject in [BRIEF, deep] {
+            assert_eq!(entry["reads"][subject]["state"], "dropped", "{subject}");
+            assert!(!folder.join(key_of(subject)).exists(), "{subject}");
+        }
+    }
+
+    /// Item 1: a read an earlier Factory settled over a file that stands (it
+    /// said `expired` or `refused` and left the file). The next act removes
+    /// the file; where it cannot, the read is `drop_pending` with its path
+    /// and is listed, and it is not among the settled reads that go.
+    #[test]
+    fn a_read_settled_earlier_over_a_file_that_stands_has_it_removed_at_the_next_act() {
+        let settled_earlier = |two: &Two, offer_ref: &str, state: &str| {
+            want(two, offer_ref, BRIEF, NOW + HOUR).unwrap();
+            if state == "expired" {
+                two.taker.offers(NOW + HOUR + 10 * MINUTE).unwrap();
+            } else {
+                let refusal = refusal_answer("not_here", "Nothing stands at that ref");
+                arrived(two, offer_ref, BRIEF, &refusal, NOW + HOUR).unwrap();
+            }
+            assert_eq!(read_state(two, offer_ref, BRIEF), state);
+            landed(two, offer_ref, BRIEF);
+        };
+        for state in ["expired", "refused"] {
+            let two = two();
+            let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+            settled_earlier(&two, &offer_ref, state);
+            let file = two.taker.reads_folder(&offer_ref).join(key_of(BRIEF));
+            let checked = check_of(&two, &offer_ref, NOW + 2 * HOUR);
+            assert!(!file.exists(), "{state}: removed by the next act");
+            assert!(checked["left_on_disk"].is_null(), "{state}: {checked}");
+            assert_eq!(read_state(&two, &offer_ref, BRIEF), state, "{state}");
+        }
+        if root() {
+            eprintln!("skipped: root removes from a read-only folder");
+            return;
+        }
+        let two = self::two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        settled_earlier(&two, &offer_ref, "expired");
+        let folder = two.taker.reads_folder(&offer_ref);
+        let path = folder.join(key_of(BRIEF)).display().to_string();
+        chmod(&folder, 0o500);
+        let mut at = NOW + 2 * HOUR;
+        let entry = listed(&two, &offer_ref, at);
+        assert_eq!(entry["reads"][BRIEF]["state"], "drop_pending", "{entry}");
+        assert_eq!(
+            entry["left_on_disk"]["reads"],
+            json!([{"ref": BRIEF, "path": path}])
+        );
+        for batch in 0..3 {
+            for n in 0..30 {
+                let subject = format!("project:river/docs/f{batch}-{n}.md");
+                want(&two, &offer_ref, &subject, at).unwrap();
+            }
+            at += 11 * MINUTE;
+            two.taker.offers(at).unwrap();
+        }
+        assert_eq!(
+            kept_record(&two, &offer_ref)["reads"][BRIEF]["path"],
+            path,
+            "kept past the settled reads that went"
+        );
+        chmod(&folder, 0o700);
+        assert!(check_of(&two, &offer_ref, at)["left_on_disk"].is_null());
+        assert!(!Path::new(&path).exists());
+        // Dropped, it is the oldest of the settled reads and goes with them.
+        assert!(read_state(&two, &offer_ref, BRIEF).is_null());
+    }
+
+    /// Item 3: "its bytes are still on disk" is said only of a read whose
+    /// bytes may be. A read that was only waited on, behind a folder that
+    /// cannot be looked into, is kept with its path and `unseen`, and the
+    /// words say the folder could not be looked into: at an unwant, at an
+    /// expiry, at a refusal and at a revocation. A want over it says the
+    /// same. Found standing later, it is unseen no more.
+    #[test]
+    fn a_read_only_waited_on_behind_a_shut_folder_is_not_said_to_have_bytes_on_disk() {
+        if root() {
+            eprintln!("skipped: root opens a folder of mode 000");
+            return;
+        }
+        for by in ["unwant", "expiry", "refusal", "revocation"] {
+            let two = two();
+            let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+            placed(&two, &offer_ref, NOTE, b"A note.");
+            want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+            let folder = two.taker.reads_folder(&offer_ref);
+            let path = folder.join(key_of(BRIEF)).display().to_string();
+            chmod(&folder, 0o000);
+            let answer = match by {
+                "unwant" => two
+                    .taker
+                    .unwant(&json!({"offer_ref": offer_ref, "ref": BRIEF}), NOW + HOUR)
+                    .unwrap(),
+                "expiry" => check_of(&two, &offer_ref, NOW + HOUR + 10 * MINUTE),
+                "refusal" => {
+                    let refusal = refusal_answer("not_here", "Nothing stands at that ref");
+                    arrived(&two, &offer_ref, BRIEF, &refusal, NOW + HOUR).unwrap()
+                }
+                _ => revoke(&two, &offer_ref, NOW + HOUR),
+            };
+            let again = want(&two, &offer_ref, BRIEF, NOW + HOUR + 10 * MINUTE);
+            let kept = kept_record(&two, &offer_ref)["reads"][BRIEF].clone();
+            chmod(&folder, 0o700);
+            assert_eq!(kept["state"], "drop_pending", "{by}: {kept}");
+            assert_eq!(kept["path"], path, "{by}");
+            assert_eq!(kept["unseen"], true, "{by}: {kept}");
+            let left = &answer["left_on_disk"];
+            assert!(
+                left["reads"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&json!({"ref": BRIEF, "path": path, "unseen": true})),
+                "{by}: {left}"
+            );
+            let said = left["message"].as_str().unwrap();
+            assert!(
+                said.contains(&format!(
+                    "the folder could not be looked into, so whether bytes stand at {path} is not known"
+                )),
+                "{by}: {said}"
+            );
+            assert!(said.contains("Permission denied"), "{by}: {said}");
+            assert!(
+                said.ends_with("the next act on this offer tries again"),
+                "{by}: {said}"
+            );
+            if by == "revocation" {
+                // The note was placed: its bytes are said to be on disk, the brief's are not.
+                let note = folder.join(key_of(NOTE)).display().to_string();
+                assert!(
+                    said.contains(&format!(
+                        "its bytes are still on disk at {note}; and the folder"
+                    )),
+                    "{by}: {said}"
+                );
+                assert_eq!(again.unwrap_err().code, "revoked");
+            } else {
+                assert!(!said.contains("still on disk"), "{by}: {said}");
+                let refused = again.unwrap_err();
+                assert_eq!(refused.code, "drop_pending", "{by}");
+                assert!(
+                    refused.message.contains("could not be looked into")
+                        && !refused.message.contains("still on disk"),
+                    "{by}: {}",
+                    refused.message
+                );
+            }
+            // The folder opens: the next act settles it, and nothing is left.
+            let entry = listed(&two, &offer_ref, NOW + HOUR + 10 * MINUTE);
+            assert_eq!(entry["reads"][BRIEF]["state"], "dropped", "{by}");
+            assert!(entry["reads"][BRIEF]["unseen"].is_null(), "{by}");
+            assert!(entry["left_on_disk"].is_null(), "{by}: {entry}");
+        }
+        // Unseen behind a shut folder, then found standing in one that cannot be written: seen, and said so.
+        let two = self::two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        landed_unrecorded(&two, &offer_ref, BRIEF);
+        let folder = two.taker.reads_folder(&offer_ref);
+        let path = folder.join(key_of(BRIEF)).display().to_string();
+        chmod(&folder, 0o000);
+        two.taker
+            .unwant(&json!({"offer_ref": offer_ref, "ref": BRIEF}), NOW + HOUR)
+            .unwrap();
+        chmod(&folder, 0o500);
+        let entry = listed(&two, &offer_ref, NOW + HOUR);
+        let refused = want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap_err();
+        chmod(&folder, 0o700);
+        assert!(entry["reads"][BRIEF]["unseen"].is_null(), "{entry}");
+        assert_eq!(
+            entry["left_on_disk"]["reads"],
+            json!([{"ref": BRIEF, "path": path}])
+        );
+        assert!(
+            entry["left_on_disk"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("its bytes are still on disk at {path}")),
+            "{entry}"
+        );
+        assert!(
+            refused.message.contains("still on disk"),
+            "{}",
+            refused.message
+        );
+        // A bar behind a shut folder leaves a read still to be dropped as it was: seen, or unseen.
+        for seen in [true, false] {
+            let two = self::two();
+            let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+            landed_unrecorded(&two, &offer_ref, BRIEF);
+            let folder = two.taker.reads_folder(&offer_ref);
+            chmod(&folder, if seen { 0o500 } else { 0o000 });
+            two.taker
+                .unwant(&json!({"offer_ref": offer_ref, "ref": BRIEF}), NOW + HOUR)
+                .unwrap();
+            chmod(&folder, 0o000);
+            let revoked = revoke(&two, &offer_ref, NOW + HOUR);
+            let kept = kept_record(&two, &offer_ref)["reads"][BRIEF].clone();
+            chmod(&folder, 0o700);
+            assert_eq!(kept["state"], "drop_pending", "seen {seen}: {kept}");
+            assert_eq!(kept["unseen"] == true, !seen, "seen {seen}: {kept}");
+            let said = revoked["left_on_disk"]["message"].as_str().unwrap();
+            assert_eq!(said.contains("still on disk"), seen, "seen {seen}: {said}");
+        }
+    }
+
+    /// Item 1: a read still to be dropped holds its place as a want does, so
+    /// a record behind a folder that cannot be looked into stays bounded.
+    #[test]
+    fn reads_still_to_be_dropped_count_toward_the_reads_a_task_waits_on() {
+        if root() {
+            eprintln!("skipped: root opens a folder of mode 000");
+            return;
+        }
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        let folder = two.taker.reads_folder(&offer_ref);
+        std::fs::create_dir_all(&folder).unwrap();
+        chmod(&folder, 0o000);
+        for n in 0..MAX_WANTED - 1 {
+            want(
+                &two,
+                &offer_ref,
+                &format!("project:river/docs/f{n}.md"),
+                NOW + HOUR,
+            )
+            .unwrap();
+        }
+        let at = NOW + HOUR + 10 * MINUTE;
+        two.taker.offers(at).unwrap();
+        let one_more = want(&two, &offer_ref, BRIEF, at);
+        let refused = want(&two, &offer_ref, NOTE, at);
+        let kept = kept_record(&two, &offer_ref);
+        chmod(&folder, 0o700);
+        let pending = kept["reads"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|read| read["state"] == "drop_pending" && read["unseen"] == true)
+            .count();
+        assert_eq!(pending, MAX_WANTED - 1);
+        assert_eq!(one_more.unwrap()["read"]["state"], "wanted");
+        let refused = refused.unwrap_err();
+        assert_eq!(refused.code, "too_many");
+        assert_eq!(
+            refused.message,
+            format!(
+                "This task waits on 1 reads, and {} more of the {MAX_WANTED} it may wait on are reads whose bytes could not be removed from {}; once that folder lets its owner remove them, any act on this offer drops them and a read can be wanted again",
+                MAX_WANTED - 1,
+                folder.display()
+            )
+        );
+        // The folder is mended: any act on the offer drops them, and a want is taken again.
+        check_of(&two, &offer_ref, at);
+        let still = kept_record(&two, &offer_ref)["reads"]
+            .as_object()
+            .unwrap()
+            .values()
+            .filter(|read| read["state"] == "drop_pending")
+            .count();
+        assert_eq!(still, 0, "none is still to be dropped");
+        assert_eq!(
+            want(&two, &offer_ref, NOTE, at).unwrap()["read"]["state"],
+            "wanted"
+        );
+    }
+
+    /// Item 2: a placement a folder on its way refuses names that folder by
+    /// its path and says the mend that fits it, whichever folder it is, and
+    /// never widens it; the read waits, nothing lands, and once mended the
+    /// same answer is placed. A `taken` folder its owner cannot write is
+    /// found before the bytes are placed, since no record could then name
+    /// them.
+    #[test]
+    fn a_placement_refused_by_a_folder_on_its_way_names_it_and_what_mends_it() {
+        if root() {
+            eprintln!("skipped: root writes whatever the mode");
+            return;
+        }
+        // (which folder, its mode, whether the reads folders stand already, the mode it is left with, what the words hold)
+        let cases = [
+            ("reads", 0o400, true, 0o400, "the folder that holds what is read under grants, {}, cannot be written by its owner (Permission denied", "it is mode 0400; make it writable by its owner (mode 0700) or remove it, then bring the answer again"),
+            ("reads", 0o000, true, 0o000, "the folder that holds what is read under grants, {}, cannot be written by its owner (Permission denied", "it is mode 0000; make it writable by its owner (mode 0700) or remove it, then bring the answer again"),
+            ("task-offers", 0o555, false, 0o500, "the folder of this Factory's offers, {}, cannot be written by its owner (Permission denied", "it is mode 0500; make it writable by its owner (mode 0700), then bring the answer again"),
+            ("task-offers", 0o500, false, 0o500, "the folder of this Factory's offers, {}, cannot be written by its owner (Permission denied", "it is mode 0500; make it writable by its owner (mode 0700), then bring the answer again"),
+            ("taken", 0o500, true, 0o500, "the folder that holds what was taken, where this read's record is kept, {}, cannot be written by its owner: it is mode 0500", "make it writable by its owner (mode 0700), then bring the answer again"),
+            ("offer", 0o300, true, 0o300, "the folder for what is read under this grant, {}, cannot be opened by its owner (Permission denied", "it is mode 0300; make it readable by its owner (mode 0700) or remove it, then bring the answer again"),
+            ("offer", 0o400, true, 0o400, "the folder for what is read under this grant, {}, cannot be written by its owner (Permission denied", "it is mode 0400; make it writable by its owner (mode 0700) or remove it, then bring the answer again"),
+        ];
+        for (which, bits, stand, left, starts, ends) in cases {
+            let two = two();
+            let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+            if stand {
+                placed(&two, &offer_ref, NOTE, b"A note.");
+            }
+            want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+            let offers = two.taker.root.join(FOLDER);
+            let folder = match which {
+                "reads" => offers.join(READS),
+                "task-offers" => offers.clone(),
+                "taken" => offers.join(Side::Taken.folder()),
+                _ => two.taker.reads_folder(&offer_ref),
+            };
+            chmod(&folder, bits);
+            let answer = file_answer(&offer_ref, BRIEF, b"The brief.\n");
+            let refused = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR).unwrap_err();
+            let stood = mode_of(&folder);
+            chmod(&folder, 0o700);
+            let case = format!("{which} {bits:03o}");
+            assert_eq!(stood, left, "{case}: no owner bit is added");
+            assert_eq!(refused.code, "io", "{case}: {}", refused.message);
+            let starts = format!(
+                "could not place the 11 bytes read for {BRIEF}: {}",
+                starts.replace("{}", &folder.display().to_string())
+            );
+            assert!(
+                refused.message.starts_with(&starts),
+                "{case}: {}",
+                refused.message
+            );
+            assert!(
+                refused.message.ends_with(ends),
+                "{case}: {}",
+                refused.message
+            );
+            assert_eq!(
+                placed_bytes(&two, &offer_ref, BRIEF),
+                None,
+                "{case}: nothing landed"
+            );
+            assert_eq!(read_state(&two, &offer_ref, BRIEF), "wanted", "{case}");
+            let again = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR).unwrap();
+            assert_eq!(
+                again["read"]["state"], "placed",
+                "{case}: placed once mended"
+            );
+        }
+        // Any other failure keeps the OS's words and names no mend: a folder stands at the read's key.
+        let two = self::two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        placed(&two, &offer_ref, NOTE, b"A note.");
+        want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        let at_key = two.taker.reads_folder(&offer_ref).join(key_of(BRIEF));
+        std::fs::create_dir(&at_key).unwrap();
+        let answer = file_answer(&offer_ref, BRIEF, b"The brief.\n");
+        let refused = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR).unwrap_err();
+        assert!(
+            refused
+                .message
+                .starts_with(&format!("could not place the 11 bytes read for {BRIEF}: "))
+                && refused.message.contains("os error"),
+            "{}",
+            refused.message
+        );
+        for mend in ["mode", "make it", "bring the answer again", "the folder"] {
+            assert!(
+                !refused.message.contains(mend),
+                "{mend}: {}",
+                refused.message
+            );
+        }
+    }
+
+    /// Item 2: a folder that carries the flag that forbids change is not
+    /// said to be mended by a mode; and a placement that cannot narrow a
+    /// folder on its way is not refused for it: it places, and its answer
+    /// names what stayed wide, as every other verb's does.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_placement_says_a_flag_is_not_mended_by_a_mode_and_is_not_refused_for_a_folder_left_wide() {
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        placed(&two, &offer_ref, NOTE, b"A note.");
+        want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        let folder = two.taker.reads_folder(&offer_ref);
+        let answer = file_answer(&offer_ref, BRIEF, b"The brief.\n");
+        let held = Immutable::at(&folder);
+        let refused = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR).unwrap_err();
+        drop(held);
+        assert!(
+            refused.message.starts_with(&format!(
+                "could not place the 11 bytes read for {BRIEF}: the folder for what is read under this grant, {}, cannot be changed (Operation not permitted",
+                folder.display()
+            )),
+            "{}",
+            refused.message
+        );
+        assert!(
+            refused.message.ends_with(
+                "it carries a flag that forbids any change within it, and its mode is 0700, so no mode mends it; clear the flag (`chflags nouchg` for the user's), then bring the answer again"
+            ),
+            "{}",
+            refused.message
+        );
+        assert!(
+            !refused.message.contains("make it writable"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(placed_bytes(&two, &offer_ref, BRIEF), None);
+        // `task-offers` stands wider and its mode cannot change: the answer is placed all the same.
+        let offers = two.taker.root.join(FOLDER);
+        chmod(&offers, 0o755);
+        let held = Immutable::at(&offers);
+        let placed = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR);
+        drop(held);
+        let placed = placed.unwrap_or_else(|refusal| panic!("placed: {}", refusal.message));
+        assert_eq!(placed["read"]["state"], "placed");
+        assert_eq!(
+            placed["left_wide"]["paths"],
+            json!([offers.display().to_string()]),
+            "{placed}"
+        );
+        assert_eq!(
+            placed_bytes(&two, &offer_ref, BRIEF).as_deref(),
+            Some(&b"The brief.\n"[..])
+        );
+        // A reads folder that stands wider and cannot be narrowed: its files are narrowed all the same.
+        let file = folder.join(key_of(NOTE));
+        chmod(&folder, 0o755);
+        chmod(&file, 0o644);
+        let held = Immutable::at(&folder);
+        let checked = check_of(&two, &offer_ref, NOW + HOUR);
+        drop(held);
+        assert_eq!(
+            checked["left_wide"]["paths"],
+            json!([folder.display().to_string()]),
+            "{checked}"
+        );
+        assert_eq!((mode_of(&folder), mode_of(&file)), (0o755, 0o600));
+        // A `taken` that carries the flag is found before the bytes land.
+        let two = self::two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        let taken = two.taker.root.join(FOLDER).join(Side::Taken.folder());
+        let held = Immutable::at(&taken);
+        let answer = file_answer(&offer_ref, BRIEF, b"The brief.\n");
+        let refused = arrived(&two, &offer_ref, BRIEF, &answer, NOW + HOUR);
+        drop(held);
+        let refused = refused.unwrap_err();
+        assert!(
+            refused.message.contains(&format!(
+                "{}, cannot be changed: it carries a flag that forbids any change within it",
+                taken.display()
+            )),
+            "{}",
+            refused.message
+        );
+        assert_eq!(placed_bytes(&two, &offer_ref, BRIEF), None);
+    }
+
+    /// Item 4: `offer-check` names a record that stands wider than private
+    /// though it is not the check's to narrow, and leaves its mode alone; a
+    /// check that settles holds the record's lock through the settling verb,
+    /// which narrows it, and then names nothing. `reads` and the offer's
+    /// reads folder are narrowed by a check and by a verb, and the files of
+    /// a reads folder that stood wider with it; a file in a folder that is
+    /// private is left.
+    #[test]
+    fn a_check_names_a_record_left_wide_and_the_reads_folders_are_narrowed_with_their_files() {
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        placed(&two, &offer_ref, NOTE, b"A note.");
+        let record = two.taker.path(Side::Taken, &offer_ref);
+        chmod(&record, 0o644);
+        let checked = check_of(&two, &offer_ref, NOW + HOUR);
+        assert_eq!(
+            checked["left_wide"]["paths"],
+            json!([record.display().to_string()]),
+            "{checked}"
+        );
+        let said = checked["left_wide"]["message"].as_str().unwrap();
+        assert!(
+            said.contains(&format!(
+                "{} (a check holds no lock on the record, and a record is narrowed only under its lock)",
+                record.display()
+            )),
+            "{said}"
+        );
+        assert_eq!(mode_of(&record), 0o644, "a check changes no record's mode");
+        // With a want to settle, the settling verb narrows it under its lock: nothing is named.
+        want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        chmod(&record, 0o644);
+        let checked = check_of(&two, &offer_ref, NOW + HOUR + 10 * MINUTE);
+        assert!(checked["left_wide"].is_null(), "{checked}");
+        assert_eq!(mode_of(&record), 0o600);
+        // The reads folders and a placed file, by a check and by a verb.
+        let reads = two.taker.root.join(FOLDER).join(READS);
+        let folder = two.taker.reads_folder(&offer_ref);
+        let file = folder.join(key_of(NOTE));
+        for by in ["check", "want"] {
+            chmod(&reads, 0o755);
+            chmod(&folder, 0o750);
+            chmod(&file, 0o644);
+            let answer = if by == "check" {
+                check_of(&two, &offer_ref, NOW + 2 * HOUR)
+            } else {
+                want(&two, &offer_ref, "project:river/docs", NOW + 2 * HOUR).unwrap()
+            };
+            assert!(answer["left_wide"].is_null(), "{by}: {answer}");
+            assert_eq!(
+                (mode_of(&reads), mode_of(&folder), mode_of(&file)),
+                (0o700, 0o700, 0o600),
+                "{by}"
+            );
+        }
+        chmod(&file, 0o644);
+        assert!(check_of(&two, &offer_ref, NOW + 2 * HOUR)["left_wide"].is_null());
+        assert_eq!(
+            mode_of(&file),
+            0o644,
+            "no other user reaches it in a folder of 0700"
+        );
+    }
+
+    /// Item 5 (the review's mutants k1 and k2): narrowing keeps the special
+    /// bits of what it narrows, and sets no mode where nothing stands wider.
+    #[test]
+    fn narrowing_keeps_the_special_bits_and_touches_nothing_that_is_private() {
+        use std::os::unix::fs::MetadataExt;
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        let offers = two.taker.root.join(FOLDER);
+        chmod(&offers, 0o1755);
+        assert_eq!(bits_of(&offers), 0o1755);
+        check_of(&two, &offer_ref, NOW + HOUR);
+        assert_eq!(bits_of(&offers), 0o1700, "the sticky bit stays");
+        // Private already: a check and a verb leave its change time as it was.
+        chmod(&offers, 0o700);
+        let changed = || {
+            let meta = std::fs::symlink_metadata(&offers).unwrap();
+            (meta.ctime(), meta.ctime_nsec())
+        };
+        let before = changed();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        check_of(&two, &offer_ref, NOW + HOUR);
+        want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        assert_eq!(
+            changed(),
+            before,
+            "no mode was set on a folder that is private"
+        );
+    }
+
+    /// Item 5 (the review's mutant k4): a verb refused at its lock has
+    /// narrowed the folders all the same, before it asked for the lock.
+    #[test]
+    fn a_verb_refused_at_its_lock_has_narrowed_the_folders_first() {
+        if root() {
+            eprintln!("skipped: root opens a record of mode 0400 to write");
+            return;
+        }
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        let offers = two.taker.root.join(FOLDER);
+        let taken = offers.join(Side::Taken.folder());
+        let record = two.taker.path(Side::Taken, &offer_ref);
+        chmod(&offers, 0o755);
+        chmod(&taken, 0o755);
+        chmod(&record, 0o400);
+        let refused = want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap_err();
+        let modes = (mode_of(&offers), mode_of(&taken), mode_of(&record));
+        chmod(&record, 0o600);
+        assert!(
+            refused.message.starts_with("could not open "),
+            "{}",
+            refused.message
+        );
+        assert_eq!(modes, (0o700, 0o700, 0o400));
+    }
+
+    /// Item 5: the folders a first take makes are private by the time its
+    /// record is published, under a umask that would make them wider: they
+    /// are narrowed once the lock has made them, not only when the verb
+    /// ends. Run under umask 022 in a process of its own.
+    #[test]
+    fn the_folders_a_first_take_makes_are_private_before_its_record_is_published() {
+        use crate::native_file_transaction::observe_next_publication;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let name = "the_folders_a_first_take_makes_are_private_before_its_record_is_published";
+        if ran_in_a_process_of_its_own(name, 0o022) {
+            return;
+        }
+        let two = two();
+        let offer = make(&two, NOW + 24 * HOUR);
+        let offers = two.taker.root.join(FOLDER);
+        let taken = offers.join(Side::Taken.folder());
+        let met = Rc::new(RefCell::new(None));
+        let seen = met.clone();
+        observe_next_publication(move |published| {
+            *seen.borrow_mut() = Some((mode_of(&offers), mode_of(&taken), mode_of(published)));
+        });
+        take(&two, &offer, NOW + HOUR).unwrap();
+        let (offers, taken, record) = met.borrow_mut().take().expect("the take published");
+        eprintln!("at the take's publication: task-offers {offers:03o}, taken {taken:03o}, the record {record:03o}");
+        assert_eq!((offers, taken), (0o700, 0o700));
+        assert_eq!(
+            record, 0o644,
+            "the umask made the fresh record wider, as the test needs"
+        );
+    }
+
+    /// Item 5: a narrowing goes on past what it cannot narrow, on any Unix
+    /// host: files of a reads folder that stood wider which their owner
+    /// cannot open are named, and the others are narrowed all the same, with
+    /// the folders.
+    #[test]
+    fn a_narrowing_goes_on_past_a_file_it_cannot_narrow() {
+        if root() {
+            eprintln!("skipped: root opens a file of mode 066");
+            return;
+        }
+        let two = two();
+        let offer_ref = taken_offer(&two, NOW + 24 * HOUR);
+        placed(&two, &offer_ref, NOTE, b"A note.");
+        let folder = two.taker.reads_folder(&offer_ref);
+        let shut: Vec<PathBuf> = (0..3).map(|n| folder.join(format!("shut-{n}"))).collect();
+        let open: Vec<PathBuf> = (0..12).map(|n| folder.join(format!("open-{n}"))).collect();
+        for file in shut.iter().chain(&open) {
+            std::fs::write(file, b"x").unwrap();
+            chmod(file, 0o644);
+        }
+        for file in &shut {
+            chmod(file, 0o066);
+        }
+        chmod(&folder, 0o755);
+        let wanted = want(&two, &offer_ref, BRIEF, NOW + HOUR).unwrap();
+        let mut named: Vec<String> = wanted["left_wide"]["paths"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{wanted}"))
+            .iter()
+            .map(|path| path.as_str().unwrap().to_owned())
+            .collect();
+        named.sort();
+        let shut_paths: Vec<String> = shut.iter().map(|file| file.display().to_string()).collect();
+        assert_eq!(named, shut_paths, "{wanted}");
+        assert!(
+            wanted["left_wide"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("Permission denied"),
+            "{wanted}"
+        );
+        assert_eq!(mode_of(&folder), 0o700);
+        for file in &open {
+            assert_eq!(mode_of(file), 0o600, "{}", file.display());
+        }
+        for file in &shut {
+            assert_eq!(mode_of(file), 0o066, "{}", file.display());
+        }
+        // More than are named: the rest are counted under the folder.
+        let more: Vec<PathBuf> = (3..12).map(|n| folder.join(format!("shut-{n}"))).collect();
+        for file in &more {
+            std::fs::write(file, b"x").unwrap();
+            chmod(file, 0o066);
+        }
+        chmod(&folder, 0o755);
+        let checked = check_of(&two, &offer_ref, NOW + HOUR);
+        let paths = checked["left_wide"]["paths"].as_array().unwrap();
+        assert_eq!(
+            paths.len(),
+            9,
+            "eight files and the folder for the rest: {checked}"
+        );
+        assert!(
+            checked["left_wide"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{} (4 more files in it)", folder.display())),
+            "{checked}"
+        );
     }
 }
