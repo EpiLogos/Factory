@@ -1,5 +1,10 @@
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // Factory's Action field (`oi act`, oi.owner-action-field/v1): its
+    // listing and the in-process run of one of its routes.
+    if epilogos_factory::action_field::is_action_field_command(&args) {
+        return epilogos_factory::action_field::main(&args);
+    }
     if args.first().map(String::as_str) == Some("workflow") {
         return epilogos_factory::workflow_authoring::cli::main(&args);
     }
