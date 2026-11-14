@@ -29,7 +29,7 @@ use crate::execution_intelligence::{
     EXECUTION_INTELLIGENCE_INTEROP_VERSION,
 };
 use crate::native_owner::{NativeOwnerInvocation, AIKIT_CAW_CONTRACT_REVISION};
-use crate::orchestration::{LegStatus, ReturnedArtifact};
+use crate::orchestration::{LegStatus, RetryGrant, ReturnedArtifact};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -39,6 +39,11 @@ use std::time::{Duration, Instant};
 
 pub const SESSION_CONTRACT: &str = "factory.session/v1";
 pub const TASK_CONTRACT: &str = "factory.session-task/v1";
+/// Factory's sessions of a project, as `factory session list` answers them.
+pub const SESSION_LIST_CONTRACT: &str = "factory.session-list/v1";
+/// The attempts a task's unit is given in all, its first among them: a task that fails is retried under the grant its first
+/// attempt consumes (manual §19.1, "When a task on the track stalls, the track lights a retry"), twice at most.
+const TASK_ATTEMPTS: u32 = 3;
 /// The tracking fact a pause leaves on an attempt: AIKit cancelled the session's turn at Factory's Stop.
 const PAUSE: &str = "factory-session-pause";
 /// How Factory names the way it chose the body a task runs on: the agent the person seated on the track, as AIKit opened it.
@@ -391,6 +396,24 @@ fn start(agent: &str, world: &str, project: &str) -> Result<Value, CliError> {
         })?;
     let space = provision["space"].as_str().unwrap_or_default().to_owned();
     let record = record(&place.checkout, agent, "SessionStart", &session);
+    // The project is Factory's own from its first session, and Factory keeps the session: the window lays it as a track from
+    // its start, before any task is written on it (manual §19.1, "The agent takes the seat, and the track carries its tasks").
+    placed(&place)?;
+    let kept = json!({
+        "contract": SESSION_CONTRACT,
+        "state": "open",
+        "session": session,
+        "space": space,
+        "track": format!("{space}:{session}"),
+        "agent": agent,
+        "provider": provision["provider"],
+        "world": place.world,
+        "project": place.project,
+        "checkout": place.checkout,
+        "opened_at": now_rfc3339(),
+        "tasks": [],
+    });
+    keep_session(&place.state, &session, &kept)?;
     Ok(json!({
         "contract": SESSION_CONTRACT,
         "state": "open",
@@ -409,6 +432,78 @@ fn start(agent: &str, world: &str, project: &str) -> Result<Value, CliError> {
         "provision": provision,
         "terminal": terminal(&place.checkout, &session),
     }))
+}
+
+/// The project placed for Factory (`project setup`, keyed by the project's Central id, as each task's commission is keyed), so
+/// Factory locates its state (`project locate`) and the World Model's factory slice reads its sessions and tasks. A project
+/// placed already stays as it is.
+fn placed(place: &Place) -> Result<(), CliError> {
+    if !place.root.join(".factory/project.json").exists() {
+        crate::project_setup::setup(
+            &place.root,
+            &place.project_id,
+            Some(&place.root.join("ProjectCentral/project.json")),
+        )?;
+    }
+    Ok(())
+}
+
+/// Where Factory keeps a session it started: beside the project's Factory state, by the session's id.
+fn session_file(state: &Path, session: &str) -> PathBuf {
+    state
+        .parent()
+        .unwrap_or(Path::new("."))
+        .join("sessions")
+        .join(format!("{}.session.json", session_tail(session)))
+}
+
+fn keep_session(state: &Path, session: &str, kept: &Value) -> Result<(), CliError> {
+    let file = session_file(state, session);
+    std::fs::create_dir_all(file.parent().unwrap_or(Path::new(".")))
+        .map_err(CliError::from_native)?;
+    let staged = file.with_extension("json.tmp");
+    std::fs::write(
+        &staged,
+        serde_json::to_vec_pretty(kept).map_err(CliError::from_native)?,
+    )
+    .and_then(|()| std::fs::rename(&staged, &file))
+    .map_err(CliError::from_native)
+}
+
+/// Factory's record of a session it started, when it keeps one.
+fn kept_session(state: &Path, session: &str) -> Option<Value> {
+    std::fs::read(session_file(state, session))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+/// `factory session list <state>`: the sessions Factory started in this state's project, each as Factory keeps it — open or
+/// ended, with the tasks written on it.
+fn session_list(state_text: &str) -> Result<Value, CliError> {
+    let state = PathBuf::from(state_text);
+    let folder = state.parent().unwrap_or(Path::new(".")).join("sessions");
+    let mut sessions: Vec<Value> = match std::fs::read_dir(&folder) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().ends_with(".session.json"))
+            })
+            .filter_map(|path| std::fs::read(path).ok())
+            .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .filter(|kept| kept["contract"] == SESSION_CONTRACT)
+            .collect(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(CliError::from_native(error)),
+    };
+    sessions.sort_by(|a, b| {
+        a["opened_at"]
+            .as_str()
+            .cmp(&b["opened_at"].as_str())
+            .then_with(|| a["session"].as_str().cmp(&b["session"].as_str()))
+    });
+    Ok(json!({"contract": SESSION_LIST_CONTRACT, "factory_state": state, "sessions": sessions}))
 }
 
 /// Where the session runs: AIKit's own conversation of it, in the window's terminal, or attached from a terminal outside it.
@@ -466,6 +561,11 @@ fn end(world: &str, project: &str, session: &str, agent: Option<&str>) -> Result
         std::thread::sleep(Duration::from_secs(1));
     }
     let record = record(&place.checkout, &agent, "SessionEnd", session);
+    if let Some(mut kept) = kept_session(&place.state, session) {
+        kept["state"] = json!("ended");
+        kept["ended_at"] = json!(now_rfc3339());
+        keep_session(&place.state, session, &kept)?;
+    }
     Ok(json!({
         "contract": SESSION_CONTRACT,
         "state": "ended",
@@ -583,15 +683,17 @@ fn task_write(
         .next()
         .map(ToString::to_string)
         .unwrap_or_default();
-    // The project is Factory's own from its first task: its placement (`project setup-central`, what Setup's Projects step runs,
-    // keyed by the state's first commission) lets Factory locate this state (`project locate`), so the World Model's factory slice
-    // and the window's Set read its tasks.
-    if !place.root.join(".factory/project.json").exists() {
-        crate::project_setup::setup_central(
-            &place.root,
-            &place.project_id,
-            &place.root.join("ProjectCentral/project.json"),
-        )?;
+    // The project is Factory's own (placed at the session's start; a session Factory did not start places it here), and the task
+    // is kept on the session's record, so the window lays it as a clip on the session's track before it runs.
+    placed(&place)?;
+    if let Some(mut kept) = kept_session(&place.state, session) {
+        if let Some(tasks) = kept["tasks"].as_array_mut() {
+            tasks.push(
+                json!({"run_ref": receipt.commission.run_ref.to_string(), "unit_ref": unit,
+                "task": headline, "written_at": now_rfc3339()}),
+            );
+        }
+        keep_session(&place.state, session, &kept)?;
     }
     Ok(json!({
         "contract": TASK_CONTRACT,
@@ -1107,6 +1209,9 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
     let unit = &basis.unit;
     let attempt_ref = minted("attempt");
     let task_ref = minted("task");
+    // The grant a retry of this task spends (factory.attempt.retry): its first attempt consumes it.
+    let retry_grant = RetryGrant::new(format!("retry-grant:{task_ref}"), TASK_ATTEMPTS)
+        .map_err(|error| refuse(format!("Factory refused the task's retry grant: {error:?}")))?;
     let (now_ref, receipt) =
         prepare_now(&place, &state, &run_ref, unit, &task_ref, &held, session)?;
     let demand = ExecutionDemand {
@@ -1182,8 +1287,8 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
             cost_ceiling_usd: None,
             latency_preference_ms: None,
             wall_clock_timeout_ms: None,
-            retry_grant_ref: None,
-            maximum_attempts: None,
+            retry_grant_ref: Some(retry_grant.grant_ref.clone()),
+            maximum_attempts: Some(retry_grant.attempts_allowed),
         },
     };
     drop(store);
@@ -1198,12 +1303,60 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
             parent_journey_ref: journey,
             workflow_unit_ref: unit_ref.clone(),
             disposition,
-            retry_grant: None,
+            retry_grant: Some(retry_grant),
             tracking: Vec::new(),
             place_grant: None,
         },
     )?;
-    let started = reading(&state, &run_ref)?;
+    let sent = send(
+        &state,
+        &run_ref,
+        &attempt_ref,
+        &authority,
+        &place,
+        &held,
+        session,
+        &basis.unit.required_difference,
+    )?;
+    let mut answer = json!({
+        "contract": TASK_CONTRACT,
+        "state": "running",
+        "factory_state": state,
+        "run_ref": run_ref.to_string(),
+        "unit_ref": unit_ref.to_string(),
+        "attempt_ref": attempt_ref,
+        "task_ref": task_ref,
+        "session": session,
+        "space": space,
+        "checkout": place.checkout,
+    });
+    merge(&mut answer, sent);
+    Ok(answer)
+}
+
+/// Fields of `more` laid into `answer`.
+fn merge(answer: &mut Value, more: Value) {
+    if let (Some(into), Value::Object(from)) = (answer.as_object_mut(), more) {
+        into.extend(from);
+    }
+}
+
+/// An attempt's words sent to its session as the person's, and its follower started: the session's view and the checkout
+/// read as the words go (the task's log streams what comes after them, its difference is read against them), the send
+/// through Factory's agent client (attempt_owner_dispatch.rs), and the follower that records the turn's end. Answers the
+/// execution, the delivery, the log, the follower and AIKit's observation of the send.
+#[allow(clippy::too_many_arguments)]
+fn send(
+    state: &Path,
+    run_ref: &RunRef,
+    attempt_ref: &str,
+    authority: &ProjectedFactoryActionAuthority,
+    place: &Place,
+    held: &Binding,
+    session: &str,
+    words: &str,
+) -> Result<Value, CliError> {
+    let started = reading(state, run_ref)?;
     let execution_ref = minted("execution");
     let delivery_ref = minted("delivery");
     // Where the session's view stands as the words go: the task's log streams what comes after it.
@@ -1215,7 +1368,7 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
     .and_then(|view| view["blocks"].as_array().map(Vec::len))
     .unwrap_or(0);
     // How the checkout stands as the words go: what the turn leaves is read against it.
-    let before = task_file(&state, &attempt_ref, "before.json");
+    let before = task_file(state, attempt_ref, "before.json");
     std::fs::create_dir_all(before.parent().unwrap_or(Path::new(".")))
         .map_err(CliError::from_native)?;
     std::fs::write(
@@ -1224,7 +1377,7 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
     )
     .map_err(CliError::from_native)?;
     let sent = execute_attempt_owner_action(
-        &state,
+        state,
         FactoryAttemptOwnerRequest {
             contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
             request_ref: minted("owner-request"),
@@ -1233,7 +1386,7 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
             run_ref: run_ref.clone(),
             expected_revision: started.revision,
             authority: authority.clone(),
-            attempt_ref: attempt_ref.clone(),
+            attempt_ref: attempt_ref.to_owned(),
             execution_ref: execution_ref.clone(),
             invocation: NativeOwnerInvocation::AikitEncounter {
                 binary: aikit_bin(),
@@ -1248,7 +1401,7 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
                         "sender": held.sender,
                         "expected_binding_revision": held.revision,
                         "packet": {
-                            "text": basis.unit.required_difference,
+                            "text": words,
                             "source_refs": [],
                             "audience": [held.agent_ref],
                         },
@@ -1262,31 +1415,237 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
             "the task's words were not sent to the session: {error}"
         ))
     })?;
-    let log = task_file(&state, &attempt_ref, "log.jsonl");
+    let log = task_file(state, attempt_ref, "log.jsonl");
     std::fs::create_dir_all(log.parent().unwrap_or(Path::new(".")))
         .map_err(CliError::from_native)?;
     append(
         &log,
         &json!({"at": now_rfc3339(), "kind": "sent", "delivery_ref": delivery_ref,
-            "text": basis.unit.required_difference, "blocks_before": blocks_before}),
+            "text": words, "blocks_before": blocks_before}),
     );
-    let follower = follow_in_background(&state, &run_ref, &attempt_ref, &authority.authority_ref)?;
+    let follower = follow_in_background(state, run_ref, attempt_ref, &authority.authority_ref)?;
     Ok(json!({
-        "contract": TASK_CONTRACT,
-        "state": "running",
-        "factory_state": state,
-        "run_ref": run_ref.to_string(),
-        "unit_ref": unit_ref.to_string(),
-        "attempt_ref": attempt_ref,
-        "task_ref": task_ref,
         "execution_ref": execution_ref,
         "delivery_ref": delivery_ref,
-        "session": session,
-        "space": space,
-        "checkout": place.checkout,
         "log": log,
         "follower": follower,
         "sent": serde_json::to_value(&sent.transport_observation).unwrap_or(Value::Null),
+    }))
+}
+
+/// The caller a desktop press acts as where no session hears it (Factory's admission, attempt_admission.rs `desktopCaller`).
+fn desktop_caller() -> FactoryActionCaller {
+    FactoryActionCaller {
+        caller_ref: crate::attempt_admission::DESKTOP_CALLER_REF.into(),
+        projection_kind: FactoryActionProjectionKind::DesktopHuman,
+        lineage: vec![crate::attempt_admission::DESKTOP_CALLER_REF.into()],
+    }
+}
+
+/// `factory session retry <state> <run-ref> <unit-ref>`: a unit's current attempt retried on the person's press, under their grant
+/// (`factory.attempt.retry`, manual §19.1 "When a task on the track stalls, the track lights a retry. Retry starts again from the
+/// last good step, on the same basis"). It is Factory's own `retry`: a new attempt under the retry grant the current one consumes,
+/// with its task, its parent Journey and its disposition — the same basis; Factory refuses a unit that has not failed, or whose
+/// grant is spent, in its own words. A task run on a session runs again there: its words sent to the session as the person's and
+/// followed to its end, as `task-run` does. Its earlier attempt stays, a take of its own.
+fn retry(state_text: &str, run_text: &str, unit_text: &str) -> Result<Value, CliError> {
+    let state = PathBuf::from(state_text);
+    // No grant, no move: the person's grant is read before anything else.
+    let authority = grant(&state, "factory.attempt.retry")?;
+    let run_ref = run_ref_of(run_text)?;
+    let now = reading(&state, &run_ref)?;
+    let (unit, leg) = now
+        .legs
+        .iter()
+        .find(|(unit, _)| unit.to_string() == unit_text)
+        .ok_or_else(|| refuse(format!("{run_ref} holds no unit {unit_text}")))?;
+    let prior = now
+        .attempts
+        .iter()
+        .find(|record| {
+            &record.workflow_unit_ref == unit
+                && record
+                    .execution_ref
+                    .as_deref()
+                    .unwrap_or(&record.reserved_execution_ref)
+                    == leg.execution_ref
+        })
+        .ok_or_else(|| refuse(format!("{unit_text} has no current attempt to retry")))?;
+    let grant_ref = prior
+        .disposition
+        .budget
+        .retry_grant_ref
+        .clone()
+        .ok_or_else(|| {
+            refuse(format!(
+                "{} carries no retry grant: Factory retries a unit only under the grant its attempt consumes, and this one was started with none",
+                prior.attempt_ref
+            ))
+        })?;
+    // A task Factory ran on a seated session is retried there; any other unit is retried as its Run's own.
+    let seated = prior.disposition.selection.selection.ranking_policy == SEATED;
+    let session = prior.disposition.body.agent_session_ref.clone();
+    let on = if seated {
+        let place = place_of_state(&state)?;
+        let held = binding(&place.checkout, &session)?;
+        Some((place, held))
+    } else {
+        None
+    };
+    let by = on
+        .as_ref()
+        .map_or_else(desktop_caller, |(_, held)| caller(&held.sender));
+    let attempt_ref = minted("attempt");
+    act(
+        &state,
+        &run_ref,
+        &by,
+        &authority,
+        FactoryAttemptOperation::Retry {
+            attempt_ref: attempt_ref.clone(),
+            task_ref: prior.task_ref.clone(),
+            parent_journey_ref: leg.delegation.parent_journey_ref.clone(),
+            workflow_unit_ref: unit.clone(),
+            grant_ref,
+            disposition: prior.disposition.clone(),
+            tracking: Vec::new(),
+            reresolution: None,
+            place_grant: None,
+        },
+    )?;
+    let mut answer = json!({
+        "contract": TASK_CONTRACT,
+        "state": "retried",
+        "factory_state": state,
+        "run_ref": run_ref.to_string(),
+        "unit_ref": unit.to_string(),
+        "attempt_ref": attempt_ref,
+        "prior_attempt_ref": prior.attempt_ref,
+        "task_ref": prior.task_ref,
+    });
+    if let Some((place, held)) = on {
+        let words = FileAttemptStore::open_run(&state, run_ref.clone())
+            .and_then(|store| store.launch_basis(unit))
+            .map_err(CliError::from_native)?
+            .unit
+            .required_difference;
+        let sent = send(
+            &state,
+            &run_ref,
+            &attempt_ref,
+            &authority,
+            &place,
+            &held,
+            &session,
+            &words,
+        )?;
+        answer["state"] = json!("running");
+        answer["session"] = json!(session);
+        answer["checkout"] = json!(place.checkout);
+        merge(&mut answer, sent);
+    }
+    Ok(answer)
+}
+
+/// `factory session choose <state> <run-ref> <attempt-ref>`: the attempt chosen to stand, on the person's press (manual §19.1
+/// "Choosing a take that stands sends it to review in Approvals"; §19.14): its Return proposed to Central's receiving field under
+/// the person's grant (`central.receiving.submit`), into the Central Flow its Run belongs to, by Factory's own receiving
+/// (attempt_receiving.rs; the same choice twice is Factory's replay, never a second proposal). A Run that belongs to no Flow has
+/// nowhere to receive a Return: a task written on a session's track is commissioned from the person's words with no Flow, so its
+/// Return stays on its attempt, its difference in the session's checkout, which Git / landing lands. Factory refuses it in those
+/// words.
+fn choose(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Value, CliError> {
+    let state = PathBuf::from(state_text);
+    // No grant, no move: the person's grant is read before anything else.
+    let authority = grant(&state, "central.receiving.submit")?;
+    let run_ref = run_ref_of(run_text)?;
+    let now = reading(&state, &run_ref)?;
+    let record = record_of(&now, attempt_ref)?;
+    let returned = record.readable_return.as_ref().ok_or_else(|| {
+        refuse(format!(
+            "{attempt_ref} has no Return yet: there is nothing to choose"
+        ))
+    })?;
+    if let Some(receiving) = &returned.receiving_ref {
+        return Ok(
+            json!({"contract": TASK_CONTRACT, "state": "already-received",
+            "run_ref": run_ref.to_string(), "attempt_ref": attempt_ref, "receiving_ref": receiving}),
+        );
+    }
+    let run = crate::developmental_read::FactoryDevelopmentalFileProvider::open(&state)
+        .and_then(|provider| provider.run_reading(&run_ref))
+        .map_err(CliError::from_native)?;
+    let flows: Vec<_> = run
+        .flow_associations
+        .iter()
+        .filter(|association| association.run_ref == run_ref)
+        .collect();
+    let [association] = flows.as_slice() else {
+        return Err(refuse(if flows.is_empty() {
+            format!("{run_ref} belongs to no Central Flow, so its Return has nowhere to be received: a task written on a session's track is commissioned from your words, with no Flow, and its difference stays in the session's checkout, where Git / landing lands it")
+        } else {
+            format!("{run_ref} belongs to {} Central Flows, and Factory names no one of them to receive into", flows.len())
+        }));
+    };
+    let flow = &association.flow;
+    let central = executable("OI_CENTRAL_CTRL_BIN", "ctrl");
+    if !central.is_absolute() {
+        return Err(refuse(
+            "Central's ctrl is not found (OI_CENTRAL_CTRL_BIN, or ctrl on PATH): the Return cannot reach Central's receiving field",
+        ));
+    }
+    use sha2::{Digest, Sha256};
+    let suffix: String = Sha256::digest(
+        [
+            run_ref.to_string().as_str(),
+            attempt_ref,
+            &flow.location.reference,
+            &flow.document_id,
+            &flow.source_revision,
+        ]
+        .join("\n")
+        .as_bytes(),
+    )
+    .iter()
+    .take(12)
+    .map(|byte| format!("{byte:02x}"))
+    .collect();
+    let receipt = crate::attempt_receiving::execute(
+        &state,
+        crate::attempt_receiving::ReceivingRequest {
+            contract: crate::attempt_receiving::RECEIVING_ACTION.into(),
+            request_ref: format!("request:session-choose:{suffix}"),
+            projection_ref: format!("projection:session-choose:{suffix}"),
+            caller: desktop_caller(),
+            run_ref: run_ref.clone(),
+            expected_revision: now.revision,
+            authority,
+            attempt_ref: attempt_ref.to_owned(),
+            central: crate::attempt_receiving::CentralReceivingEndpoint {
+                binary: central,
+                root: PathBuf::from(&flow.location.root),
+                contract_revision: crate::attempt_receiving::CENTRAL_CONTRACT_REVISION.into(),
+                project: None,
+            },
+            lookup_endpoint: None,
+            target: crate::attempt_receiving::ReceivingTarget {
+                source_ref: flow.location.reference.clone(),
+                document_id: flow.document_id.clone(),
+                source_revision: flow.source_revision.clone(),
+                expected_authority_revision: None,
+            },
+            occurred_at_unix_seconds: None,
+            recover: false,
+        },
+    )?;
+    let unconfirmed =
+        receipt["needsReconciliation"] == true || receipt["centralResponse"].is_null();
+    Ok(json!({
+        "contract": TASK_CONTRACT,
+        "state": if unconfirmed { "needs-reconciliation" } else { "received" },
+        "run_ref": run_ref.to_string(),
+        "attempt_ref": attempt_ref,
+        "receipt": receipt,
     }))
 }
 
@@ -2047,6 +2406,9 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
         .collect();
     let answer = match words.as_slice() {
         ["start", agent, world, project] => start(agent, world, project)?,
+        ["list", state] => session_list(state)?,
+        ["retry", state, run, unit] => retry(state, run, unit)?,
+        ["choose", state, run, attempt] => choose(state, run, attempt)?,
         ["end", world, project, session] => end(world, project, session, None)?,
         ["task-write", world, project, session, instruction] => {
             task_write(world, project, session, instruction)?
@@ -2057,7 +2419,7 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
         ["follow", state, run, attempt, authority] => follow(state, run, attempt, authority)?,
         _ => {
             return Err(refuse(
-                "usage: factory session start <agent> <world> <project> | end <world> <project> <session> | task-write <world> <project> <session> <instruction> | task-run <state> <run-ref> <session> | task-stop <state> <run-ref> <attempt-ref> | task-log <state> <run-ref> <attempt-ref>",
+                "usage: factory session start <agent> <world> <project> | list <state> | end <world> <project> <session> | task-write <world> <project> <session> <instruction> | task-run <state> <run-ref> <session> | task-stop <state> <run-ref> <attempt-ref> | task-log <state> <run-ref> <attempt-ref> | retry <state> <run-ref> <unit-ref> | choose <state> <run-ref> <attempt-ref>",
             ))
         }
     };
