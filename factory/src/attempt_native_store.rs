@@ -642,7 +642,10 @@ impl FileAttemptStore {
         let request_digest = blake3::hash(&serde_json::to_vec(&request)?)
             .to_hex()
             .to_string();
-        transact_developmental_state(&self.path, |native| {
+        // A Run that moved since its writer read it keeps its kind across the transaction, so the writer can read it again and
+        // decide again; every other refusal is the transaction's words.
+        let mut moved = None;
+        let applied = transact_developmental_state(&self.path, |native| {
             (|| -> Result<NativeAttemptApplyResult, FactoryAttemptError> {
                 let mut view = view_for(native, &request.run_ref)?;
                 if let Some(claim) = receiving_admission.as_ref().and_then(|admission| admission.claim.as_ref()) {
@@ -721,8 +724,14 @@ impl FileAttemptStore {
                         _ => None,
                     });
                 Ok(NativeAttemptApplyResult { receipt: Some(receipt), inserted: true, receiving_intent })
-            })().map_err(store_error)
-        }).map_err(native_error)
+            })().map_err(|error| {
+                if let FactoryAttemptError::RevisionConflict { expected, actual } = error {
+                    moved = Some(FactoryAttemptError::RevisionConflict { expected, actual });
+                }
+                store_error(error)
+            })
+        });
+        applied.map_err(|error| moved.unwrap_or_else(|| native_error(error)))
     }
 }
 

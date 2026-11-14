@@ -983,27 +983,111 @@ fn follower(sender: Option<&str>) -> FactoryActionCaller {
     }
 }
 
+/// One write to the Run's attempts, decided on the Run as it stands now: nothing when the Run holds it already.
 fn act(
     state: &Path,
     run_ref: &RunRef,
     by: &FactoryActionCaller,
     authority: &ProjectedFactoryActionAuthority,
     operation: FactoryAttemptOperation,
-) -> Result<FactoryAttemptActionReceipt, CliError> {
-    let mut store =
-        FileAttemptStore::open_run(state, run_ref.clone()).map_err(CliError::from_native)?;
-    let revision = store.reading().map_err(CliError::from_native)?.revision;
-    store
-        .apply(FactoryAttemptActionRequest {
+) -> Result<Option<FactoryAttemptActionReceipt>, CliError> {
+    act_on(
+        state,
+        run_ref,
+        by,
+        authority,
+        reading(state, run_ref)?,
+        |now| (!holds(now, &operation)).then(|| operation.clone()),
+    )
+}
+
+/// The most readings a write is decided on. Stop and Factory's follower are an attempt's only writers, so a second reading
+/// settles any race between them; a Run that moves under every reading is refused rather than written blind.
+const READINGS: usize = 4;
+
+/// One write to the Run's attempts, decided on the Run as `read` holds it: `decide` names what its writer's intent asks of that
+/// reading, or nothing when the reading holds the intent already or no longer admits it. Factory's follower and the person's
+/// Stop both write an attempt, so the Run can move between a writer's reading and its write, and Factory refuses the write
+/// (`RevisionConflict`): the writer then reads the Run again and decides again. An intent is so never applied twice, and one
+/// the Run no longer admits is never forced on it.
+fn act_on(
+    state: &Path,
+    run_ref: &RunRef,
+    by: &FactoryActionCaller,
+    authority: &ProjectedFactoryActionAuthority,
+    mut read: FactoryAttemptReading,
+    decide: impl Fn(&FactoryAttemptReading) -> Option<FactoryAttemptOperation>,
+) -> Result<Option<FactoryAttemptActionReceipt>, CliError> {
+    let projection_ref = minted("projection");
+    for _ in 0..READINGS {
+        let Some(operation) = decide(&read) else {
+            return Ok(None);
+        };
+        let mut store =
+            FileAttemptStore::open_run(state, run_ref.clone()).map_err(CliError::from_native)?;
+        match store.apply(FactoryAttemptActionRequest {
             contract: FACTORY_ATTEMPT_ACTION.into(),
-            projection_ref: minted("projection"),
+            projection_ref: projection_ref.clone(),
             caller: by.clone(),
             run_ref: run_ref.clone(),
-            expected_revision: revision,
+            expected_revision: read.revision,
             authority: authority.clone(),
             operation,
-        })
-        .map_err(CliError::from_native)
+        }) {
+            Err(FactoryAttemptError::RevisionConflict { .. }) => read = reading(state, run_ref)?,
+            landed => return landed.map(Some).map_err(CliError::from_native),
+        }
+    }
+    Err(refuse(format!(
+        "{run_ref} moved under each of the {READINGS} readings its write was decided on: Factory wrote nothing"
+    )))
+}
+
+/// Whether the Run already holds what an operation asks of its attempt: the attempt started, the fact or the pause kept, the
+/// cancellation requested or accepted, the failure, the verification or the Return recorded.
+fn holds(reading: &FactoryAttemptReading, operation: &FactoryAttemptOperation) -> bool {
+    let attempt = |reference: &str| {
+        reading
+            .attempts
+            .iter()
+            .find(|record| record.attempt_ref == reference)
+    };
+    let status = |reference: &str| attempt(reference).map(|record| leg_status(reading, record));
+    match operation {
+        FactoryAttemptOperation::StartSerial { attempt_ref, .. }
+        | FactoryAttemptOperation::Retry { attempt_ref, .. } => attempt(attempt_ref).is_some(),
+        FactoryAttemptOperation::RecordTracking { attempt_ref, fact } => attempt(attempt_ref)
+            .is_some_and(|record| {
+                record
+                    .tracking
+                    .iter()
+                    .any(|kept| kept.fact_ref == fact.fact_ref)
+                    || (fact.evidence_refs.contains(PAUSE) && paused(record))
+            }),
+        FactoryAttemptOperation::RecordVerification {
+            attempt_ref,
+            verification,
+        } => attempt(attempt_ref).is_some_and(|record| {
+            record
+                .verifications
+                .iter()
+                .any(|kept| kept.verification_ref == verification.verification_ref)
+        }),
+        FactoryAttemptOperation::RequestCancellation { attempt_ref } => matches!(
+            status(attempt_ref),
+            Some(LegStatus::CancelRequested | LegStatus::CancellationAccepted)
+        ),
+        FactoryAttemptOperation::AcceptCancellation { attempt_ref } => {
+            status(attempt_ref) == Some(LegStatus::CancellationAccepted)
+        }
+        FactoryAttemptOperation::Fail { attempt_ref, .. } => {
+            status(attempt_ref) == Some(LegStatus::Failed)
+        }
+        FactoryAttemptOperation::ReturnArtifact { attempt_ref, .. } => {
+            attempt(attempt_ref).is_some_and(|record| record.readable_return.is_some())
+        }
+        _ => false,
+    }
 }
 
 fn reading(state: &Path, run_ref: &RunRef) -> Result<FactoryAttemptReading, CliError> {
@@ -1777,6 +1861,40 @@ fn ended(status: &LegStatus) -> bool {
     )
 }
 
+/// What a turn that ended other than returned leaves to record on its attempt, decided on the Run as `reading` holds it: the
+/// cancellation Stop asked for accepted, or the failure; nothing when the attempt has ended already or Stop paused it. Stop
+/// records its pause or its request before it stops the turn, so a turn that ends cancelled on an attempt that is pausing or
+/// being cancelled ended as the person asked, and is never the attempt's failure.
+fn turn_end(
+    reading: &FactoryAttemptReading,
+    attempt_ref: &str,
+    phase: &str,
+    delivery_ref: &str,
+) -> Option<FactoryAttemptOperation> {
+    let record = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt_ref)?;
+    let status = leg_status(reading, record);
+    if record.readable_return.is_some() || ended(&status) {
+        return None;
+    }
+    let attempt_ref = attempt_ref.to_owned();
+    if phase == "cancelled" {
+        if status == LegStatus::CancelRequested {
+            return Some(FactoryAttemptOperation::AcceptCancellation { attempt_ref });
+        }
+        if paused(record) {
+            return None;
+        }
+    }
+    Some(FactoryAttemptOperation::Fail {
+        attempt_ref,
+        reason: format!("the session's turn ended {phase}"),
+        evidence_refs: BTreeSet::from([format!("aikit-delivery:{delivery_ref}")]),
+    })
+}
+
 /// The delivery's phase, as AIKit reports it (its answer to `delivery` carries the phase at its top).
 fn delivery_phase(answer: &Value, delivery_ref: &str) -> Option<String> {
     answer["phase"]
@@ -2150,38 +2268,31 @@ fn settle(
     let now = reading(state, run_ref)?;
     let record = record_of(&now, attempt_ref)?.clone();
     let status = leg_status(&now, &record);
-    if phase == "cancelled" {
-        if status == LegStatus::CancelRequested {
-            act(
-                state,
-                run_ref,
-                by,
-                authority,
-                FactoryAttemptOperation::AcceptCancellation {
-                    attempt_ref: attempt_ref.to_owned(),
-                },
-            )?;
-            return Ok(json!({"followed": attempt_ref, "ended": "cancelled"}));
+    if record.readable_return.is_some() || ended(&status) {
+        // Its end was recorded while the turn ended (Stop cancelled it): nothing is left to record.
+        return Ok(json!({"followed": attempt_ref, "ended": format!("{status:?}")}));
+    }
+    if phase != "returned" {
+        act_on(state, run_ref, by, authority, now, |now| {
+            turn_end(now, attempt_ref, phase, delivery_ref)
+        })?;
+        let after = reading(state, run_ref)?;
+        let record = record_of(&after, attempt_ref)?;
+        let status = leg_status(&after, record);
+        if status == LegStatus::Failed {
+            let reason = format!("the session's turn ended {phase}");
+            return Ok(json!({"followed": attempt_ref, "ended": "failed", "reason": reason}));
         }
-        if paused(&record) {
+        if paused(record) && !ended(&status) {
             append(log, &json!({"at": now_rfc3339(), "kind": "paused"}));
             return Ok(json!({"followed": attempt_ref, "ended": "paused"}));
         }
-    }
-    if phase != "returned" {
-        let reason = format!("the session's turn ended {phase}");
-        act(
-            state,
-            run_ref,
-            by,
-            authority,
-            FactoryAttemptOperation::Fail {
-                attempt_ref: attempt_ref.to_owned(),
-                reason: reason.clone(),
-                evidence_refs: BTreeSet::from([format!("aikit-delivery:{delivery_ref}")]),
-            },
-        )?;
-        return Ok(json!({"followed": attempt_ref, "ended": "failed", "reason": reason}));
+        let end = if status == LegStatus::CancellationAccepted {
+            "cancelled".to_owned()
+        } else {
+            format!("{status:?}")
+        };
+        return Ok(json!({"followed": attempt_ref, "ended": end}));
     }
     let diff = difference(&place.checkout, &standing_before(state, attempt_ref));
     let digest = blake3::hash(diff.as_bytes()).to_hex().to_string();
@@ -2327,23 +2438,26 @@ fn task_stop(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Valu
         .map(|held| caller(&held.sender))
         .unwrap_or_else(|_| caller(crate::attempt_admission::DESKTOP_CALLER_REF));
     let log = task_file(&state, attempt_ref, "log.jsonl");
-    // The turn stops at AIKit either way; the session keeps what it had in mind.
-    let cancelled = encounter(
-        &place.checkout,
-        json!({"action": "cancel", "agent_session": session}),
-    );
+    // Stop records on the attempt why its turn stops before it stops the turn at AIKit (the session keeps what it had in mind),
+    // so Factory's follower, finding the turn cancelled, finds the attempt paused or being cancelled and records no failure.
+    let stop_turn = || {
+        encounter(
+            &place.checkout,
+            json!({"action": "cancel", "agent_session": session}),
+        )
+    };
     if paused(&record) || status == LegStatus::CancelRequested {
-        if status != LegStatus::CancelRequested {
-            act(
-                &state,
-                &run_ref,
-                &by,
-                &authority,
-                FactoryAttemptOperation::RequestCancellation {
-                    attempt_ref: attempt_ref.to_owned(),
-                },
-            )?;
-        }
+        act(
+            &state,
+            &run_ref,
+            &by,
+            &authority,
+            FactoryAttemptOperation::RequestCancellation {
+                attempt_ref: attempt_ref.to_owned(),
+            },
+        )?;
+        // The turn stops at AIKit either way.
+        let _ = stop_turn();
         act(
             &state,
             &run_ref,
@@ -2361,30 +2475,22 @@ fn task_stop(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Valu
             "leg": format!("{:?}", leg_status(&after, record))}),
         );
     }
+    // Pressed once: the task is paused, unless its attempt ended, or a press before this one paused it, since it was read.
+    act_on(&state, &run_ref, &by, &authority, now, |now| {
+        pause(now, attempt_ref, &session)
+    })?;
+    let after = reading(&state, &run_ref)?;
+    let status = leg_status(&after, record_of(&after, attempt_ref)?);
+    if ended(&status) {
+        return Err(refuse(format!(
+            "{attempt_ref} has ended ({status:?}): there is nothing to stop"
+        )));
+    }
+    let cancelled = stop_turn();
     let words = match &cancelled {
         Ok(answer) => clip(&answer.to_string()),
         Err(words) => words.clone(),
     };
-    act(
-        &state,
-        &run_ref,
-        &by,
-        &authority,
-        FactoryAttemptOperation::RecordTracking {
-            attempt_ref: attempt_ref.to_owned(),
-            fact: AttemptTrackingFact {
-                fact_ref: minted("fact"),
-                kind: "session".into(),
-                owner_ref: "aikit".into(),
-                subject_ref: session.clone(),
-                source_revision: now_rfc3339(),
-                evidence_refs: BTreeSet::from([
-                    PAUSE.to_owned(),
-                    format!("aikit-encounter-cancel:{session}"),
-                ]),
-            },
-        },
-    )?;
     append(
         &log,
         &json!({"at": now_rfc3339(), "kind": "paused", "aikit": words}),
@@ -2394,6 +2500,37 @@ fn task_stop(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Valu
         "turn_cancelled_by_aikit": cancelled.is_ok(), "aikit": words,
         "next": "Stop again cancels the task"}),
     )
+}
+
+/// The pause a press of Stop records on the Run as `reading` holds it, the turn stopped at AIKit and the session keeping what it
+/// had in mind: none once the attempt has ended, or a press before this one paused it.
+fn pause(
+    reading: &FactoryAttemptReading,
+    attempt_ref: &str,
+    session: &str,
+) -> Option<FactoryAttemptOperation> {
+    let record = reading
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt_ref)?;
+    let status = leg_status(reading, record);
+    if record.readable_return.is_some() || ended(&status) || paused(record) {
+        return None;
+    }
+    Some(FactoryAttemptOperation::RecordTracking {
+        attempt_ref: attempt_ref.to_owned(),
+        fact: AttemptTrackingFact {
+            fact_ref: minted("fact"),
+            kind: "session".into(),
+            owner_ref: "aikit".into(),
+            subject_ref: session.to_owned(),
+            source_revision: now_rfc3339(),
+            evidence_refs: BTreeSet::from([
+                PAUSE.to_owned(),
+                format!("aikit-encounter-cancel:{session}"),
+            ]),
+        },
+    })
 }
 
 /// `factory session task-log <state> <attempt-ref>`: the task's log as it streams.
@@ -2582,6 +2719,147 @@ mod tests {
                 &Value::String("context not delivered: pi/SessionStart has no verified additional-context output adapter".into())
             ),
             ""
+        );
+    }
+
+    /// A Run of one unit with its attempt started, as a task's is once it runs: Factory's own controlled native store.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn started_task() -> (tempfile::TempDir, PathBuf, RunRef, String) {
+        let (dir, _store, request) =
+            crate::attempt_learning::publication_tests::native_retention_source();
+        let state = dir.path().join("state.json");
+        (dir, state, request.run_ref, "attempt:learning".to_owned())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn stop_lands_its_pause_when_the_follower_wrote_after_stop_read_the_run_and_never_twice() {
+        let (_dir, state, run, attempt) = started_task();
+        let (stop, grant) = (caller("human:owner"), authority("authority:test"));
+        let decided = reading(&state, &run).unwrap();
+        // Factory's follower records on the attempt after Stop read the Run (settle's delivery reading does).
+        act(
+            &state,
+            &run,
+            &follower(Some("human:owner")),
+            &grant,
+            FactoryAttemptOperation::RecordTracking {
+                attempt_ref: attempt.clone(),
+                fact: AttemptTrackingFact {
+                    fact_ref: "fact:follower".into(),
+                    kind: "session".into(),
+                    owner_ref: "aikit".into(),
+                    subject_ref: "session:test".into(),
+                    source_revision: now_rfc3339(),
+                    evidence_refs: BTreeSet::from(["aikit-delivery:delivery:1".to_owned()]),
+                },
+            },
+        )
+        .unwrap();
+        let landed = act_on(&state, &run, &stop, &grant, decided.clone(), |now| {
+            pause(now, &attempt, "session:test")
+        })
+        .expect("Stop's pause lands on the Run the follower moved on");
+        assert!(landed.is_some());
+        // A second press that read the Run before the pause landed finds it paused: it records no second pause.
+        let again = act_on(&state, &run, &stop, &grant, decided, |now| {
+            pause(now, &attempt, "session:test")
+        })
+        .unwrap();
+        assert!(again.is_none());
+        let now = reading(&state, &run).unwrap();
+        let record = record_of(&now, &attempt).unwrap();
+        let pauses = record
+            .tracking
+            .iter()
+            .filter(|fact| fact.evidence_refs.contains(PAUSE))
+            .count();
+        assert_eq!(pauses, 1);
+        assert_eq!(leg_status(&now, record), LegStatus::Active);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_turn_cancelled_on_an_attempt_stop_is_pausing_is_no_failure() {
+        let (_dir, state, run, attempt) = started_task();
+        let grant = authority("authority:test");
+        // The follower read the Run before Stop's pause landed, then saw the turn end cancelled.
+        let decided = reading(&state, &run).unwrap();
+        act(
+            &state,
+            &run,
+            &caller("human:owner"),
+            &grant,
+            pause(&decided, &attempt, "session:test").unwrap(),
+        )
+        .unwrap();
+        act_on(
+            &state,
+            &run,
+            &follower(Some("human:owner")),
+            &grant,
+            decided.clone(),
+            |now| turn_end(now, &attempt, "cancelled", "delivery:1"),
+        )
+        .expect("the follower settles the cancelled turn on the paused attempt");
+        let now = reading(&state, &run).unwrap();
+        let record = record_of(&now, &attempt).unwrap();
+        assert_eq!(leg_status(&now, record), LegStatus::Active);
+        assert!(paused(record));
+        // With no word from Stop, a turn that ends cancelled is the attempt's failure, and so is one that fails while paused.
+        assert!(matches!(
+            turn_end(&decided, &attempt, "cancelled", "delivery:1"),
+            Some(FactoryAttemptOperation::Fail { .. })
+        ));
+        assert!(matches!(
+            turn_end(&now, &attempt, "failed", "delivery:1"),
+            Some(FactoryAttemptOperation::Fail { .. })
+        ));
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn stops_cancellation_and_the_followers_acceptance_land_once() {
+        let (_dir, state, run, attempt) = started_task();
+        let (stop, grant) = (caller("human:owner"), authority("authority:test"));
+        let now = reading(&state, &run).unwrap();
+        act(
+            &state,
+            &run,
+            &stop,
+            &grant,
+            pause(&now, &attempt, "session:test").unwrap(),
+        )
+        .unwrap();
+        let request = FactoryAttemptOperation::RequestCancellation {
+            attempt_ref: attempt.clone(),
+        };
+        let accept = FactoryAttemptOperation::AcceptCancellation {
+            attempt_ref: attempt.clone(),
+        };
+        act(&state, &run, &stop, &grant, request.clone()).unwrap();
+        // The follower read the Run while its cancellation was requested; Stop accepts it first.
+        let decided = reading(&state, &run).unwrap();
+        assert!(act(&state, &run, &stop, &grant, accept.clone())
+            .unwrap()
+            .is_some());
+        let settled = act_on(
+            &state,
+            &run,
+            &follower(Some("human:owner")),
+            &grant,
+            decided,
+            |now| turn_end(now, &attempt, "cancelled", "delivery:1"),
+        )
+        .expect("the follower finds the cancellation accepted");
+        assert!(settled.is_none());
+        // Stop's intents the Run holds already are not applied a second time.
+        assert!(act(&state, &run, &stop, &grant, request).unwrap().is_none());
+        assert!(act(&state, &run, &stop, &grant, accept).unwrap().is_none());
+        let now = reading(&state, &run).unwrap();
+        assert_eq!(
+            leg_status(&now, record_of(&now, &attempt).unwrap()),
+            LegStatus::CancellationAccepted
         );
     }
 
