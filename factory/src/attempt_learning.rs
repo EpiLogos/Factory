@@ -649,7 +649,7 @@ pub(crate) mod publication_tests {
                 AikitModelRosterSelection {
                     roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
                     model_ref: "model:test".into(),
-                    provider_ref: "provider:test".into(),
+                    provider_ref: Some("provider:test".into()),
                     ranking_policy: "test".into(),
                     ranking_explanation: json!({"testOnly":true}),
                     provenance: vec!["selection:test".into()],
@@ -687,7 +687,7 @@ pub(crate) mod publication_tests {
                     .then(|| "now:learning-fixture".into()),
                 body: ExecutionBody {
                     model_ref: "model:test".into(),
-                    provider_ref: "provider:test".into(),
+                    provider_ref: Some("provider:test".into()),
                     route_ref: "route:test".into(),
                     harness_ref: "harness:test".into(),
                     harness_composition_ref: "composition:test".into(),

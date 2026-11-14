@@ -74,6 +74,9 @@ const CONTRACTS: &[&str] = &[
 ];
 
 pub fn execute(args: &[String], stdin: Option<&str>) -> Result<String, CliError> {
+    if crate::session::is_session_command(args) {
+        return crate::session::execute(args);
+    }
     if args.first().map(String::as_str) == Some("workflow") {
         let value = crate::workflow_authoring::cli::execute(args).map_err(|error| {
             let native_result = error.native_result.clone();

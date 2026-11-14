@@ -15,7 +15,8 @@ use std::collections::{BTreeMap, BTreeSet};
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VakLaunchReading {
     pub model_ref: String,
-    pub provider_ref: String,
+    #[serde(default)]
+    pub provider_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,7 +59,8 @@ pub struct VakAttemptReading {
     pub context_resolution_ref: String,
     pub source_refs: BTreeSet<String>,
     pub model_ref: String,
-    pub provider_ref: String,
+    #[serde(default)]
+    pub provider_ref: Option<String>,
     pub status: LegStatus,
     pub status_history: Vec<LegStatus>,
     pub artifact_refs: BTreeSet<String>,

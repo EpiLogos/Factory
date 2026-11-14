@@ -339,7 +339,7 @@ fn read_only_disposition(
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:controlled-owner-regression".into(),
-            provider_ref: "provider:controlled-owner-regression".into(),
+            provider_ref: Some("provider:controlled-owner-regression".into()),
             ranking_policy: "controlled-contract-regression".into(),
             ranking_explanation: serde_json::json!({"controlled":true}),
             provenance: vec!["selection:controlled-source-cleanup".into()],
@@ -376,7 +376,7 @@ fn read_only_disposition(
         now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
         body: ExecutionBody {
             model_ref: "model:controlled-owner-regression".into(),
-            provider_ref: "provider:controlled-owner-regression".into(),
+            provider_ref: Some("provider:controlled-owner-regression".into()),
             route_ref: "route:controlled-source-cleanup".into(),
             harness_ref: "harness:controlled-source-cleanup".into(),
             harness_composition_ref: "composition:controlled-source-cleanup".into(),

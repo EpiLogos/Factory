@@ -191,7 +191,7 @@ impl World {
             AikitModelRosterSelection {
                 roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
                 model_ref: "model:test".into(),
-                provider_ref: "provider:test".into(),
+                provider_ref: Some("provider:test".into()),
                 ranking_policy: "test-only".into(),
                 ranking_explanation: json!({"testOnly":true}),
                 provenance: vec!["selection:test".into()],
@@ -224,7 +224,7 @@ impl World {
             praxis_receipt,
             body: ExecutionBody {
                 model_ref: "model:test".into(),
-                provider_ref: "provider:test".into(),
+                provider_ref: Some("provider:test".into()),
                 route_ref: "route:test".into(),
                 harness_ref: "harness:test".into(),
                 harness_composition_ref: "composition:test".into(),
@@ -806,6 +806,28 @@ fn a_launch_starts_the_unit_from_aikit_s_explicit_selection_and_factory_s_own_un
     // The parent Journey is the one that commissioned the Run.
     let leg = &reading.legs[&unit.reference];
     assert_eq!(leg.delegation.parent_journey_ref, JOURNEY);
+}
+
+#[test]
+fn a_launched_unit_is_started_under_the_one_retry_grant_every_task_attempt_spends() {
+    let world = World::new();
+    world.commission_journey();
+    success(world.launch(world.aikit_realisation()));
+    let reading = world.reading();
+    let attempt = reading
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_ref == "attempt:launch")
+        .expect("the launched attempt is Factory's");
+    // One budget rule: a launch and a task run on a session both start under the task's retry grant.
+    assert_eq!(
+        attempt.disposition.budget.retry_grant_ref.as_deref(),
+        Some("retry-grant:task:inspect")
+    );
+    assert_eq!(
+        attempt.disposition.budget.maximum_attempts,
+        Some(epilogos_factory::attempt_application::LAUNCH_ATTEMPTS)
+    );
 }
 
 #[test]

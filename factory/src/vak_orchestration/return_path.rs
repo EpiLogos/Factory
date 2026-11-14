@@ -128,7 +128,7 @@ impl VakPerformanceSnapshot {
         body_condition_refs.extend(self.source_refs.clone());
         for attempt in &self.attempts {
             body_condition_refs.insert(attempt.model_ref.clone());
-            body_condition_refs.insert(attempt.provider_ref.clone());
+            body_condition_refs.extend(attempt.provider_ref.clone());
             body_condition_refs.insert(attempt.whole_ref.clone());
             body_condition_refs.extend(attempt.source_refs.clone());
         }

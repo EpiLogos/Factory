@@ -68,7 +68,7 @@ fn disposition(
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:factory-test".into(),
-            provider_ref: "provider:factory-test".into(),
+            provider_ref: Some("provider:factory-test".into()),
             ranking_policy: "test-contract".into(),
             ranking_explanation: json!({"eligible": true}),
             provenance: vec!["selection:factory-test".into()],
