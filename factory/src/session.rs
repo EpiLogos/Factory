@@ -712,11 +712,8 @@ fn task_write(
     )
     .map_err(CliError::from_native)?;
     let reading = store.reading().map_err(CliError::from_native)?;
-    let unit = reading
-        .legs
-        .keys()
-        .next()
-        .map(ToString::to_string)
+    let unit = task_unit(&reading)
+        .map(|unit| unit.to_string())
         .unwrap_or_default();
     // The project is Factory's own (placed at the session's start; a session Factory did not start places it here), and the task
     // is kept on the session's record, so the window lays it as a clip on the session's track before it runs.
@@ -741,6 +738,17 @@ fn task_write(
         "journey_ref": composition.journey_ref.to_string(),
         "revision": reading.revision,
     }))
+}
+
+/// The unit a session's task runs: its Run's one leg once an attempt has started it, and before that the one unit its workflow
+/// requires (a Run holds no leg until its first attempt starts). `factory.task.write` answers it, `factory.task.run` runs it.
+fn task_unit(reading: &FactoryAttemptReading) -> Option<WorkflowUnitRef> {
+    reading
+        .legs
+        .keys()
+        .next()
+        .cloned()
+        .or_else(|| reading.required_units.iter().next().cloned())
 }
 
 /// The practice the seated agent carries (manual §19.7, §19.8): the skills of the Skill Sets AIKit gives the session's harness
@@ -1280,13 +1288,8 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
     let store =
         FileAttemptStore::open_run(&state, run_ref.clone()).map_err(CliError::from_native)?;
     let before = store.reading().map_err(CliError::from_native)?;
-    let unit_ref: WorkflowUnitRef = before
-        .legs
-        .keys()
-        .next()
-        .cloned()
-        .or_else(|| before.required_units.iter().next().cloned())
-        .ok_or_else(|| refuse(format!("{run_ref} holds no unit to run")))?;
+    let unit_ref: WorkflowUnitRef =
+        task_unit(&before).ok_or_else(|| refuse(format!("{run_ref} holds no unit to run")))?;
     if before
         .attempts
         .iter()
@@ -2729,6 +2732,29 @@ mod tests {
             crate::attempt_learning::publication_tests::native_retention_source();
         let state = dir.path().join("state.json");
         (dir, state, request.run_ref, "attempt:learning".to_owned())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_written_task_names_the_unit_its_run_runs_before_its_first_attempt() {
+        let (_dir, state, run, _attempt) = started_task();
+        let started = reading(&state, &run).unwrap();
+        let unit = started
+            .legs
+            .keys()
+            .next()
+            .cloned()
+            .expect("a started task's leg");
+        assert_eq!(task_unit(&started), Some(unit.clone()));
+        // Written and not yet run: a session task's Run requires its one unit, and holds no leg until its first attempt starts.
+        let mut written = started;
+        written.legs.clear();
+        written.required_units = BTreeSet::from([unit.clone()]);
+        assert_eq!(
+            task_unit(&written),
+            Some(unit),
+            "factory.task.write answers the unit factory.task.run runs, and factory.attempt.retry takes"
+        );
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
