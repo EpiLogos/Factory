@@ -111,7 +111,7 @@ fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDispo
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:durable-chain".into(),
-            provider_ref: "provider:durable-chain".into(),
+            provider_ref: Some("provider:durable-chain".into()),
             ranking_policy: "test-contract".into(),
             ranking_explanation: json!({"eligible": true}),
             provenance: vec!["selection:durable-chain".into()],
@@ -148,7 +148,7 @@ fn disposition(workflow: &CompiledWorkflow, key: &str) -> SituatedExecutionDispo
         now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
         body: ExecutionBody {
             model_ref: "model:durable-chain".into(),
-            provider_ref: "provider:durable-chain".into(),
+            provider_ref: Some("provider:durable-chain".into()),
             route_ref: "route:durable-chain".into(),
             harness_ref: "harness:durable-chain".into(),
             harness_composition_ref: "composition:durable-chain".into(),

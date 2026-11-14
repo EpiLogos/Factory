@@ -157,7 +157,7 @@ fn disposition_provider(
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: format!("model:{provider}"),
-            provider_ref: format!("provider:{provider}"),
+            provider_ref: Some(format!("provider:{provider}")),
             ranking_policy: "test-contract".into(),
             ranking_explanation: json!({"eligible": true}),
             provenance: vec![format!("selection:{provider}")],
@@ -615,12 +615,12 @@ fn drone_retry_stop_cancellation_and_late_returns_preserve_every_attempt_and_sem
     let first = &snapshot.attempts[0];
     let second = &snapshot.attempts[1];
     assert_eq!(first.status, LegStatus::Failed);
-    assert_eq!(first.provider_ref, "provider:provider-a");
+    assert_eq!(first.provider_ref.as_deref(), Some("provider:provider-a"));
     assert!(first
         .late_artifact_refs
         .contains("artifact:sustain-old-late"));
     assert_eq!(second.status, LegStatus::LateResult);
-    assert_eq!(second.provider_ref, "provider:provider-b");
+    assert_eq!(second.provider_ref.as_deref(), Some("provider:provider-b"));
     assert!(second
         .late_artifact_refs
         .contains("artifact:sustain-current-late"));

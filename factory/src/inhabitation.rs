@@ -218,7 +218,11 @@ fn occupant(
                 source,
             ),
             model_ref: Facet::present(&body.model_ref, source),
-            provider_ref: Facet::present(&body.provider_ref, source),
+            provider_ref: Facet::optional(
+                body.provider_ref.as_deref(),
+                "the attempt's session discloses no provider for the model it runs",
+                source,
+            ),
             harness_ref: Facet::present(&body.harness_ref, source),
             harness_composition_ref: Facet::present(&body.harness_composition_ref, source),
         },

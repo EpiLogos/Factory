@@ -1034,7 +1034,7 @@ fn disposition(run: &Run, workflow: &CompiledWorkflow, key: &str) -> SituatedExe
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:controlled-owner-contract-not-invoked".into(),
-            provider_ref: "provider:controlled-owner-contract-not-invoked".into(),
+            provider_ref: Some("provider:controlled-owner-contract-not-invoked".into()),
             ranking_policy: "controlled-native-contract".into(),
             ranking_explanation: json!({"modelInvoked":false}),
             provenance: vec!["source:controlled-native-owner-contract".into()],
@@ -1071,7 +1071,7 @@ fn disposition(run: &Run, workflow: &CompiledWorkflow, key: &str) -> SituatedExe
         now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
         body: ExecutionBody {
             model_ref: "model:controlled-owner-contract-not-invoked".into(),
-            provider_ref: "provider:controlled-owner-contract-not-invoked".into(),
+            provider_ref: Some("provider:controlled-owner-contract-not-invoked".into()),
             route_ref: "route:controlled-native-contract".into(),
             harness_ref: "harness:actual-ctrl-native-process".into(),
             harness_composition_ref: "composition:controlled-native-contract".into(),

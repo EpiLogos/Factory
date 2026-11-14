@@ -236,7 +236,7 @@ impl World {
             AikitModelRosterSelection {
                 roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
                 model_ref: "model:commission-conduct".into(),
-                provider_ref: "provider:commission-conduct".into(),
+                provider_ref: Some("provider:commission-conduct".into()),
                 ranking_policy: "commission-conduct".into(),
                 ranking_explanation: json!({"testOnly":true}),
                 provenance: vec!["selection:commission-conduct".into()],
@@ -274,7 +274,7 @@ impl World {
                 .then(|| format!("now:commission-conduct-{key}")),
             body: ExecutionBody {
                 model_ref: "model:commission-conduct".into(),
-                provider_ref: "provider:commission-conduct".into(),
+                provider_ref: Some("provider:commission-conduct".into()),
                 route_ref: "route:commission-conduct".into(),
                 harness_ref: "harness:commission-conduct".into(),
                 harness_composition_ref: "composition:commission-conduct".into(),

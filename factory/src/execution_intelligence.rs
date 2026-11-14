@@ -44,7 +44,10 @@ pub struct AikitModelRosterSelection {
     /// Must name the AIKit application read-model version, not a Factory registry.
     pub roster_version: String,
     pub model_ref: String,
-    pub provider_ref: String,
+    /// The provider AIKit names for the model. None only in AIKit's receipt for a seated session that discloses no provider
+    /// (gemini, kimi over ACP), answered for the session's harness, its model the route through that harness.
+    #[serde(default)]
+    pub provider_ref: Option<String>,
     pub ranking_policy: String,
     /// Complete AIKit-produced explanation snapshot for historical reconstruction.
     pub ranking_explanation: Value,
@@ -209,9 +212,8 @@ pub fn explicit_selection_refs(
             "EXPLICIT_PIN requires AIKit's typed explicit-selection receipt".into(),
         ));
     }
-    if receipt["model_ref"] != selection.model_ref
-        || receipt["provider_ref"] != selection.provider_ref
-    {
+    let provider = Value::from(selection.provider_ref.clone());
+    if receipt["model_ref"] != selection.model_ref || receipt["provider_ref"] != provider {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
             "explicit selection model/provider differs from the Factory selection".into(),
         ));
@@ -247,22 +249,26 @@ pub fn explicit_selection_refs(
             .strip_prefix("blake3:")
             .expect("sorted digest carries its algorithm")
     );
-    // The route names a catalogue Model, or, for a seated session whose model no
-    // catalogue Model claims, the route itself is the model, carried as an offer.
+    // The route names a catalogue Model, claimed through its provider, or, for a seated
+    // session whose model no catalogue Model claims, the route itself is the model,
+    // carried as an offer. A session that discloses no provider offers it through its
+    // harness: the route is the harness's own.
+    let offer = &route_basis["unmatched_offer"];
     let model_named = match route_basis["model_ref"].as_str() {
-        Some(model) => model == selection.model_ref,
+        Some(model) => model == selection.model_ref && selection.provider_ref.is_some(),
         None => {
             seated
                 && route_basis["model_ref"].is_null()
                 && selection.model_ref == expected_route_ref
-                && route_basis["unmatched_offer"]["provider_ref"] == selection.provider_ref
-                && route_basis["unmatched_offer"]["provider_native_id"]
-                    == route_basis["provider_native_id"]
+                && offer["provider_ref"] == provider
+                && offer["provider_native_id"] == route_basis["provider_native_id"]
+                && (selection.provider_ref.is_some()
+                    || offer["harness_ref"] == receipt["harness_ref"])
         }
     };
     if route_basis["schema"] != "aikit.model-route-basis/v1"
         || !model_named
-        || route_basis["provider_ref"] != selection.provider_ref
+        || route_basis["provider_ref"] != provider
     {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
             "explicit selection route basis differs from the selected model/provider".into(),
@@ -547,7 +553,7 @@ mod tests {
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:gpt-5.4".into(),
-            provider_ref: provider.into(),
+            provider_ref: Some(provider.into()),
             ranking_policy: "BALANCED".into(),
             ranking_explanation: json!({
                 "eligible": true,
@@ -780,6 +786,96 @@ mod tests {
             explicit_selection_refs(&changed),
             Err(ExecutionInteropError::InvalidExplicitSelection(_))
         ));
+    }
+
+    /// AIKit's receipt for a seated session that discloses no provider (gemini or kimi over ACP), as `compose model
+    /// selection` answers it: no provider, its model the route through the session's harness.
+    fn undisclosed_receipt() -> Value {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/aikit-seated-gemini-selection.json"
+        ))
+        .expect("fixture was emitted by AIKit's seated-session receipt for a session that discloses no provider")
+    }
+
+    /// O-I #1006 (re-check 2a): a seated session that discloses no provider is answered by AIKit for its harness, with no
+    /// provider named, and binds the session it names. A provider the receipt does not name is never taken as its, and a
+    /// receipt that names no provider for a catalogue Model, or for a pin, is refused.
+    #[test]
+    fn a_seated_receipt_that_names_no_provider_binds_its_session_through_its_harness() {
+        let receipt = undisclosed_receipt();
+        assert!(receipt["provider_ref"].is_null());
+        let selection: AikitModelRosterSelection = serde_json::from_value(receipt.clone())
+            .expect("AIKit's receipt that names no provider is read");
+        let refs = explicit_selection_refs(&selection).unwrap().unwrap();
+        assert_eq!(refs.harness_ref, "harness/gemini");
+        assert_eq!(refs.route_ref, selection.model_ref);
+        assert_eq!(refs.agent_ref, "agent/codex");
+        assert_eq!(refs.agent_session_ref, "agent-session/notes-chat");
+        assert!(accept_aikit_selection(demand(), selection, "t1").is_ok());
+
+        let refused = |value: Value| {
+            serde_json::from_value::<AikitModelRosterSelection>(value)
+                .map_err(|error| error.to_string())
+                .and_then(|selection| {
+                    explicit_selection_refs(&selection).map_err(|error| format!("{error:?}"))
+                })
+                .is_err()
+        };
+        // Named in the selection, though AIKit named none.
+        let mut named = receipt.clone();
+        named["provider_ref"] = json!("provider:gemini");
+        assert!(refused(named));
+        // Through another harness than the one its route was taken through.
+        let mut moved = receipt.clone();
+        moved["ranking_explanation"]["basis"]["route_basis"]["unmatched_offer"]["harness_ref"] =
+            json!("harness/kimi");
+        let route_basis = moved["ranking_explanation"]["basis"]["route_basis"].clone();
+        let route_ref = format!(
+            "model-route/{}",
+            sorted_json_digest(&route_basis)
+                .unwrap()
+                .strip_prefix("blake3:")
+                .unwrap()
+        );
+        for at in [
+            "/model_ref",
+            "/ranking_explanation/model_ref",
+            "/ranking_explanation/route_ref",
+            "/ranking_explanation/basis/harness_composition/model",
+        ] {
+            *moved.pointer_mut(at).unwrap() = json!(route_ref);
+        }
+        moved["ranking_explanation"]["basis_digest"] =
+            sorted_json_digest(&moved["ranking_explanation"]["basis"])
+                .unwrap()
+                .into();
+        assert!(refused(moved));
+        // A catalogue Model is claimed through a provider: a receipt that names one and no provider is refused.
+        let mut claimed = receipt.clone();
+        claimed["ranking_explanation"]["basis"]["route_basis"]["model_ref"] =
+            json!("model:gemini-2.5-pro");
+        claimed["ranking_explanation"]["basis"]["route_basis"]["unmatched_offer"] = Value::Null;
+        let route_basis = claimed["ranking_explanation"]["basis"]["route_basis"].clone();
+        let route_ref = format!(
+            "model-route/{}",
+            sorted_json_digest(&route_basis)
+                .unwrap()
+                .strip_prefix("blake3:")
+                .unwrap()
+        );
+        claimed["ranking_explanation"]["route_ref"] = json!(route_ref);
+        for at in [
+            "/model_ref",
+            "/ranking_explanation/model_ref",
+            "/ranking_explanation/basis/harness_composition/model",
+        ] {
+            *claimed.pointer_mut(at).unwrap() = json!("model:gemini-2.5-pro");
+        }
+        claimed["ranking_explanation"]["basis_digest"] =
+            sorted_json_digest(&claimed["ranking_explanation"]["basis"])
+                .unwrap()
+                .into();
+        assert!(refused(claimed));
     }
 
     #[test]

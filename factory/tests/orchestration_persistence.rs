@@ -54,7 +54,7 @@ fn launch(engine: &ExecutableOrchestration, reference: &str) -> ExecutionLaunch 
     let selection = AikitModelRosterSelection {
         roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
         model_ref: "model:controlled-test".into(),
-        provider_ref: "provider:controlled-test".into(),
+        provider_ref: Some("provider:controlled-test".into()),
         ranking_policy: "controlled-test".into(),
         ranking_explanation: json!({"testOnly": true}),
         provenance: vec!["selection:controlled-test".into()],

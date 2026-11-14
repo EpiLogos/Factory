@@ -532,7 +532,7 @@ impl World {
             AikitModelRosterSelection {
                 roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
                 model_ref: "model:place-test".into(),
-                provider_ref: "provider:place-test".into(),
+                provider_ref: Some("provider:place-test".into()),
                 ranking_policy: "controlled-test".into(),
                 ranking_explanation: json!({"testOnly": true}),
                 provenance: vec!["selection:place-test".into()],
@@ -569,7 +569,7 @@ impl World {
             now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
             body: ExecutionBody {
                 model_ref: "model:place-test".into(),
-                provider_ref: "provider:place-test".into(),
+                provider_ref: Some("provider:place-test".into()),
                 route_ref: "route:place-test".into(),
                 harness_ref: "harness:place-test".into(),
                 harness_composition_ref: "harness-composition:place-test".into(),

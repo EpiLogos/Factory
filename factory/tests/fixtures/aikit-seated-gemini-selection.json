@@ -1,0 +1,110 @@
+{
+  "model_ref": "model-route/7eb30b3867c2e3406af84cdd901023a9dd505e07da83d0241eaee7e4ef0d4dec",
+  "provenance": [
+    "aikit-encounter-selection:agent-session/notes-chat",
+    "019a6e2c-0000-7000-8000-000000000001"
+  ],
+  "provider_ref": null,
+  "ranking_explanation": {
+    "basis": {
+      "composition_scope": {
+        "ambient_components_claimed": false,
+        "kind": "seated-session",
+        "selected_components": [],
+        "standing": "the session as AIKit opened it for the agent seated on it: its exact body and launch basis and the harness's own model as the session reports it; no skills, extensions, tools or contributions are claimed"
+      },
+      "composition_target_basis": {
+        "agency_source": {
+          "content_digest": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "path": "/tmp/agency-notes.json",
+          "revision": "revision/1",
+          "source_ref": "source/agency-notes"
+        },
+        "digest_contract": "aikit.sorted-json/v1",
+        "harness_profile": {
+          "digest": "blake3:636a687ca84c4c37c996aec8edf612ba7c5b51603fb77da6ce45e5e7b289daec",
+          "schema": "aikit.harness-profile/v1",
+          "slug": "gemini"
+        },
+        "resident_body_basis": {
+          "cwd": "/tmp/notes",
+          "effective_launch_argv_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "harness_profile": "gemini",
+          "model_basis_digest": null,
+          "owner_launcher_argv_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner_launcher_provider_id": "gemini",
+          "protocol": "acp",
+          "provider_argv_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "provider_id": "gemini",
+          "required_context": null,
+          "schema": "aikit.resident-body-basis/v1",
+          "task_bound": false
+        },
+        "schema": "aikit.harness-composition-target-basis/v1",
+        "world_binding_ref": "world-binding/notes"
+      },
+      "digest_contract": "aikit.sorted-json/v1",
+      "harness_composition": {
+        "absences": [],
+        "agency": "agency/notes",
+        "agent": "agent/codex",
+        "component_bindings": [],
+        "contract_bindings": [],
+        "contributions": [],
+        "fingerprint": "ecbab74c720bf92862583c630b81296371bb14583c1050bd0fb634ca0872e681",
+        "harness": "harness/gemini",
+        "model": "model-route/7eb30b3867c2e3406af84cdd901023a9dd505e07da83d0241eaee7e4ef0d4dec",
+        "projections": [],
+        "session": "agent-session/notes-chat",
+        "state": "resolved",
+        "surfaces": [],
+        "target_revision": "blake3:3bbe465d243fa4c63547418b242ebc01e0e1e417cbf66802e4712ae702c6b830",
+        "version": "aikit.harness-composition/v2"
+      },
+      "native": {
+        "agent_session": "agent-session/notes-chat",
+        "model_observation": {
+          "available_models": [
+            {
+              "modelId": "gemini-2.5-pro",
+              "name": "gemini-2.5-pro"
+            }
+          ],
+          "current_model_id": "gemini-2.5-pro",
+          "standing": "provider-reported-configuration-not-independent-selection-or-inference-proof"
+        },
+        "native_session_id": "019a6e2c-0000-7000-8000-000000000001",
+        "space": "session-space/notes-chat"
+      },
+      "route_basis": {
+        "catalogue_digest": null,
+        "model_ref": null,
+        "native_provider": null,
+        "policy_source": null,
+        "provider_native_id": "gemini-2.5-pro",
+        "provider_ref": null,
+        "schema": "aikit.model-route-basis/v1",
+        "unmatched_offer": {
+          "harness_ref": "harness/gemini",
+          "provider_native_id": "gemini-2.5-pro",
+          "provider_ref": null,
+          "reason": "the session discloses no provider for the model it runs, and its harness binds none natively: no catalogue Model is claimed, and the route names the model by the id the harness runs, through that harness"
+        }
+      },
+      "schema": "aikit.explicit-model-selection-basis/v1",
+      "selection_kind": "seated-session"
+    },
+    "basis_digest": "blake3:d15fe65662c5bc085116635e5d1415b8c277106c5fe9e5c6efbf269f40262f90",
+    "digest_contract": "aikit.sorted-json/v1",
+    "harness_composition_ref": "harness-composition/ecbab74c720bf92862583c630b81296371bb14583c1050bd0fb634ca0872e681",
+    "harness_ref": "harness/gemini",
+    "model_ref": "model-route/7eb30b3867c2e3406af84cdd901023a9dd505e07da83d0241eaee7e4ef0d4dec",
+    "provider_ref": null,
+    "route_ref": "model-route/7eb30b3867c2e3406af84cdd901023a9dd505e07da83d0241eaee7e4ef0d4dec",
+    "schema": "aikit.explicit-model-selection/v1",
+    "selection_kind": "seated-session",
+    "standing": "the seated session as its resident native owner confirms it: no policy pinned its model and no roster ranked it; the model is the one the session runs, and as the session discloses no provider for it, it is named by its route through the session's harness"
+  },
+  "ranking_policy": "EXPLICIT_PIN",
+  "roster_version": "aikit.model-roster/v1"
+}

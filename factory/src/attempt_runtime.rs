@@ -76,7 +76,9 @@ pub struct SituatedParticipant {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecutionBody {
     pub model_ref: String,
-    pub provider_ref: String,
+    /// The provider of the selection the body was started on; none where AIKit's receipt for a seated session names none.
+    #[serde(default)]
+    pub provider_ref: Option<String>,
     pub route_ref: String,
     pub harness_ref: String,
     pub harness_composition_ref: String,
@@ -2392,7 +2394,7 @@ mod explicit_selection_binding_tests {
         let receipt = refs();
         ExecutionBody {
             model_ref: "model:deepseek-v4-pro".into(),
-            provider_ref: "provider:openrouter".into(),
+            provider_ref: Some("provider:openrouter".into()),
             route_ref: receipt.route_ref,
             harness_ref: receipt.harness_ref,
             harness_composition_ref: receipt.harness_composition_ref,

@@ -209,7 +209,7 @@ fn launch(engine: &ExecutableOrchestration, key: &str) -> ExecutionLaunch {
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:controlled-admission".into(),
-            provider_ref: "provider:controlled-admission".into(),
+            provider_ref: Some("provider:controlled-admission".into()),
             ranking_policy: "controlled-contract-test".into(),
             ranking_explanation: json!({"contractTest":true}),
             provenance: vec!["selection:controlled-admission".into()],

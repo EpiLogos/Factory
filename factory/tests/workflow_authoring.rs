@@ -302,7 +302,7 @@ impl World {
             AikitModelRosterSelection {
                 roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
                 model_ref: "model:controlled-test".into(),
-                provider_ref: "provider:controlled-test".into(),
+                provider_ref: Some("provider:controlled-test".into()),
                 ranking_policy: "controlled-test".into(),
                 ranking_explanation: json!({"testOnly":true}),
                 provenance: vec!["selection:controlled-test".into()],
@@ -336,7 +336,7 @@ impl World {
             now_context_ref: (!unit.praxis_refs.is_empty()).then(|| "now:fixture".into()),
             body: ExecutionBody {
                 model_ref: "model:controlled-test".into(),
-                provider_ref: "provider:controlled-test".into(),
+                provider_ref: Some("provider:controlled-test".into()),
                 route_ref: "route:controlled-test".into(),
                 harness_ref: "harness:controlled-test".into(),
                 harness_composition_ref: "composition:controlled-test".into(),

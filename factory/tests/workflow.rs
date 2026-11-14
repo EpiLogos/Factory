@@ -49,7 +49,7 @@ fn selection(model: &str, provider: &str) -> AikitModelRosterSelection {
     AikitModelRosterSelection {
         roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
         model_ref: model.into(),
-        provider_ref: provider.into(),
+        provider_ref: Some(provider.into()),
         ranking_policy: "balanced".into(),
         ranking_explanation: json!({"eligible": true}),
         provenance: vec!["selection:source".into()],

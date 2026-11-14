@@ -101,7 +101,7 @@ fn disposition(run: &Run, unit: &WorkflowUnitRef) -> ExecutionDisposition {
         AikitModelRosterSelection {
             roster_version: AIKIT_MODEL_ROSTER_VERSION.into(),
             model_ref: "model:factory-k8-vak-receipt".into(),
-            provider_ref: "provider:factory-k8-vak-receipt".into(),
+            provider_ref: Some("provider:factory-k8-vak-receipt".into()),
             ranking_policy: "cross-owner-acceptance".into(),
             ranking_explanation: json!({"eligible": true}),
             provenance: vec!["selection:factory-k8-vak-receipt".into()],
