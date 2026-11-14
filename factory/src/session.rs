@@ -311,18 +311,50 @@ fn hook_client(agent: &str) -> &str {
     }
 }
 
-/// The session's record, opened or closed by AIKit's own lifecycle hooks (`aikit hook dispatch <client> <event>`, R36): the
-/// event as the harness itself would deliver it, and AIKit's answer verbatim. A refusal is kept in AIKit's words.
-fn record(cwd: &Path, agent: &str, event: &str, session: &str) -> Value {
-    let mut payload = json!({"session_id": session, "cwd": cwd, "hook_event_name": event});
-    if event == "SessionStart" {
-        payload["source"] = json!("startup");
+/// How a harness asks AIKit's lifecycle hook (`aikit hook dispatch <client> <event>`): its arguments and the event it delivers.
+/// A hook-command harness asks in plain mode with its own hook event; pi's hooks ride AIKit's extension carrier, which asks for the
+/// machine envelope (`--json`) with pi's own event (`session_start` with its reason, `session_shutdown`). Pure.
+fn hook_ask(client: &str, event: &str, session: &str, cwd: &Path) -> (Vec<String>, Value) {
+    let mut args: Vec<String> = Vec::new();
+    let payload = if client == "pi" {
+        args.push("--json".into());
+        if event == "SessionStart" {
+            json!({"type": "session_start", "reason": "startup", "cwd": cwd, "session_id": session})
+        } else {
+            json!({"type": "session_shutdown", "cwd": cwd, "session_id": session})
+        }
     } else {
-        payload["reason"] = json!("other");
-    }
+        let mut payload = json!({"session_id": session, "cwd": cwd, "hook_event_name": event});
+        if event == "SessionStart" {
+            payload["source"] = json!("startup");
+        } else {
+            payload["reason"] = json!("other");
+        }
+        payload
+    };
+    args.extend(["hook", "dispatch", client, event].map(str::to_owned));
+    (args, payload)
+}
+
+/// The text the harness takes into its session from AIKit's answer: a hook-command harness its `additionalContext`, pi's carrier
+/// the envelope's `data.injected`; empty when the answer carries none. Pure.
+fn ground_of(client: &str, answer: &Value) -> String {
+    let ground = if client == "pi" {
+        &answer["data"]["injected"]
+    } else {
+        &answer["hookSpecificOutput"]["additionalContext"]
+    };
+    ground.as_str().unwrap_or_default().to_owned()
+}
+
+/// The session's record, opened or closed by AIKit's own lifecycle hooks (`aikit hook dispatch <client> <event>`, R36): the
+/// event as the harness itself would deliver it (hook_ask), AIKit's answer verbatim, and the ground the harness takes into the
+/// session from it (ground_of). A refusal is kept in AIKit's words.
+fn record(cwd: &Path, agent: &str, event: &str, session: &str) -> Value {
     let client = hook_client(agent);
+    let (args, payload) = hook_ask(client, event, session, cwd);
     let started = Command::new(aikit_bin())
-        .args(["hook", "dispatch", client, event])
+        .args(&args)
         .current_dir(cwd)
         .env_remove("CENTRAL_NATIVE_TOKEN")
         .stdin(Stdio::piped())
@@ -338,16 +370,19 @@ fn record(cwd: &Path, agent: &str, event: &str, session: &str) -> Value {
     match output {
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            let answer =
+                serde_json::from_str::<Value>(&stdout).unwrap_or(Value::String(clip(&stdout)));
             json!({
                 "event": event,
                 "client": client,
                 "kept": output.status.success(),
-                "answer": serde_json::from_str::<Value>(&stdout).unwrap_or(Value::String(clip(&stdout))),
+                "ground": ground_of(client, &answer),
+                "answer": answer,
                 "words": clip(String::from_utf8_lossy(&output.stderr).trim()),
                 "by": "aikit hook dispatch",
             })
         }
-        Err(error) => json!({"event": event, "client": client, "kept": false,
+        Err(error) => json!({"event": event, "client": client, "kept": false, "ground": "",
             "words": format!("AIKit's hook dispatch could not start: {error}"), "by": "aikit hook dispatch"}),
     }
 }
@@ -2498,6 +2533,56 @@ mod tests {
         )
         .unwrap();
         assert!(difference(&checkout, &before).contains("+and the agent's"));
+    }
+
+    #[test]
+    fn pi_asks_its_hooks_as_its_carrier_does_and_the_ground_is_read_from_each_harness_answer() {
+        let cwd = Path::new("/w/worktrees/env-1/notes");
+        // pi: the machine envelope, and pi's own event.
+        let (args, payload) = hook_ask("pi", "SessionStart", "agent-session/s1", cwd);
+        assert_eq!(
+            args,
+            ["--json", "hook", "dispatch", "pi", "SessionStart"].map(str::to_owned)
+        );
+        assert_eq!(
+            payload,
+            json!({"type": "session_start", "reason": "startup", "cwd": cwd, "session_id": "agent-session/s1"})
+        );
+        let (args, payload) = hook_ask("pi", "SessionEnd", "agent-session/s1", cwd);
+        assert_eq!(
+            args,
+            ["--json", "hook", "dispatch", "pi", "SessionEnd"].map(str::to_owned)
+        );
+        assert_eq!(
+            payload,
+            json!({"type": "session_shutdown", "cwd": cwd, "session_id": "agent-session/s1"})
+        );
+        // A hook-command harness asks as before: plain mode, its own hook event.
+        let (args, payload) = hook_ask("claude", "SessionStart", "agent-session/s1", cwd);
+        assert_eq!(
+            args,
+            ["hook", "dispatch", "claude", "SessionStart"].map(str::to_owned)
+        );
+        assert_eq!(
+            payload,
+            json!({"session_id": "agent-session/s1", "cwd": cwd, "hook_event_name": "SessionStart", "source": "startup"})
+        );
+        // The ground: what each harness takes into its session from AIKit's answer, empty where it carries none.
+        let hooked = json!({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "World: w · Project: notes"}});
+        let carried =
+            json!({"ok": true, "data": {"allowed": true, "injected": "World: w · Project: notes"}});
+        assert_eq!(ground_of("claude", &hooked), "World: w · Project: notes");
+        assert_eq!(ground_of("codex", &hooked), "World: w · Project: notes");
+        assert_eq!(ground_of("pi", &carried), "World: w · Project: notes");
+        assert_eq!(ground_of("pi", &hooked), "");
+        assert_eq!(ground_of("claude", &carried), "");
+        assert_eq!(
+            ground_of(
+                "pi",
+                &Value::String("context not delivered: pi/SessionStart has no verified additional-context output adapter".into())
+            ),
+            ""
+        );
     }
 
     #[test]
