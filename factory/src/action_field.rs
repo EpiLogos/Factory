@@ -41,6 +41,11 @@ const AGENT: (&str, &str) = (
 const WORLD: (&str, &str) = ("world", "the World's folder, absolute");
 const PROJECT: (&str, &str) = ("project", "the project: one folder of the World's Work");
 const SESSION: (&str, &str) = ("session", "the agent's session (its AIKit AgentSession)");
+/// The person's grant, as the host resolved it on their press (Factory reads no token).
+const AUTHORITY: (&str, &str) = (
+    "authority",
+    "the person's grant as the host resolved it: central:native-action-authority#<principal_ref>",
+);
 
 const FIELD: &[FieldAction] = &[
     FieldAction {
@@ -194,7 +199,7 @@ const FIELD: &[FieldAction] = &[
         id: "factory.task.run",
         title: "Run a task on its session",
         route: &["session", "task-run"],
-        positionals: &[STATE, ("run_ref", "the task's Run"), SESSION],
+        positionals: &[STATE, ("run_ref", "the task's Run"), SESSION, AUTHORITY],
         document: None,
         mutation_class: "externally-mutating",
         output: crate::session::TASK_CONTRACT,
@@ -207,6 +212,7 @@ const FIELD: &[FieldAction] = &[
             STATE,
             ("run_ref", "the task's Run"),
             ("attempt_ref", "the running attempt"),
+            AUTHORITY,
         ],
         document: None,
         mutation_class: "externally-mutating",
@@ -229,6 +235,7 @@ const FIELD: &[FieldAction] = &[
             STATE,
             ("run_ref", "the unit's Run"),
             ("unit_ref", "the unit whose current attempt failed"),
+            AUTHORITY,
         ],
         document: None,
         mutation_class: "externally-mutating",
@@ -242,6 +249,7 @@ const FIELD: &[FieldAction] = &[
             STATE,
             ("run_ref", "the attempt's Run"),
             ("attempt_ref", "the returned attempt you choose"),
+            AUTHORITY,
         ],
         document: None,
         mutation_class: "externally-mutating",
@@ -562,14 +570,23 @@ mod tests {
             ]
         );
         assert_eq!(stdin, None);
+        let grant = "central:native-action-authority#human:owner";
         let (argv, _) = route_argv(
             "factory.task.stop",
-            &json!({"state": "/s", "run_ref": "run:1", "attempt_ref": "attempt:1"}),
+            &json!({"state": "/s", "run_ref": "run:1", "attempt_ref": "attempt:1", "authority": grant}),
         )
         .unwrap();
         assert_eq!(
             argv,
-            ["session", "task-stop", "/s", "run:1", "attempt:1", "--json"]
+            [
+                "session",
+                "task-stop",
+                "/s",
+                "run:1",
+                "attempt:1",
+                grant,
+                "--json"
+            ]
         );
         let refused = route_argv("factory.session.start", &json!({"agent": "pi"})).unwrap_err();
         assert!(refused.contains("needs its input `world`"), "{refused}");

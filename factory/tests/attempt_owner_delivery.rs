@@ -809,6 +809,28 @@ fn a_launch_starts_the_unit_from_aikit_s_explicit_selection_and_factory_s_own_un
 }
 
 #[test]
+fn a_launched_unit_is_started_under_the_one_retry_grant_every_task_attempt_spends() {
+    let world = World::new();
+    world.commission_journey();
+    success(world.launch(world.aikit_realisation()));
+    let reading = world.reading();
+    let attempt = reading
+        .attempts
+        .iter()
+        .find(|attempt| attempt.attempt_ref == "attempt:launch")
+        .expect("the launched attempt is Factory's");
+    // One budget rule: a launch and a task run on a session both start under the task's retry grant.
+    assert_eq!(
+        attempt.disposition.budget.retry_grant_ref.as_deref(),
+        Some("retry-grant:task:inspect")
+    );
+    assert_eq!(
+        attempt.disposition.budget.maximum_attempts,
+        Some(epilogos_factory::attempt_application::LAUNCH_ATTEMPTS)
+    );
+}
+
+#[test]
 fn a_launch_without_aikit_s_explicit_selection_is_refused_naming_aikit_and_moves_nothing() {
     let world = World::new();
     world.commission_journey();

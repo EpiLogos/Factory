@@ -134,9 +134,31 @@ fn an_input_the_route_does_not_take_is_refused_before_anything_runs() {
     assert!(String::from_utf8_lossy(&unknown.stderr).contains("not in Factory's Action field"));
 }
 
+/// `factory action run <id> -` with the input on stdin and the host's token as given (none, or one Factory must not read).
+fn run_session_act(id: &str, input: &Value, token: Option<&str>) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_factory"));
+    command
+        .args(["action", "run", id, "-"])
+        .env_remove("CENTRAL_NATIVE_TOKEN")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(token) = token {
+        command.env("CENTRAL_NATIVE_TOKEN", token);
+    }
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.to_string().as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
+// REPLACED (review F8): a session's acts read the host's token and resolved the grant in Factory; the host resolves it now.
 #[test]
-fn a_sessions_retry_and_choice_are_in_the_field_and_ask_for_the_persons_grant_before_anything_moves(
-) {
+fn a_sessions_acts_take_the_grant_the_host_resolved_and_never_read_its_token() {
     let field = json_of(&factory(&["actions", "--json"], None));
     let ids = field["actions"]
         .as_array()
@@ -151,10 +173,18 @@ fn a_sessions_retry_and_choice_are_in_the_field_and_ask_for_the_persons_grant_be
     ] {
         assert!(ids.contains(&id), "{id} is in the field: {ids:?}");
     }
-    // A retry and a choice are the person's presses: with no token handed, Factory asks for the grant and reads nothing.
     let directory = tempfile::tempdir().unwrap();
     let state = directory.path().join(".factory/development-state.json");
+    let grant = "central:native-action-authority#human:owner";
     for (id, input) in [
+        (
+            "factory.task.run",
+            json!({"state": state, "run_ref": "run:x", "session": "agent-session/x"}),
+        ),
+        (
+            "factory.task.stop",
+            json!({"state": state, "run_ref": "run:x", "attempt_ref": "attempt:x"}),
+        ),
         (
             "factory.attempt.retry",
             json!({"state": state, "run_ref": "run:x", "unit_ref": "unit:x"}),
@@ -164,25 +194,30 @@ fn a_sessions_retry_and_choice_are_in_the_field_and_ask_for_the_persons_grant_be
             json!({"state": state, "run_ref": "run:x", "attempt_ref": "attempt:x"}),
         ),
     ] {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_factory"))
-            .args(["action", "run", id, "-"])
-            .env_remove("CENTRAL_NATIVE_TOKEN")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.to_string().as_bytes())
-            .unwrap();
-        let refused = child.wait_with_output().unwrap();
+        // The person's press presents the grant the host resolved: without it the field refuses before anything runs.
+        let refused = run_session_act(id, &input, Some("a-token-factory-never-reads"));
+        let words = String::from_utf8_lossy(&refused.stderr);
         assert!(!refused.status.success(), "{id} ran with no grant");
+        assert!(
+            words.contains("needs its input `authority`"),
+            "{id}: {words}"
+        );
+        // With it, and no token at all, the act goes past the grant: what stops it here is the Run it names.
+        let mut granted = input.clone();
+        granted["authority"] = json!(grant);
+        let refused = run_session_act(id, &granted, None);
+        let words = String::from_utf8_lossy(&refused.stderr);
+        assert!(!refused.status.success(), "{id} ran on no Run");
+        assert!(
+            !words.contains("grant") && !words.contains("CENTRAL_NATIVE_TOKEN"),
+            "{id} stopped at the grant: {words}"
+        );
+        // A grant is named in its contract's form, or refused in those words.
+        granted["authority"] = json!("human:owner");
+        let refused = run_session_act(id, &granted, None);
         let words = String::from_utf8_lossy(&refused.stderr);
         assert!(
-            words.contains("presents the person's grant"),
+            words.contains("central:native-action-authority#<principal_ref>"),
             "{id}: {words}"
         );
     }

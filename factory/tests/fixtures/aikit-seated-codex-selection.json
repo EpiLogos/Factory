@@ -1,0 +1,106 @@
+{
+  "model_ref": "model:gpt-5.4",
+  "provenance": [
+    "aikit-encounter-selection:agent-session/notes-chat",
+    "019a6e2c-0000-7000-8000-000000000001",
+    "blake3:b60149fd2e0da7ec3dfc2f8040940826e8f80d2c95ee68caeb0a7985d499b6a9"
+  ],
+  "provider_ref": "provider:openai",
+  "ranking_explanation": {
+    "basis": {
+      "composition_scope": {
+        "ambient_components_claimed": false,
+        "kind": "seated-session",
+        "selected_components": [],
+        "standing": "the session as AIKit opened it for the agent seated on it: its exact body and launch basis and the harness's own model as the session reports it; no skills, extensions, tools or contributions are claimed"
+      },
+      "composition_target_basis": {
+        "agency_source": {
+          "content_digest": "blake3:0000000000000000000000000000000000000000000000000000000000000000",
+          "path": "/tmp/agency-notes.json",
+          "revision": "revision/1",
+          "source_ref": "source/agency-notes"
+        },
+        "digest_contract": "aikit.sorted-json/v1",
+        "harness_profile": {
+          "digest": "blake3:35420ef3284e5adcf6eae8714996e8d226ca0c21189d51f44c04c8541ee64a41",
+          "schema": "aikit.harness-profile/v1",
+          "slug": "codex"
+        },
+        "resident_body_basis": {
+          "cwd": "/tmp/notes",
+          "effective_launch_argv_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "harness_profile": "codex",
+          "model_basis_digest": null,
+          "owner_launcher_argv_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "owner_launcher_provider_id": "codex",
+          "protocol": "acp",
+          "provider_argv_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "provider_id": "codex",
+          "required_context": null,
+          "schema": "aikit.resident-body-basis/v1",
+          "task_bound": false
+        },
+        "schema": "aikit.harness-composition-target-basis/v1",
+        "world_binding_ref": "world-binding/notes"
+      },
+      "digest_contract": "aikit.sorted-json/v1",
+      "harness_composition": {
+        "absences": [],
+        "agency": "agency/notes",
+        "agent": "agent/codex",
+        "component_bindings": [],
+        "contract_bindings": [],
+        "contributions": [],
+        "fingerprint": "03ce5455eb5c41e82cee440d9feef0e7f504bc3bcc1306c7c73cb7e50175332f",
+        "harness": "harness/codex",
+        "model": "model:gpt-5.4",
+        "projections": [],
+        "session": "agent-session/notes-chat",
+        "state": "resolved",
+        "surfaces": [],
+        "target_revision": "blake3:6f66fa8d217771d9c9a815a1069adaa0cebec7348fc16123230df4e9ce542e88",
+        "version": "aikit.harness-composition/v2"
+      },
+      "native": {
+        "agent_session": "agent-session/notes-chat",
+        "model_observation": {
+          "available_models": [
+            {
+              "modelId": "gpt-5.4",
+              "name": "gpt-5.4"
+            }
+          ],
+          "current_model_id": "gpt-5.4",
+          "standing": "provider-reported-configuration-not-independent-selection-or-inference-proof"
+        },
+        "native_session_id": "019a6e2c-0000-7000-8000-000000000001",
+        "space": "session-space/notes-chat"
+      },
+      "route_basis": {
+        "catalogue_digest": "blake3:b60149fd2e0da7ec3dfc2f8040940826e8f80d2c95ee68caeb0a7985d499b6a9",
+        "model_ref": "model:gpt-5.4",
+        "native_provider": "openai",
+        "policy_source": null,
+        "provider_native_id": "gpt-5.4",
+        "provider_ref": "provider:openai",
+        "schema": "aikit.model-route-basis/v1",
+        "unmatched_offer": null
+      },
+      "schema": "aikit.explicit-model-selection-basis/v1",
+      "selection_kind": "seated-session"
+    },
+    "basis_digest": "blake3:02cfc4cbd2d05c6a1256d1db0acc2361deac518e23f1614b200baca41db3a9be",
+    "digest_contract": "aikit.sorted-json/v1",
+    "harness_composition_ref": "harness-composition/03ce5455eb5c41e82cee440d9feef0e7f504bc3bcc1306c7c73cb7e50175332f",
+    "harness_ref": "harness/codex",
+    "model_ref": "model:gpt-5.4",
+    "provider_ref": "provider:openai",
+    "route_ref": "model-route/39022abd9935931a75841de5e425cbb2f3785635978c1f1ed06252688af0555c",
+    "schema": "aikit.explicit-model-selection/v1",
+    "selection_kind": "seated-session",
+    "standing": "the seated session as its resident native owner confirms it: no policy pinned its model and no roster ranked it; the model is the one the session runs, named by the catalogue Model that claims it, else by its route"
+  },
+  "ranking_policy": "EXPLICIT_PIN",
+  "roster_version": "aikit.model-roster/v1"
+}

@@ -10,7 +10,7 @@ use crate::execution_intelligence::{
     accept_aikit_selection, explicit_selection_refs, AikitModelRosterSelection, ExecutionDemand,
     ExecutionInteropError, ExplicitSelectionRefs,
 };
-use crate::orchestration::LegStatus;
+use crate::orchestration::{LegStatus, RetryGrant};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -338,7 +338,7 @@ fn validate_operation(
 fn validate_start(
     run: &Run,
     disposition: &SituatedExecutionDisposition,
-    grant: Option<&crate::orchestration::RetryGrant>,
+    grant: Option<&RetryGrant>,
 ) -> Result<(), FactoryAttemptError> {
     if disposition.selection.demand.project_ref != run.project_ref().to_string() {
         return Err(invalid(
@@ -574,6 +574,11 @@ fn aikit_selection(
     Ok((selection, refs))
 }
 
+/// The attempts a task may spend, its first included: the one budget rule a
+/// launch starts every task under (`factory.attempt.launch`, and
+/// `factory.task.run` on a session, which launches through it).
+pub const LAUNCH_ATTEMPTS: u32 = 3;
+
 /// The `start-serial` Action a Launch assembles, at the state revision the
 /// caller read. Nothing in it is the caller's but the Run, the unit, the
 /// attempt and task refs and the owners' readings it carries.
@@ -595,6 +600,13 @@ pub fn launch_action(
         ))
     })?;
     let (selection, refs) = aikit_selection(&request.aikit_realisation)?;
+    // The grant a retry of this task spends (factory.attempt.retry): its first attempt consumes it.
+    let retry_grant = RetryGrant::new(format!("retry-grant:{}", request.task_ref), LAUNCH_ATTEMPTS)
+        .map_err(|error| {
+            invalid(&format!(
+                "Factory refused the task's retry grant: {error:?}"
+            ))
+        })?;
     let unit = &basis.unit;
     let contribution = unit.contribution.as_ref();
     let from_contribution =
@@ -671,8 +683,8 @@ pub fn launch_action(
             cost_ceiling_usd: None,
             latency_preference_ms: None,
             wall_clock_timeout_ms: None,
-            retry_grant_ref: None,
-            maximum_attempts: None,
+            retry_grant_ref: Some(retry_grant.grant_ref.clone()),
+            maximum_attempts: Some(retry_grant.attempts_allowed),
         },
     };
     Ok(FactoryAttemptActionRequest {
@@ -688,7 +700,7 @@ pub fn launch_action(
             parent_journey_ref,
             workflow_unit_ref: unit.reference.clone(),
             disposition,
-            retry_grant: None,
+            retry_grant: Some(retry_grant),
             tracking: Vec::new(),
             place_grant: None,
         },

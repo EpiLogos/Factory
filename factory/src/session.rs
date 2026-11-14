@@ -5,7 +5,8 @@
 //! its record opened by AIKit's own hooks (`aikit hook dispatch <client> SessionStart`, PROGRAMME R36) and closed by them at
 //! its end. A task is written on it as a Run of one unit, commissioned in the project's Factory state together with its
 //! workflow source and its attempt field (the act a song's take is, song_take.rs); its unit's practice is the Skill Sets the
-//! agent carries. Run, it is Factory's own `start-serial` on the session's Agency, under the person's grant, admitted on the
+//! agent carries. Run, it is Factory's own launch (`factory.attempt.launch`) on AIKit's selection receipt for the session it
+//! opened, under the person's grant as the host resolved it, admitted on the
 //! practice AIKit prepared in a NOW Central allocated for the task (`now-context prepare`, its receipt read back by
 //! `now-context inspect`), sent to the session by Factory's agent client
 //! (attempt_owner_dispatch.rs) and followed to its end: the session's turn streamed into the task's log, the agent's asks
@@ -24,12 +25,8 @@ use crate::attempt_owner_dispatch::{
 use crate::attempt_runtime::*;
 use crate::cli::CliError;
 use crate::core::run::{RunRef, WorkflowUnitRef};
-use crate::execution_intelligence::{
-    AikitModelRosterSelection, ExecutionDemand, ExecutionDisposition,
-    EXECUTION_INTELLIGENCE_INTEROP_VERSION,
-};
 use crate::native_owner::{NativeOwnerInvocation, AIKIT_CAW_CONTRACT_REVISION};
-use crate::orchestration::{LegStatus, RetryGrant, ReturnedArtifact};
+use crate::orchestration::{LegStatus, ReturnedArtifact};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::io::Write;
@@ -41,14 +38,8 @@ pub const SESSION_CONTRACT: &str = "factory.session/v1";
 pub const TASK_CONTRACT: &str = "factory.session-task/v1";
 /// Factory's sessions of a project, as `factory session list` answers them.
 pub const SESSION_LIST_CONTRACT: &str = "factory.session-list/v1";
-/// The attempts a task's unit is given in all, its first among them: a task that fails is retried under the grant its first
-/// attempt consumes (manual §19.1, "When a task on the track stalls, the track lights a retry"), twice at most.
-const TASK_ATTEMPTS: u32 = 3;
 /// The tracking fact a pause leaves on an attempt: AIKit cancelled the session's turn at Factory's Stop.
 const PAUSE: &str = "factory-session-pause";
-/// How Factory names the way it chose the body a task runs on: the agent the person seated on the track, as AIKit opened it.
-const SEATED: &str = "SEATED_SESSION";
-const SEATED_SELECTION: &str = "factory.seated-session-selection/v1";
 const FOLLOWER: &str = "factory:session-follow";
 const AIKIT_TIMEOUT: Duration = Duration::from_secs(90);
 /// The longest a followed turn is waited for before the attempt records that it was not seen to end.
@@ -244,17 +235,15 @@ fn encounter(cwd: &Path, request: Value) -> Result<Value, String> {
     )
 }
 
-/// The session's Agency binding, as AIKit holds it: who the agent is, under which Agency and World binding, from which
-/// source, which sender it hears, and the binding's revision an addressed turn names.
+/// The session's Agency binding, as AIKit holds it: who the agent is, under which Agency, from which source, which sender it
+/// hears, and the binding's revision an addressed turn names.
 struct Binding {
     agent_ref: String,
     agency_ref: String,
-    world_binding_ref: String,
     revision: String,
     sender: String,
     source_ref: String,
     source_revision: String,
-    source_digest: String,
 }
 
 fn binding(cwd: &Path, session: &str) -> Result<Binding, CliError> {
@@ -288,7 +277,6 @@ fn binding(cwd: &Path, session: &str) -> Result<Binding, CliError> {
     Ok(Binding {
         agent_ref: text(&held["agent_ref"], "agent")?,
         agency_ref: text(&held["agency_ref"], "Agency")?,
-        world_binding_ref: text(&held["world_binding_ref"], "World binding")?,
         revision: text(&held["revision"], "revision")?,
         sender: text(
             held["allowed_senders"]
@@ -299,7 +287,6 @@ fn binding(cwd: &Path, session: &str) -> Result<Binding, CliError> {
         )?,
         source_ref: text(&held["agency_source"]["source_ref"], "source")?,
         source_revision: text(&held["agency_source"]["revision"], "source revision")?,
-        source_digest: text(&held["agency_source"]["content_digest"], "source digest")?,
     })
 }
 
@@ -910,90 +897,21 @@ fn head_of(checkout: &Path) -> Option<String> {
     git(checkout, &["rev-parse", "HEAD"]).map(|head| head.trim().to_owned())
 }
 
-/// The person's grant for one of Factory's host-checked acts (Central `authority::HOST_AUTHENTICATED_ACTIONS`), resolved here
-/// against the World's native action authority contract with the token the host handed on the person's press
-/// (`CENTRAL_NATIVE_TOKEN`), at the scope of the project the Run stands in. The token is compared, never kept or echoed.
-fn grant(state: &Path, action: &str) -> Result<ProjectedFactoryActionAuthority, CliError> {
-    let token = std::env::var("CENTRAL_NATIVE_TOKEN")
-        .ok()
-        .filter(|token| !token.trim().is_empty())
-        .ok_or_else(|| {
-            refuse(format!(
-                "{action} presents the person's grant: the host hands Factory its token (CENTRAL_NATIVE_TOKEN) on the person's press, and none was handed"
-            ))
-        })?;
-    let contract_path = state
-        .ancestors()
-        .map(|dir| dir.join("Control/user/native-action-authority.json"))
-        .find(|path| path.is_file())
-        .ok_or_else(|| {
-            refuse("no native action authority contract stands above this Factory state, so the person's grant cannot be read")
-        })?;
-    let contract: Value = std::fs::read(&contract_path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .ok_or_else(|| refuse(format!("{} cannot be read", contract_path.display())))?;
-    if contract["schema"] != "central.native-action-authority/v1" {
-        return Err(refuse(format!(
-            "{} is not central.native-action-authority/v1",
-            contract_path.display()
-        )));
-    }
-    let scope = crate::attempt_admission::run_scope(state).map_err(refuse)?;
-    use sha2::{Digest, Sha256};
-    let presented: String = Sha256::digest(token.as_bytes())
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let held: Vec<&Value> = contract["grants"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|entry| {
-            entry["actor_kind"] == "human"
-                && entry["token_sha256"]
-                    .as_str()
-                    .is_some_and(|recorded| recorded.eq_ignore_ascii_case(&presented))
-        })
-        .collect();
-    let [entry] = held.as_slice() else {
-        return Err(refuse(format!(
-            "the person's token names {} human grants in the World's contract, not one",
-            held.len()
-        )));
-    };
-    if !entry["actions"]
-        .as_array()
-        .is_some_and(|actions| actions.iter().any(|listed| listed == action))
+/// The person's grant for one of Factory's host-checked acts, as the host resolved it on their press: the host reads its own
+/// token against the World's native action authority contract, for the native action and scope Factory's admission names
+/// (`factory attempt admission <state>`), and hands Factory the grant's ref, as it does for `factory.attempt.launch` and
+/// `factory.attempt.action`. Factory reads no token.
+fn granted(grant: &str) -> Result<ProjectedFactoryActionAuthority, CliError> {
+    const FORM: &str = "central:native-action-authority#";
+    if !grant
+        .strip_prefix(FORM)
+        .is_some_and(|principal| !principal.trim().is_empty())
     {
         return Err(refuse(format!(
-            "action not granted: the person's grant does not list {action}"
+            "the person's grant is presented as the host resolved it, {FORM}<principal_ref>; `{grant}` is not one"
         )));
     }
-    if !entry["scope_refs"]
-        .as_array()
-        .is_some_and(|scopes| scopes.iter().any(|listed| listed == scope.as_str()))
-    {
-        return Err(refuse(format!(
-            "scope not granted: the person's grant does not cover {scope}"
-        )));
-    }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or_default();
-    if entry["expires_at_unix_seconds"]
-        .as_u64()
-        .is_none_or(|expires| now >= expires)
-    {
-        return Err(refuse("expired: the person's grant has expired"));
-    }
-    let principal = entry["principal_ref"]
-        .as_str()
-        .ok_or_else(|| refuse("the person's grant names no principal"))?;
-    Ok(authority(&format!(
-        "central:native-action-authority#{principal}"
-    )))
+    Ok(authority(grant))
 }
 
 fn authority(reference: &str) -> ProjectedFactoryActionAuthority {
@@ -1320,11 +1238,20 @@ fn prepare_now(
     Ok((now_ref, receipt))
 }
 
-fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, CliError> {
+/// `factory session task-run <state> <run-ref> <session> <grant>`: the task's unit launched on the session by Factory's own launch
+/// (`factory.attempt.launch`, attempt_application.rs `launch_attempt`), on AIKit's selection receipt for the session it opened
+/// (`aikit compose model selection`) and the praxis AIKit prepared in the task's NOW, under the person's grant; then its words
+/// sent to the session and followed to the turn's end.
+fn task_run(
+    state_text: &str,
+    run_text: &str,
+    session: &str,
+    grant: &str,
+) -> Result<Value, CliError> {
+    let authority = granted(grant)?;
     let state = PathBuf::from(state_text);
     let run_ref = run_ref_of(run_text)?;
     let place = place_of_state(&state)?;
-    let authority = grant(&state, "factory.attempt.launch")?;
     let store =
         FileAttemptStore::open_run(&state, run_ref.clone()).map_err(CliError::from_native)?;
     let before = store.reading().map_err(CliError::from_native)?;
@@ -1342,134 +1269,78 @@ fn task_run(state_text: &str, run_text: &str, session: &str) -> Result<Value, Cl
     let basis = store
         .launch_basis(&unit_ref)
         .map_err(CliError::from_native)?;
-    let journey = basis.journey_ref.clone().ok_or_else(|| {
-        refuse(format!(
+    // Refused before AIKit is asked anything: launch refuses it too, after the task's NOW is prepared.
+    if basis.journey_ref.is_none() {
+        return Err(refuse(format!(
             "Factory links {run_ref} to no Journey: a task runs under the Journey it was written in"
+        )));
+    }
+    let held = binding(&place.checkout, session)?;
+    // The session as AIKit opened it, bound as its explicit selection: its body, its harness and the model it runs.
+    let realisation = aikit(
+        &place.checkout,
+        &["compose", "model", "selection", "--session", session],
+    )
+    .map_err(|words| {
+        refuse(format!(
+            "AIKit gave no selection receipt for {session}: {words}"
         ))
     })?;
-    let held = binding(&place.checkout, session)?;
-    let status = encounter(
-        &place.checkout,
-        json!({"action": "status", "agent_session": session}),
-    )
-    .map_err(refuse)?;
-    let space = space_of(&place.checkout, session)
-        .ok_or_else(|| refuse(format!("AIKit places {session} in no SessionSpace")))?;
-    let provider = provider_of(&status).unwrap_or_else(|| "aikit-encounter".into());
-    let model = status["model_observation"]["current_model_id"]
-        .as_str()
-        .filter(|model| !model.trim().is_empty())
-        .map(|model| {
-            let model = model.to_owned();
-            if model.starts_with("model:") {
-                model
-            } else {
-                format!("model:{provider}/{model}")
-            }
-        })
-        .unwrap_or_else(|| format!("model:{provider}/session-default"));
     let unit = &basis.unit;
     let attempt_ref = minted("attempt");
     let task_ref = minted("task");
-    // The grant a retry of this task spends (factory.attempt.retry): its first attempt consumes it.
-    let retry_grant = RetryGrant::new(format!("retry-grant:{task_ref}"), TASK_ATTEMPTS)
-        .map_err(|error| refuse(format!("Factory refused the task's retry grant: {error:?}")))?;
     let (now_ref, receipt) =
         prepare_now(&place, &state, &run_ref, unit, &task_ref, &held, session)?;
-    let demand = ExecutionDemand {
-        project_ref: basis.run.project_ref().to_string(),
-        run_ref: run_ref.to_string(),
-        workflow_unit_ref: Some(unit.reference.to_string()),
-        agency_ref: Some(held.agency_ref.clone()),
-        profile_ref: None,
-        use_type: unit.key.clone(),
-        required_capabilities: unit.capability_refs.clone(),
-        required_modalities: BTreeSet::new(),
-        required_actions: BTreeSet::new(),
-        required_tools: BTreeSet::new(),
-        context_characteristics: BTreeSet::new(),
-        independence_from: BTreeSet::new(),
-        cost_ceiling_usd: None,
-        latency_preference_ms: None,
-        requires_local_materialisation: false,
-    };
-    let disposition = SituatedExecutionDisposition {
-        selected_inputs: Vec::new(),
-        selection: ExecutionDisposition {
-            schema_version: EXECUTION_INTELLIGENCE_INTEROP_VERSION.into(),
-            demand,
-            selection: AikitModelRosterSelection {
-                roster_version: SEATED_SELECTION.into(),
-                model_ref: model.clone(),
-                provider_ref: provider.clone(),
-                ranking_policy: SEATED.into(),
-                ranking_explanation: json!({
-                    "schema": SEATED_SELECTION,
-                    "standing": "the agent the person seated on the track, as AIKit opened its session; no roster ranked it",
-                    "agent_session": session,
-                    "status": status,
-                }),
-                provenance: vec![format!("aikit-encounter-status:{session}")],
-            },
-            decided_at: factory_admission_time(),
-        },
-        participant: SituatedParticipant {
-            agent_ref: held.agent_ref.clone(),
-            agency_ref: held.agency_ref.clone(),
-            world_binding_ref: held.world_binding_ref.clone(),
-            profile_ref: None,
-            position_ref: None,
-            source_ref: held.source_ref.clone(),
-            source_revision: held.source_revision.clone(),
-            source_digest: held.source_digest.clone(),
-        },
-        context_refs: BTreeSet::new(),
-        praxis_refs: unit.praxis_refs.clone(),
-        capability_refs: unit.capability_refs.clone(),
-        praxis_receipt: Some(receipt),
-        now_context_ref: Some(now_ref.clone()),
-        body: ExecutionBody {
-            model_ref: model,
-            provider_ref: provider.clone(),
-            route_ref: format!("route:aikit-encounter/{provider}"),
-            harness_ref: format!("harness/{provider}"),
-            harness_composition_ref: format!("harness-composition:aikit-encounter-open/{provider}"),
-            agent_session_ref: session.to_owned(),
-            session_space_ref: space.clone(),
-            material_world_ref: None,
-            workcell_ref: None,
-        },
-        placement: None,
-        permitted_effects: unit.permitted_effects.clone(),
-        verification_obligations: unit.verification_obligations.clone(),
-        return_address: unit.return_address.clone(),
-        stop_conditions: unit.stop_conditions.clone(),
-        escalation_conditions: unit.escalation_conditions.clone(),
-        budget: ExecutionBudget {
-            cost_ceiling_usd: None,
-            latency_preference_ms: None,
-            wall_clock_timeout_ms: None,
-            retry_grant_ref: Some(retry_grant.grant_ref.clone()),
-            maximum_attempts: Some(retry_grant.attempts_allowed),
-        },
-    };
     drop(store);
-    act(
-        &state,
-        &run_ref,
-        &caller(&held.sender),
-        &authority,
-        FactoryAttemptOperation::StartSerial {
-            attempt_ref: attempt_ref.clone(),
-            task_ref: task_ref.clone(),
-            parent_journey_ref: journey,
-            workflow_unit_ref: unit_ref.clone(),
-            disposition,
-            retry_grant: Some(retry_grant),
-            tracking: Vec::new(),
-            place_grant: None,
-        },
-    )?;
+    let projection_ref = minted("projection");
+    let launch = |expected_revision| {
+        crate::attempt_application::launch_attempt(
+            &state,
+            crate::attempt_application::FactoryAttemptLaunchRequest {
+                contract: crate::attempt_application::FACTORY_ATTEMPT_LAUNCH.into(),
+                projection_ref: projection_ref.clone(),
+                caller: caller(&held.sender),
+                run_ref: run_ref.clone(),
+                expected_revision,
+                authority: authority.clone(),
+                workflow_unit_ref: unit_ref.clone(),
+                attempt_ref: attempt_ref.clone(),
+                task_ref: task_ref.clone(),
+                aikit_realisation: realisation.clone(),
+                praxis_receipt: Some(receipt.clone()),
+                now_context_ref: Some(now_ref.clone()),
+                placement: None,
+            },
+        )
+    };
+    // The launch is decided on the Run as it stands as the attempt starts (NOW's preparation took its time), and on a write
+    // another track made since, read again: the project's tracks share one Factory state.
+    let mut launched = None;
+    for _ in 0..READINGS {
+        match launch(reading(&state, &run_ref)?.revision) {
+            Err(FactoryAttemptError::RevisionConflict { .. }) => {}
+            landed => {
+                launched = Some(landed.map_err(CliError::from_native)?);
+                break;
+            }
+        }
+    }
+    let launched = launched.ok_or_else(|| {
+        refuse(format!(
+            "{run_ref} moved under each of the {READINGS} readings its launch was decided on: Factory started nothing"
+        ))
+    })?;
+    let space = reading(&state, &run_ref)?
+        .attempts
+        .iter()
+        .find(|record| record.attempt_ref == attempt_ref)
+        .map(|record| record.disposition.body.session_space_ref.clone())
+        .ok_or_else(|| {
+            refuse(format!(
+                "Factory's launch answered {} but holds no {attempt_ref}",
+                launched.operation
+            ))
+        })?;
     let sent = send(
         &state,
         &run_ref,
@@ -1610,10 +1481,15 @@ fn desktop_caller() -> FactoryActionCaller {
 /// with its task, its parent Journey and its disposition — the same basis; Factory refuses a unit that has not failed, or whose
 /// grant is spent, in its own words. A task run on a session runs again there: its words sent to the session as the person's and
 /// followed to its end, as `task-run` does. Its earlier attempt stays, a take of its own.
-fn retry(state_text: &str, run_text: &str, unit_text: &str) -> Result<Value, CliError> {
-    let state = PathBuf::from(state_text);
+fn retry(
+    state_text: &str,
+    run_text: &str,
+    unit_text: &str,
+    grant: &str,
+) -> Result<Value, CliError> {
     // No grant, no move: the person's grant is read before anything else.
-    let authority = grant(&state, "factory.attempt.retry")?;
+    let authority = granted(grant)?;
+    let state = PathBuf::from(state_text);
     let run_ref = run_ref_of(run_text)?;
     let now = reading(&state, &run_ref)?;
     let (unit, leg) = now
@@ -1644,8 +1520,10 @@ fn retry(state_text: &str, run_text: &str, unit_text: &str) -> Result<Value, Cli
                 prior.attempt_ref
             ))
         })?;
-    // A task Factory ran on a seated session is retried there; any other unit is retried as its Run's own.
-    let seated = prior.disposition.selection.selection.ranking_policy == SEATED;
+    // A task run on a seated session (AIKit's receipt for the session it opened) is retried there; any other unit is retried as
+    // its Run's own.
+    let seated = prior.disposition.selection.selection.ranking_explanation["selection_kind"]
+        == crate::execution_intelligence::SEATED_SESSION_SELECTION;
     let session = prior.disposition.body.agent_session_ref.clone();
     let on = if seated {
         let place = place_of_state(&state)?;
@@ -1716,10 +1594,15 @@ fn retry(state_text: &str, run_text: &str, unit_text: &str) -> Result<Value, Cli
 /// nowhere to receive a Return: a task written on a session's track is commissioned from the person's words with no Flow, so its
 /// Return stays on its attempt, its difference in the session's checkout, which Git / landing lands. Factory refuses it in those
 /// words.
-fn choose(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Value, CliError> {
-    let state = PathBuf::from(state_text);
+fn choose(
+    state_text: &str,
+    run_text: &str,
+    attempt_ref: &str,
+    grant: &str,
+) -> Result<Value, CliError> {
     // No grant, no move: the person's grant is read before anything else.
-    let authority = grant(&state, "central.receiving.submit")?;
+    let authority = granted(grant)?;
+    let state = PathBuf::from(state_text);
     let run_ref = run_ref_of(run_text)?;
     let now = reading(&state, &run_ref)?;
     let record = record_of(&now, attempt_ref)?;
@@ -1809,20 +1692,6 @@ fn choose(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Value, 
         "attempt_ref": attempt_ref,
         "receipt": receipt,
     }))
-}
-
-/// The SessionSpace that holds a session, read from AIKit's list.
-fn space_of(cwd: &Path, session: &str) -> Option<String> {
-    let listing = aikit(cwd, &["session-space", "list"]).ok()?;
-    let spaces = listing
-        .as_array()
-        .cloned()
-        .or_else(|| listing["spaces"].as_array().cloned())?;
-    spaces.iter().find_map(|space| {
-        space["agent_sessions"]
-            .get(session)
-            .and(space["definition"]["id"].as_str().map(str::to_owned))
-    })
 }
 
 fn append(path: &Path, line: &Value) {
@@ -2512,11 +2381,16 @@ fn said_since(checkout: &Path, session: &str) -> String {
 }
 
 /// `factory session task-stop <state> <run-ref> <attempt-ref>`: Stop pauses the task's turn; pressed again it cancels.
-fn task_stop(state_text: &str, run_text: &str, attempt_ref: &str) -> Result<Value, CliError> {
+fn task_stop(
+    state_text: &str,
+    run_text: &str,
+    attempt_ref: &str,
+    grant: &str,
+) -> Result<Value, CliError> {
+    let authority = granted(grant)?;
     let state = PathBuf::from(state_text);
     let run_ref = run_ref_of(run_text)?;
     let place = place_of_state(&state)?;
-    let authority = grant(&state, "factory.attempt.request-cancellation")?;
     let now = reading(&state, &run_ref)?;
     let record = record_of(&now, attempt_ref)?.clone();
     let status = leg_status(&now, &record);
@@ -2671,19 +2545,19 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
     let answer = match words.as_slice() {
         ["start", agent, world, project] => start(agent, world, project)?,
         ["list", state] => session_list(state)?,
-        ["retry", state, run, unit] => retry(state, run, unit)?,
-        ["choose", state, run, attempt] => choose(state, run, attempt)?,
+        ["retry", state, run, unit, grant] => retry(state, run, unit, grant)?,
+        ["choose", state, run, attempt, grant] => choose(state, run, attempt, grant)?,
         ["end", world, project, session] => end(world, project, session, None)?,
         ["task-write", world, project, session, instruction] => {
             task_write(world, project, session, instruction)?
         }
-        ["task-run", state, run, session] => task_run(state, run, session)?,
-        ["task-stop", state, run, attempt] => task_stop(state, run, attempt)?,
+        ["task-run", state, run, session, grant] => task_run(state, run, session, grant)?,
+        ["task-stop", state, run, attempt, grant] => task_stop(state, run, attempt, grant)?,
         ["task-log", state, run, attempt] => task_log(state, run, attempt)?,
         ["follow", state, run, attempt, authority] => follow(state, run, attempt, authority)?,
         _ => {
             return Err(refuse(
-                "usage: factory session start <agent> <world> <project> | list <state> | end <world> <project> <session> | task-write <world> <project> <session> <instruction> | task-run <state> <run-ref> <session> | task-stop <state> <run-ref> <attempt-ref> | task-log <state> <run-ref> <attempt-ref> | retry <state> <run-ref> <unit-ref> | choose <state> <run-ref> <attempt-ref>",
+                "usage: factory session start <agent> <world> <project> | list <state> | end <world> <project> <session> | task-write <world> <project> <session> <instruction> | task-run <state> <run-ref> <session> <grant> | task-stop <state> <run-ref> <attempt-ref> <grant> | task-log <state> <run-ref> <attempt-ref> | retry <state> <run-ref> <unit-ref> <grant> | choose <state> <run-ref> <attempt-ref> <grant> (a grant is the person's, as the host resolved it: central:native-action-authority#<principal_ref>)",
             ))
         }
     };
@@ -3104,12 +2978,10 @@ mod tests {
         Binding {
             agent_ref: "agent/claude-code".into(),
             agency_ref: "agency:aikit-mint-notes-00000000".into(),
-            world_binding_ref: "binding/notes".into(),
             revision: "revision/1".into(),
             sender: "human/owner".into(),
             source_ref: "source/agency-notes".into(),
             source_revision: "revision/1".into(),
-            source_digest: format!("blake3:{}", "0".repeat(64)),
         }
     }
 

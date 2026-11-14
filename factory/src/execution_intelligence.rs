@@ -177,9 +177,15 @@ fn sorted_json_digest(value: &Value) -> Result<String, ExecutionInteropError> {
     Ok(format!("blake3:{}", blake3::hash(&encoded).to_hex()))
 }
 
+/// The receipt AIKit gives for a session it opened (`aikit compose model
+/// selection`): the session's own body, launch basis and the model its harness
+/// reports, bound as an explicit selection.
+pub const SEATED_SESSION_SELECTION: &str = "seated-session";
+
 /// Validate AIKit's source-backed explicit pin compatibility receipt. The
 /// historical field is still named `ranking_explanation`, but this branch is
 /// explicitly not a ranking: its typed receipt and exact digest are required.
+/// Its kind is an explicit pin, or a seated session's own selection.
 pub fn explicit_selection_refs(
     selection: &AikitModelRosterSelection,
 ) -> Result<Option<ExplicitSelectionRefs>, ExecutionInteropError> {
@@ -187,8 +193,16 @@ pub fn explicit_selection_refs(
         return Ok(None);
     }
     let receipt = &selection.ranking_explanation;
+    let seated = match receipt["selection_kind"].as_str() {
+        Some("explicit-pin") => false,
+        Some(SEATED_SESSION_SELECTION) => true,
+        _ => {
+            return Err(ExecutionInteropError::InvalidExplicitSelection(
+                "EXPLICIT_PIN requires AIKit's typed explicit-selection receipt".into(),
+            ))
+        }
+    };
     if receipt["schema"] != "aikit.explicit-model-selection/v1"
-        || receipt["selection_kind"] != "explicit-pin"
         || receipt["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
     {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
@@ -208,7 +222,7 @@ pub fn explicit_selection_refs(
         )
     })?;
     if basis["schema"] != "aikit.explicit-model-selection-basis/v1"
-        || basis["selection_kind"] != "explicit-pin"
+        || basis["selection_kind"] != receipt["selection_kind"]
         || basis["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
     {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
@@ -227,20 +241,33 @@ pub fn explicit_selection_refs(
             "explicit selection lacks its route basis".into(),
         )
     })?;
-    if route_basis["schema"] != "aikit.model-route-basis/v1"
-        || route_basis["model_ref"] != selection.model_ref
-        || route_basis["provider_ref"] != selection.provider_ref
-    {
-        return Err(ExecutionInteropError::InvalidExplicitSelection(
-            "explicit selection route basis differs from the selected model/provider".into(),
-        ));
-    }
     let expected_route_ref = format!(
         "model-route/{}",
         sorted_json_digest(route_basis)?
             .strip_prefix("blake3:")
             .expect("sorted digest carries its algorithm")
     );
+    // The route names a catalogue Model, or, for a seated session whose model no
+    // catalogue Model claims, the route itself is the model, carried as an offer.
+    let model_named = match route_basis["model_ref"].as_str() {
+        Some(model) => model == selection.model_ref,
+        None => {
+            seated
+                && route_basis["model_ref"].is_null()
+                && selection.model_ref == expected_route_ref
+                && route_basis["unmatched_offer"]["provider_ref"] == selection.provider_ref
+                && route_basis["unmatched_offer"]["provider_native_id"]
+                    == route_basis["provider_native_id"]
+        }
+    };
+    if route_basis["schema"] != "aikit.model-route-basis/v1"
+        || !model_named
+        || route_basis["provider_ref"] != selection.provider_ref
+    {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "explicit selection route basis differs from the selected model/provider".into(),
+        ));
+    }
     if route_ref != expected_route_ref {
         return Err(ExecutionInteropError::InvalidExplicitSelection(
             "explicit selection route reference does not identify its exact basis".into(),
@@ -264,28 +291,62 @@ pub fn explicit_selection_refs(
     }
     let target_basis = &basis["composition_target_basis"];
     let resident_body = &target_basis["resident_body_basis"];
-    let native_profile = match (
-        scope["kind"].as_str(),
-        target_basis["harness_profile"]["slug"].as_str(),
-        resident_body["harness_profile"].as_str(),
-        resident_body["protocol"].as_str(),
-        harness_ref,
-        route_basis["provider_ref"].as_str(),
-    ) {
-        (Some("thin-native-pi"), Some("pi"), Some("pi"), Some("pi-rpc"), "harness/pi", _) => "pi",
-        (
-            Some("thin-native-codex-acp"),
-            Some("codex"),
-            Some("codex"),
-            Some("acp"),
-            "harness/codex",
-            Some("provider:openai"),
-        ) => "codex",
-        _ => return Err(ExecutionInteropError::InvalidExplicitSelection(
-            "explicit selection does not identify an admitted native body/profile/protocol tuple"
-                .into(),
-        )),
+    let native_profile = if seated {
+        // The session's own harness, as AIKit opened it: the profile its body
+        // was launched from, under that profile's harness.
+        match (
+            scope["kind"].as_str(),
+            target_basis["harness_profile"]["slug"].as_str(),
+            resident_body["harness_profile"].as_str(),
+            resident_body["protocol"].as_str(),
+        ) {
+            (Some(SEATED_SESSION_SELECTION), Some(slug), Some(body), Some(protocol))
+                if slug == body
+                    && !protocol.trim().is_empty()
+                    && harness_ref == format!("harness/{slug}") =>
+            {
+                slug
+            }
+            _ => {
+                return Err(ExecutionInteropError::InvalidExplicitSelection(
+                    "seated selection does not identify the session's own body/profile/protocol"
+                        .into(),
+                ))
+            }
+        }
+    } else {
+        match (
+            scope["kind"].as_str(),
+            target_basis["harness_profile"]["slug"].as_str(),
+            resident_body["harness_profile"].as_str(),
+            resident_body["protocol"].as_str(),
+            harness_ref,
+            route_basis["provider_ref"].as_str(),
+        ) {
+            (Some("thin-native-pi"), Some("pi"), Some("pi"), Some("pi-rpc"), "harness/pi", _) => {
+                "pi"
+            }
+            (
+                Some("thin-native-codex-acp"),
+                Some("codex"),
+                Some("codex"),
+                Some("acp"),
+                "harness/codex",
+                Some("provider:openai"),
+            ) => "codex",
+            _ => return Err(ExecutionInteropError::InvalidExplicitSelection(
+                "explicit selection does not identify an admitted native body/profile/protocol tuple"
+                    .into(),
+            )),
+        }
     };
+    // A seated session runs the model its harness chose; a body launched under a
+    // model policy is a pinned selection, not the session as it was opened.
+    if seated && !resident_body["model_basis_digest"].is_null() {
+        return Err(ExecutionInteropError::InvalidExplicitSelection(
+            "a seated session claims no model policy, but its body basis names one".into(),
+        ));
+    }
     if target_basis["schema"] != "aikit.harness-composition-target-basis/v1"
         || target_basis["digest_contract"] != SORTED_JSON_DIGEST_CONTRACT
         || target_basis["harness_profile"]["schema"] != "aikit.harness-profile/v1"
@@ -314,6 +375,9 @@ pub fn explicit_selection_refs(
         )));
     }
     required_selection_text(&basis["native"]["native_session_id"], "native session id")?;
+    if !seated {
+        required_selection_text(&resident_body["model_basis_digest"], "model basis digest")?;
+    }
     for (field, value) in [
         ("body provider id", &resident_body["provider_id"]),
         (
@@ -332,7 +396,6 @@ pub fn explicit_selection_refs(
             "effective launch argv digest",
             &resident_body["effective_launch_argv_digest"],
         ),
-        ("model basis digest", &resident_body["model_basis_digest"]),
         (
             "Agency source",
             &target_basis["agency_source"]["source_ref"],
@@ -619,6 +682,102 @@ mod tests {
             .remove("basis");
         assert!(matches!(
             accept_aikit_selection(demand(), missing, "t3"),
+            Err(ExecutionInteropError::InvalidExplicitSelection(_))
+        ));
+    }
+
+    fn seated_selection() -> AikitModelRosterSelection {
+        serde_json::from_str(include_str!(
+            "../tests/fixtures/aikit-seated-codex-selection.json"
+        ))
+        .expect("fixture was emitted by AIKit's seated-session receipt (compose model selection)")
+    }
+
+    /// The seated receipt's route names its model where no catalogue Model claims it: its route basis carries the
+    /// unmatched offer, and its digests are AIKit's own over the changed basis.
+    fn route_named(mut selection: AikitModelRosterSelection) -> AikitModelRosterSelection {
+        let receipt = &mut selection.ranking_explanation;
+        let route_basis = &mut receipt["basis"]["route_basis"];
+        route_basis["model_ref"] = Value::Null;
+        route_basis["provider_native_id"] = json!("gpt-6-astra");
+        route_basis["catalogue_digest"] = Value::Null;
+        route_basis["unmatched_offer"] = json!({"provider_ref": "provider:openai",
+            "provider_native_id": "gpt-6-astra", "reason": "no catalogue Model claims it"});
+        let route_ref = format!(
+            "model-route/{}",
+            sorted_json_digest(&receipt["basis"]["route_basis"])
+                .unwrap()
+                .strip_prefix("blake3:")
+                .unwrap()
+        );
+        receipt["basis"]["native"]["model_observation"]["current_model_id"] = json!("gpt-6-astra");
+        receipt["basis"]["harness_composition"]["model"] = json!(route_ref);
+        receipt["route_ref"] = json!(route_ref);
+        receipt["model_ref"] = json!(route_ref);
+        receipt["basis_digest"] = sorted_json_digest(&receipt["basis"]).unwrap().into();
+        selection.model_ref = route_ref;
+        selection
+    }
+
+    #[test]
+    fn a_seated_session_receipt_binds_the_session_it_names_and_a_changed_basis_refuses() {
+        let selection = seated_selection();
+        let refs = explicit_selection_refs(&selection).unwrap().unwrap();
+        assert!(refs.route_ref.starts_with("model-route/"));
+        assert_eq!(refs.harness_ref, "harness/codex");
+        assert!(refs
+            .harness_composition_ref
+            .starts_with("harness-composition/"));
+        assert_eq!(refs.agent_ref, "agent/codex");
+        assert_eq!(refs.agency_ref, "agency/notes");
+        assert_eq!(refs.world_binding_ref, "world-binding/notes");
+        assert_eq!(refs.agent_session_ref, "agent-session/notes-chat");
+        assert_eq!(refs.session_space_ref, "session-space/notes-chat");
+        assert!(accept_aikit_selection(demand(), selection.clone(), "t1").is_ok());
+
+        // Its model is the session's own, named by its route where no catalogue Model claims it.
+        let routed = route_named(selection.clone());
+        let routed_refs = explicit_selection_refs(&routed).unwrap().unwrap();
+        assert_eq!(routed.model_ref, routed_refs.route_ref);
+        // A route-named model is only ever the route its basis digests to.
+        let mut renamed = routed.clone();
+        renamed.model_ref = "model:gpt-6-astra".into();
+        renamed.ranking_explanation["model_ref"] = json!("model:gpt-6-astra");
+        renamed.ranking_explanation["basis"]["harness_composition"]["model"] =
+            json!("model:gpt-6-astra");
+        renamed.ranking_explanation["basis_digest"] =
+            sorted_json_digest(&renamed.ranking_explanation["basis"])
+                .unwrap()
+                .into();
+        assert!(matches!(
+            explicit_selection_refs(&renamed),
+            Err(ExecutionInteropError::InvalidExplicitSelection(_))
+        ));
+
+        // A seated session claims no model policy: a body basis that names one is not the session it was opened as.
+        let mut pinned = selection.clone();
+        pinned.ranking_explanation["basis"]["composition_target_basis"]["resident_body_basis"]
+            ["model_basis_digest"] = json!(format!("blake3:{}", "1".repeat(64)));
+        pinned.ranking_explanation["basis"]["harness_composition"]["target_revision"] = json!(
+            sorted_json_digest(&pinned.ranking_explanation["basis"]["composition_target_basis"])
+                .unwrap()
+        );
+        pinned.ranking_explanation["basis_digest"] =
+            sorted_json_digest(&pinned.ranking_explanation["basis"])
+                .unwrap()
+                .into();
+        assert!(matches!(
+            explicit_selection_refs(&pinned),
+            Err(ExecutionInteropError::InvalidExplicitSelection(message))
+                if message.contains("model policy")
+        ));
+
+        // Changed after AIKit issued it: refused.
+        let mut changed = selection;
+        changed.ranking_explanation["basis"]["native"]["agent_session"] =
+            json!("agent-session/another");
+        assert!(matches!(
+            explicit_selection_refs(&changed),
             Err(ExecutionInteropError::InvalidExplicitSelection(_))
         ));
     }
