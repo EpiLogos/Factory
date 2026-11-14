@@ -469,18 +469,31 @@ fn start(agent: &str, world: &str, project: &str) -> Result<Value, CliError> {
     }))
 }
 
-/// The project placed for Factory (`project setup`, keyed by the project's Central id, as each task's commission is keyed), so
-/// Factory locates its state (`project locate`) and the World Model's factory slice reads its sessions and tasks. A project
-/// placed already stays as it is.
-fn placed(place: &Place) -> Result<(), CliError> {
-    if !place.root.join(".factory/project.json").exists() {
-        crate::project_setup::setup(
+/// The project placed for Factory as the window's Setup places it (`factory project setup-central`: under the key Factory
+/// encodes from the project's Central id, linked to its ProjectCentral manifest), so Factory locates its state (`project
+/// locate`) and the World Model's factory slice reads its sessions and tasks. A project placed already stays as it is. The
+/// answer is the key it is placed under, the key each of its tasks is commissioned under.
+fn placed(place: &Place) -> Result<String, CliError> {
+    let located = if place.root.join(".factory/project.json").exists() {
+        crate::project_setup::locate(&place.root)?
+    } else {
+        crate::project_setup::setup_central(
             &place.root,
             &place.project_id,
-            Some(&place.root.join("ProjectCentral/project.json")),
-        )?;
-    }
-    Ok(())
+            &place.root.join("ProjectCentral/project.json"),
+        )?
+    };
+    located["projectKey"]
+        .as_str()
+        .filter(|key| !key.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| {
+            refuse(format!(
+                "Factory's placement of {} names no key: {}",
+                place.root.display(),
+                clip(&located.to_string())
+            ))
+        })
 }
 
 /// Where Factory keeps a session it started: beside the project's Factory state, by the session's id.
@@ -663,6 +676,32 @@ fn task_write(
     }
     let place = place(world, project)?;
     let held = binding(&place.checkout, session)?;
+    let practice = seated_practice(&place.checkout, session)?;
+    commission_task(&place, &held, &practice, session, instruction)
+}
+
+/// The practice of the agent seated on the session: its provider as AIKit's status of the session names it, and the skills
+/// that provider's Skill Sets project here (`practice_of`).
+fn seated_practice(checkout: &Path, session: &str) -> Result<Vec<String>, CliError> {
+    let status = encounter(
+        checkout,
+        json!({"action": "status", "agent_session": session}),
+    )
+    .map_err(refuse)?;
+    let provider = provider_of(&status)
+        .ok_or_else(|| refuse(format!("AIKit's status of {session} names no provider")))?;
+    practice_of(checkout, &provider)
+}
+
+/// What `task_write` does once AIKit has answered the session's binding and its agent's practice: the task commissioned in the
+/// project's Factory state with its workflow source and attempt field, and kept on the session's record.
+fn commission_task(
+    place: &Place,
+    held: &Binding,
+    practice: &[String],
+    session: &str,
+    instruction: &str,
+) -> Result<Value, CliError> {
     let headline: String = instruction
         .lines()
         .next()
@@ -670,12 +709,15 @@ fn task_write(
         .chars()
         .take(160)
         .collect();
+    // The project is Factory's own (placed at the session's start, or by the window's Setup; a session Factory did not start
+    // places it here), and the task is commissioned under the key it is placed under.
+    let project_key = placed(place)?;
     // Each task is its own commission: two written in the same second with the same words stay two.
     let task = ulid::Ulid::new().to_string().to_ascii_lowercase();
     let draft = crate::commission::FactoryCommissionDraft {
         contract: crate::commission::FACTORY_COMMISSION_DRAFT.into(),
         request_ref: Some(format!("commission-request:session-task-{task}")),
-        project_key: place.project_id.clone(),
+        project_key,
         purpose: headline.clone(),
         frontier: format!("Written on the session {session}; not yet run"),
         run_destination: format!("{}/sessions", place.project),
@@ -698,7 +740,14 @@ fn task_write(
     let composition =
         crate::commission::compose_commission(draft, std::time::SystemTime::now().into())
             .map_err(CliError::from_native)?;
-    let source = workflow_source(&place, &held, &composition.run_ref, session, instruction)?;
+    let source = workflow_source(
+        place,
+        held,
+        practice,
+        &composition.run_ref,
+        session,
+        instruction,
+    )?;
     let receipt = crate::developmental_read::FactoryDevelopmentalFileProvider::commission_workflow(
         &place.state,
         composition.request.clone(),
@@ -715,9 +764,7 @@ fn task_write(
     let unit = task_unit(&reading)
         .map(|unit| unit.to_string())
         .unwrap_or_default();
-    // The project is Factory's own (placed at the session's start; a session Factory did not start places it here), and the task
-    // is kept on the session's record, so the window lays it as a clip on the session's track before it runs.
-    placed(&place)?;
+    // The task is kept on the session's record, so the window lays it as a clip on the session's track before it runs.
     if let Some(mut kept) = kept_session(&place.state, session) {
         if let Some(tasks) = kept["tasks"].as_array_mut() {
             tasks.push(
@@ -791,22 +838,15 @@ fn practice_of(cwd: &Path, provider: &str) -> Result<Vec<String>, CliError> {
 
 /// The task's one unit: the person's words as the difference the agent is asked to make in the session's checkout, its effect
 /// a proposal there (manual §16.6: unarmed, every write is a proposal; Git / landing lands it), its Return the difference; its
-/// practice the agent's (`practice_of`), its capabilities reading and writing the checkout's source.
+/// practice the agent's (`seated_practice`), its capabilities reading and writing the checkout's source.
 fn workflow_source(
     place: &Place,
     held: &Binding,
+    practice: &[String],
     run_ref: &RunRef,
     session: &str,
     instruction: &str,
 ) -> Result<crate::workflow::WorkflowSource, CliError> {
-    let status = encounter(
-        &place.checkout,
-        json!({"action": "status", "agent_session": session}),
-    )
-    .map_err(refuse)?;
-    let provider = provider_of(&status)
-        .ok_or_else(|| refuse(format!("AIKit's status of {session} names no provider")))?;
-    let practice = practice_of(&place.checkout, &provider)?;
     let id = ulid::Ulid::new();
     let today = now_rfc3339().chars().take(10).collect::<String>();
     let key = format!("task-{}", id.to_string().to_ascii_lowercase());
@@ -3042,5 +3082,63 @@ mod tests {
             refused.to_string().contains("no Central World"),
             "{refused}"
         );
+    }
+
+    /// A World as Central keeps one: its `Control/`, and one project whose ProjectCentral manifest names its Central id.
+    fn world_with_project(project: &str, id: &str) -> (tempfile::TempDir, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let world = temp.path().canonicalize().unwrap();
+        std::fs::create_dir_all(world.join("Control")).unwrap();
+        let central = world.join("Work").join(project).join("ProjectCentral");
+        std::fs::create_dir_all(&central).unwrap();
+        std::fs::write(
+            central.join("project.json"),
+            serde_json::to_vec(&json!({"schema": "central.project/v1", "project_id": id})).unwrap(),
+        )
+        .unwrap();
+        (temp, world)
+    }
+
+    /// The session's Agency binding as AIKit answers it (`encounter-agency-read`).
+    fn seated_binding() -> Binding {
+        Binding {
+            agent_ref: "agent/claude-code".into(),
+            agency_ref: "agency:aikit-mint-notes-00000000".into(),
+            world_binding_ref: "binding/notes".into(),
+            revision: "revision/1".into(),
+            sender: "human/owner".into(),
+            source_ref: "source/agency-notes".into(),
+            source_revision: "revision/1".into(),
+            source_digest: format!("blake3:{}", "0".repeat(64)),
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_task_is_written_on_a_project_the_windows_setup_placed() {
+        // The window's Setup places a project through Factory's own `factory project setup-central` (the kernel's
+        // factory_owner project-setup), under the key Factory encodes from the project's Central id. A task written on a
+        // session there is commissioned under that key, and admitted; the placement stays as Setup made it.
+        let (_temp, world) = world_with_project("notes", "Notes");
+        let root = world.join("Work/notes");
+        let setup = crate::project_setup::setup_central(
+            &root,
+            "Notes",
+            &root.join("ProjectCentral/project.json"),
+        )
+        .unwrap();
+        let place = place(world.to_str().unwrap(), "notes").unwrap();
+        let written = commission_task(
+            &place,
+            &seated_binding(),
+            &["skill/central-session-strap".to_owned()],
+            "agent-session/notes-1",
+            "Write the notes' index",
+        )
+        .unwrap();
+        assert_eq!(written["state"], "written", "{written}");
+        let located = crate::project_setup::locate(&root).unwrap();
+        assert_eq!(located["projectKey"], setup["projectKey"], "{located}");
+        assert_eq!(located["runCount"], 1, "{located}");
     }
 }
