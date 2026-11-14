@@ -2011,18 +2011,23 @@ const MOVED_TO: [&str; 5] = [
     "newPath",
 ];
 
-/// Where an edit's input (ACP's `rawInput`) says it moves a file, anywhere in it.
-fn moved_to(input: &Value, into: &mut Vec<String>) {
+/// The keys under which a harness's input names the file or folder its tool acts on (hermes's `path`, Claude Code's
+/// `file_path`, and their kin).
+const NAMED_AT: [&str; 4] = ["path", "file_path", "filePath", "absolute_path"];
+
+/// The text an ask's input (ACP's `rawInput`) holds under any of `keys`, anywhere in it: where it moves a file
+/// (`MOVED_TO`), or the files its tool acts on (`NAMED_AT`).
+fn keyed(input: &Value, keys: &[&str], into: &mut Vec<String>) {
     match input {
         Value::Object(map) => {
             for (key, value) in map {
                 match value.as_str() {
-                    Some(path) if MOVED_TO.contains(&key.as_str()) => into.push(path.to_owned()),
-                    _ => moved_to(value, into),
+                    Some(path) if keys.contains(&key.as_str()) => into.push(path.to_owned()),
+                    _ => keyed(value, keys, into),
                 }
             }
         }
-        Value::Array(items) => items.iter().for_each(|item| moved_to(item, into)),
+        Value::Array(items) => items.iter().for_each(|item| keyed(item, keys, into)),
         _ => {}
     }
 }
@@ -2134,7 +2139,7 @@ fn written_paths(call: &Value) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     written.extend(targets.into_iter().flatten());
-    moved_to(&call["rawInput"], &mut written);
+    keyed(&call["rawInput"], &MOVED_TO, &mut written);
     written
 }
 
@@ -2151,8 +2156,10 @@ fn unread(call: &Value) -> Option<&'static str> {
     .then_some("left for you: the edit's diff names the files of its patch in one path that does not read as each of them")
 }
 
-/// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`) and the places an edit writes
-/// (`written_paths`). No other string of the call is read as a path: not a command, not an edit's text.
+/// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`), the places an edit writes
+/// (`written_paths`), and each file or folder its input names under a path's key (`NAMED_AT`): hermes's ask shows a file its
+/// tool names relatively where hermes's default stands, not where the tool writes it. No other string of the call is read
+/// as a path: not a command, not an edit's text.
 fn declared_paths(call: &Value) -> Vec<String> {
     let mut declared: Vec<String> = call["locations"]
         .as_array()
@@ -2162,6 +2169,7 @@ fn declared_paths(call: &Value) -> Vec<String> {
         .map(str::to_owned)
         .collect();
     declared.extend(written_paths(call));
+    keyed(&call["rawInput"], &NAMED_AT, &mut declared);
     declared
 }
 
@@ -2273,9 +2281,14 @@ const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
 const WRITE_KINDS: [&str; 2] = ["edit", "delete"];
 
 /// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files,
-/// declares every place it writes, each as one path, every path it declares resolves inside the session's checkout, none it
-/// writes is in a git directory, and no file it edits has another name on disk; else left for the person, who answers it where
-/// AIKit shows its asks, under Scope's Wait and On no answer, and why.
+/// declares every place it writes, each as one path, names every path in full, every path it declares resolves inside the
+/// session's checkout, none it writes is in a git directory, and no file it edits has another name on disk; else left for the
+/// person, who answers it where AIKit shows its asks, under Scope's Wait and On no answer, and why.
+///
+/// A harness takes a relative path where its session stands, and that can move: hermes resolves one against the cwd its
+/// terminal's `cd` leaves, which it runs without asking and keeps in its own process (tools/file_tools_paths.py,
+/// tools/terminal_tool.py `record_session_cwd`). No reading the follower has says where a session stands now (AIKit's binding
+/// holds the cwd it was opened in), so a relative path is never judged as the checkout's.
 fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     let call = &ask["tool_call"];
     let kind = call["kind"].as_str().unwrap_or_default();
@@ -2291,6 +2304,9 @@ fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     let paths = declared_paths(call);
     if paths.is_empty() {
         return Err("left for you: it declares no path in the session's checkout");
+    }
+    if !paths.iter().all(|path| Path::new(path).is_absolute()) {
+        return Err("left for you: it names a path relatively, which its harness takes where its session stands now, and a command it runs unasked (`cd`) moves that");
     }
     if !paths.iter().all(|path| resolves_inside(path, checkout)) {
         return Err("left for you: a path it declares resolves outside the session's checkout");
@@ -3351,14 +3367,15 @@ mod tests {
             None,
             "a file the ask does not name"
         );
-        // A relative file is written where the session stands, the checkout.
+        // A relative file is written where the session stands, which a `cd` moves: it is left for the person, `..` or not
+        // (a_path_named_relatively_is_left_for_the_person).
         assert_eq!(
             at(
                 &format!("{a}, {}", temp.path().join("x.md").display()),
                 &[update("a.md"), update("../x.md")]
             ),
             None,
-            "a `..` out of the checkout"
+            "relative files, one with a `..`"
         );
         assert_eq!(
             at(&a, &[update(&a), update(&b)]),
@@ -3370,6 +3387,70 @@ mod tests {
             None,
             "a patch that names no file"
         );
+    }
+
+    /// O-I #1006 (re-read S1): hermes writes a file a patch or a tool names relatively under its session's own cwd, which a
+    /// command it runs without asking moves (`cd ~ && ls`), while its ask shows the file where hermes's default stands. No
+    /// reading the follower has carries where the session stands now, so an ask that names any path relatively is left for
+    /// the person, and every file a tool's input names is judged as its own path.
+    #[test]
+    fn a_path_named_relatively_is_left_for_the_person() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let notes = format!("{}/notes.md", checkout.display());
+        let outside = format!("{}/stolen.md", temp.path().display());
+        let choices = [("allow_once", "allow_once"), ("deny", "reject_once")];
+        let yes = Some("allow_once".to_owned());
+        // hermes's ask for an edit, as build_acp_edit_tool_call builds it: `shown` its diff's path, `input` the tool's call.
+        let hermes = |shown: &str, input: Value| {
+            json!({"toolCallId": "edit-approval-1", "title": format!("Approve edit: {shown}"),
+                "kind": "edit", "status": "pending",
+                "content": [{"type": "diff", "path": shown, "oldText": null, "newText": "x"}],
+                "rawInput": input})
+        };
+        let patch =
+            |text: &str| json!({"tool": "patch", "arguments": {"mode": "patch", "patch": text}});
+        let write =
+            |path: &str| json!({"tool": "write_file", "arguments": {"path": path, "content": "x"}});
+        let at = |call: Value| allowed(&ask_of(call, &choices), &checkout);
+        // The re-read's patch: hermes's ask reads only the file the phantom lines spell, and its executor writes `.zshenv`
+        // where the session stands.
+        let phantom = format!(
+            "*** Begin Patch\n***\nUpdate\nFile:\n{notes}\n***Update File: .zshenv\n@@\n+payload\n*** End Patch"
+        );
+        assert_eq!(
+            at(hermes(&notes, patch(&phantom))),
+            None,
+            "a relative file behind phantom lines"
+        );
+        let relative = "*** Begin Patch\n*** Update File: notes.md\n@@\n-x\n+y\n*** End Patch";
+        assert_eq!(
+            at(hermes(&notes, patch(relative))),
+            None,
+            "a patch's file named relatively"
+        );
+        let full = format!("*** Begin Patch\n*** Update File: {notes}\n@@\n-x\n+y\n*** End Patch");
+        assert_eq!(
+            at(hermes(&notes, patch(&full))),
+            yes,
+            "a patch's file named in full"
+        );
+        assert_eq!(
+            at(hermes(&notes, write("notes.md"))),
+            None,
+            "a file a tool names relatively, shown in full"
+        );
+        assert_eq!(
+            at(hermes(&notes, write(&notes))),
+            yes,
+            "a file a tool names in full"
+        );
+        assert_eq!(
+            at(hermes(&notes, write(&outside))),
+            None,
+            "a tool's file outside, whatever its ask shows"
+        );
+        assert_eq!(at(edit_at("notes.md")), None, "a relative location");
     }
 
     /// O-I #1006 (re-check 2, the .git hole): the follower never allows a write into the checkout's git directory, whose
