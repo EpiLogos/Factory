@@ -567,3 +567,55 @@ fn a_task_runs_through_factorys_launch_on_the_receipt_aikit_answers_for_its_sess
         );
     }
 }
+
+/// O-I #1006 (re-check 2b): a task run on a session AIKit realised under a model policy (`aikit compose --session S --realise
+/// --model M`) launches on AIKit's explicit-pin receipt, not its seated-session one, and is still the session's task: Retry
+/// runs it again on the session, its words sent there. It never records a Retry that sends nothing and leaves its attempt
+/// Active. The stand-ins serve no session view, so the retried words never go either, and the new attempt is failed.
+#[cfg(unix)]
+#[test]
+fn a_retry_runs_a_sessions_task_again_on_its_session_whatever_receipt_it_launched_on() {
+    let selection: Value =
+        serde_json::from_str(include_str!("fixtures/aikit-explicit-pi-selection.json")).unwrap();
+    assert_eq!(
+        selection["ranking_explanation"]["selection_kind"],
+        "explicit-pin"
+    );
+    let seat = Seat::new(&selection);
+    let (run_ref, unit_ref) = seat.written("Write the notes");
+    let ran = seat.act(
+        "factory.task.run",
+        &json!({"state": seat.state, "run_ref": run_ref, "session": seat.session, "authority": GRANT}),
+    );
+    assert!(!ran.status.success() && String::from_utf8_lossy(&ran.stderr).contains(UNSENT));
+    let retried = seat.act(
+        "factory.attempt.retry",
+        &json!({"state": seat.state, "run_ref": run_ref, "unit_ref": unit_ref, "authority": GRANT}),
+    );
+    let words = String::from_utf8_lossy(&retried.stderr);
+    assert!(
+        !retried.status.success() && words.contains(UNSENT),
+        "the retry did not go to the session: {} {words}",
+        String::from_utf8_lossy(&retried.stdout)
+    );
+    let reading = seat.reading(&run_ref);
+    let [first, again] = reading.attempts.as_slice() else {
+        panic!("the task and its retry: {:?}", reading.attempts)
+    };
+    assert_eq!(again.task_ref, first.task_ref);
+    assert_eq!(again.disposition.body.agent_session_ref, seat.session);
+    assert!(
+        failed_unsent(&reading, again),
+        "{:?}",
+        again.failure_evidence_refs
+    );
+    // The session was read for each send: the task's and its retry's.
+    let views = seat
+        .calls()
+        .lines()
+        .filter(|call| {
+            call.starts_with("session-space encounter --request-json") && call.contains("\"view\"")
+        })
+        .count();
+    assert_eq!(views, 2, "{}", seat.calls());
+}

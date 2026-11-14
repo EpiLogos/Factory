@@ -824,6 +824,14 @@ fn practice_of(cwd: &Path, provider: &str) -> Result<Vec<String>, CliError> {
     Ok(practice.into_iter().collect())
 }
 
+/// The revision of a session's task's workflow source: a workflow written on a session, its one unit run there.
+const SESSION_TASK: &str = "session-task-v1";
+
+/// Where a session's task returns: to the session it was written on.
+fn session_return(session: &str) -> String {
+    format!("return:session-{}", session_tail(session))
+}
+
 /// The task's one unit: the person's words as the difference the agent is asked to make in the session's checkout, its effect
 /// a proposal there (manual §16.6: unarmed, every write is a proposal; Git / landing lands it), its Return the difference; its
 /// practice the agent's (`seated_practice`), its capabilities reading and writing the checkout's source.
@@ -843,7 +851,7 @@ fn workflow_source(
         "coordinationContract": "factory.bounded-coordination/v1",
         "source": {
             "ref": format!("workflow-source:{id}"),
-            "revision": "session-task-v1",
+            "revision": SESSION_TASK,
             "digest": "0".repeat(64),
             "temporalRef": format!("flow-time:{today}"),
             "flowRef": format!("flow:session-{}", session_tail(session)),
@@ -865,7 +873,7 @@ fn workflow_source(
             "capabilityRefs": ["capability/source-read", "capability/source-write"],
             "permittedEffects": [format!("propose:the difference in {}", place.checkout.display())],
             "verificationObligations": ["the difference in the session's checkout is read back from git"],
-            "returnAddress": format!("return:session-{}", session_tail(session)),
+            "returnAddress": session_return(session),
             "stopConditions": "Stop when the person stops the task, or the session's turn ends",
             "escalationConditions": "Ask the person before acting outside the session's checkout"
         }],
@@ -1630,12 +1638,13 @@ fn retry(
                 prior.attempt_ref
             ))
         })?;
-    // A task run on a seated session (AIKit's receipt for the session it opened) is retried there; any other unit is retried as
-    // its Run's own.
-    let seated = prior.disposition.selection.selection.ranking_explanation["selection_kind"]
-        == crate::execution_intelligence::SEATED_SESSION_SELECTION;
+    // A task written on a session is retried there, whichever receipt AIKit answered for the session (its seated-session
+    // receipt, or the explicit pin of a session realised under a model policy): its workflow is a session's task, its Return
+    // addressed to the session. Any other unit is retried as its Run's own.
     let session = prior.disposition.body.agent_session_ref.clone();
-    let on = if seated {
+    let on_session = now.workflow_source_revision == SESSION_TASK
+        && prior.disposition.return_address == session_return(&session);
+    let on = if on_session {
         let place = place_of_state(&state)?;
         let held = binding(&place.checkout, &session)?;
         Some((place, held))
