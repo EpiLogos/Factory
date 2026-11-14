@@ -20,7 +20,8 @@ use crate::action_projection::{
     FactoryActionCaller, FactoryActionProjectionKind, ProjectedFactoryActionAuthority,
 };
 use crate::attempt_owner_dispatch::{
-    execute_attempt_owner_action, FactoryAttemptOwnerRequest, FACTORY_ATTEMPT_OWNER_ACTION,
+    execute_attempt_owner_action, AttemptOwnerError, FactoryAttemptOwnerRequest,
+    FACTORY_ATTEMPT_OWNER_ACTION,
 };
 use crate::attempt_runtime::*;
 use crate::cli::CliError;
@@ -1389,65 +1390,88 @@ fn send(
     session: &str,
     words: &str,
 ) -> Result<Value, CliError> {
-    let started = reading(state, run_ref)?;
     let execution_ref = minted("execution");
     let delivery_ref = minted("delivery");
+    let by = caller(&held.sender);
     // Where the session stands as the words go: the task's turn is read forward from this block, by id (its log streams the
     // turn, its Return's summary is said in it).
-    let after_block = turn_mark(&|request| encounter(&place.checkout, request), session)
-        .map_err(|error| {
-            refuse(format!(
-                "the session's view could not be read before the task's words went, so they were not sent: {error}"
+    // Until the words go, a refusal leaves the attempt started and never sent: it is failed (`never_sent`).
+    let unsent = |words: String| {
+        never_sent(
+            state,
+            run_ref,
+            attempt_ref,
+            &by,
+            authority,
+            &delivery_ref,
+            words,
+        )
+    };
+    let after_block =
+        turn_mark(&|request| encounter(&place.checkout, request), session).map_err(|error| {
+            unsent(format!(
+                "the session's view could not be read before the task's words went: {error}"
             ))
         })?;
     // How the checkout stands as the words go: what the turn leaves is read against it.
     let before = task_file(state, attempt_ref, "before.json");
     std::fs::create_dir_all(before.parent().unwrap_or(Path::new(".")))
-        .map_err(CliError::from_native)?;
-    std::fs::write(
-        &before,
-        serde_json::to_vec(&standing(&place.checkout)).map_err(CliError::from_native)?,
-    )
-    .map_err(CliError::from_native)?;
-    let sent = execute_attempt_owner_action(
+        .and_then(|()| {
+            std::fs::write(
+                &before,
+                serde_json::to_vec(&standing(&place.checkout)).unwrap_or_default(),
+            )
+        })
+        .map_err(|error| {
+            unsent(format!(
+                "how the checkout stood as the task's words went could not be kept: {error}"
+            ))
+        })?;
+    let (request_ref, projection_ref) = (minted("owner-request"), minted("projection"));
+    let sent = send_fresh(
         state,
-        FactoryAttemptOwnerRequest {
-            contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
-            request_ref: minted("owner-request"),
-            projection_ref: minted("projection"),
-            caller: caller(&held.sender),
-            run_ref: run_ref.clone(),
-            expected_revision: started.revision,
-            authority: authority.clone(),
-            attempt_ref: attempt_ref.to_owned(),
-            execution_ref: execution_ref.clone(),
-            invocation: NativeOwnerInvocation::AikitEncounter {
-                binary: aikit_bin(),
-                cwd: place.checkout.clone(),
-                transport: None,
-                contract_revision: AIKIT_CAW_CONTRACT_REVISION.into(),
-                request: json!({
-                    "action": "send",
-                    "agent_session": session,
-                    "turn": {
-                        "delivery_ref": delivery_ref,
-                        "sender": held.sender,
-                        "expected_binding_revision": held.revision,
-                        "packet": {
-                            "text": words,
-                            "source_refs": [],
-                            "audience": [held.agent_ref],
-                        },
+        run_ref,
+        attempt_ref,
+        &by,
+        authority,
+        &delivery_ref,
+        |expected_revision| {
+            execute_attempt_owner_action(
+                state,
+                FactoryAttemptOwnerRequest {
+                    contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
+                    request_ref: request_ref.clone(),
+                    projection_ref: projection_ref.clone(),
+                    caller: by.clone(),
+                    run_ref: run_ref.clone(),
+                    expected_revision,
+                    authority: authority.clone(),
+                    attempt_ref: attempt_ref.to_owned(),
+                    execution_ref: execution_ref.clone(),
+                    invocation: NativeOwnerInvocation::AikitEncounter {
+                        binary: aikit_bin(),
+                        cwd: place.checkout.clone(),
+                        transport: None,
+                        contract_revision: AIKIT_CAW_CONTRACT_REVISION.into(),
+                        request: json!({
+                            "action": "send",
+                            "agent_session": session,
+                            "turn": {
+                                "delivery_ref": delivery_ref,
+                                "sender": held.sender,
+                                "expected_binding_revision": held.revision,
+                                "packet": {
+                                    "text": words,
+                                    "source_refs": [],
+                                    "audience": [held.agent_ref],
+                                },
+                            },
+                        }),
                     },
-                }),
-            },
+                },
+            )
         },
-    )
-    .map_err(|error| {
-        refuse(format!(
-            "the task's words were not sent to the session: {error}"
-        ))
-    })?;
+    )?;
     let log = task_file(state, attempt_ref, "log.jsonl");
     std::fs::create_dir_all(log.parent().unwrap_or(Path::new(".")))
         .map_err(CliError::from_native)?;
@@ -1464,6 +1488,94 @@ fn send(
         "follower": follower,
         "sent": serde_json::to_value(&sent.transport_observation).unwrap_or(Value::Null),
     }))
+}
+
+/// The task's words dispatched on the Run as it stands right before they go (O-I #1006, review F6). The store's revision is the
+/// project's (each of its tracks writes it), so another track's write since the reading leaves it stale, and Factory's dispatch
+/// then sends nothing: the Run is read again and the send decided again. A send that never goes (the Run moved under every
+/// reading, or the dispatch refused before anything went) fails its attempt (`never_sent`), so it is not left Active.
+fn send_fresh<T>(
+    state: &Path,
+    run_ref: &RunRef,
+    attempt_ref: &str,
+    by: &FactoryActionCaller,
+    authority: &ProjectedFactoryActionAuthority,
+    delivery_ref: &str,
+    dispatch: impl Fn(u64) -> Result<T, AttemptOwnerError>,
+) -> Result<T, CliError> {
+    let unsent = |words: String| {
+        never_sent(
+            state,
+            run_ref,
+            attempt_ref,
+            by,
+            authority,
+            delivery_ref,
+            words,
+        )
+    };
+    for _ in 0..READINGS {
+        let revision = reading(state, run_ref)
+            .map_err(|error| {
+                unsent(format!(
+                    "the Run could not be read before the task's words went: {error}"
+                ))
+            })?
+            .revision;
+        match dispatch(revision) {
+            Err(error) if error.stale_before_dispatch() => {}
+            Ok(sent) => return Ok(sent),
+            Err(error) => {
+                return Err(unsent(format!(
+                    "the task's words were not sent to the session: {error}"
+                )))
+            }
+        }
+    }
+    Err(unsent(format!(
+        "{run_ref} moved under each of the {READINGS} readings the task's send was decided on"
+    )))
+}
+
+/// The refusal of a task's send, its attempt failed when its words never went: it holds no send intent (Factory's dispatch
+/// records one before anything goes), so it is failed rather than left Active, and a retry runs its unit again. An attempt that
+/// holds an intent stands, since its words may have gone: its delivery is read, never sent again.
+fn never_sent(
+    state: &Path,
+    run_ref: &RunRef,
+    attempt_ref: &str,
+    by: &FactoryActionCaller,
+    authority: &ProjectedFactoryActionAuthority,
+    delivery_ref: &str,
+    words: String,
+) -> CliError {
+    let failed = reading(state, run_ref).and_then(|now| {
+        act_on(state, run_ref, by, authority, now, |now| {
+            let record = now
+                .attempts
+                .iter()
+                .find(|record| record.attempt_ref == attempt_ref)?;
+            let intended = record.observations.iter().any(|receipt| {
+                receipt.contract == crate::attempt_owner_dispatch::TRANSPORT_OBSERVATION
+                    && receipt.payload["action"] == "send"
+            });
+            if intended || record.readable_return.is_some() || ended(&leg_status(now, record)) {
+                return None;
+            }
+            Some(FactoryAttemptOperation::Fail {
+                attempt_ref: attempt_ref.to_owned(),
+                reason: format!("the task's words were never sent: {words}"),
+                evidence_refs: BTreeSet::from([format!("factory-session-unsent:{delivery_ref}")]),
+            })
+        })
+    });
+    refuse(match failed {
+        Ok(Some(_)) => {
+            format!("{words}; {attempt_ref} is failed, never sent, so a retry runs it again")
+        }
+        Ok(None) => format!("{words}; {attempt_ref} stands as it was"),
+        Err(error) => format!("{words}; {attempt_ref} could not be failed: {error}"),
+    })
 }
 
 /// The caller a desktop press acts as where no session hears it (Factory's admission, attempt_admission.rs `desktopCaller`).
@@ -3203,6 +3315,116 @@ mod tests {
             "a task that names no delivery stops no turn"
         );
         assert_eq!(cancels(), 1);
+    }
+
+    /// O-I #1006 (review F6): another track's write between an attempt's start and its send leaves the send's reading stale, and
+    /// Factory's dispatch sends nothing on it. The send is decided again on the Run read again and goes; a Run that moves under
+    /// every reading sends nothing, and the attempt, started and never sent, is failed rather than left Active, so a retry runs
+    /// it again.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn a_write_between_an_attempts_start_and_its_send_neither_sends_it_stale_nor_strands_it() {
+        let (by, grant) = (caller("human:owner"), authority("authority:test"));
+        // Another track's write: the store's revision is the project's, so any write moves it.
+        let interleave = |state: &Path, run: &RunRef, attempt: &str, n: u64| {
+            act(
+                state,
+                run,
+                &follower(Some("human:owner")),
+                &grant,
+                FactoryAttemptOperation::RecordTracking {
+                    attempt_ref: attempt.to_owned(),
+                    fact: AttemptTrackingFact {
+                        fact_ref: format!("fact:another-track-{n}"),
+                        kind: "session".into(),
+                        owner_ref: "aikit".into(),
+                        subject_ref: "session:another-track".into(),
+                        source_revision: now_rfc3339(),
+                        evidence_refs: BTreeSet::from([format!("another-track:{n}")]),
+                    },
+                },
+            )
+            .unwrap();
+        };
+        // Factory's own dispatch, on the revision it is given: stale, it refuses before anything goes.
+        let dispatch = |state: &Path, run: &RunRef, attempt: &str, revision: u64| {
+            execute_attempt_owner_action(
+                state,
+                FactoryAttemptOwnerRequest {
+                    contract: FACTORY_ATTEMPT_OWNER_ACTION.into(),
+                    request_ref: "owner-request:f6".into(),
+                    projection_ref: "projection:f6".into(),
+                    caller: by.clone(),
+                    run_ref: run.clone(),
+                    expected_revision: revision,
+                    authority: grant.clone(),
+                    attempt_ref: attempt.to_owned(),
+                    execution_ref: "execution:f6".into(),
+                    invocation: NativeOwnerInvocation::AikitEncounter {
+                        binary: PathBuf::from("/nonexistent/aikit"),
+                        cwd: PathBuf::from("/nonexistent"),
+                        transport: None,
+                        contract_revision: AIKIT_CAW_CONTRACT_REVISION.into(),
+                        request: json!({"action": "send"}),
+                    },
+                },
+            )
+            .map(|_| revision)
+        };
+        // A write lands once between the reading and the dispatch: the send goes on the Run read again.
+        let (_dir, state, run, attempt) = started_task();
+        let asked = std::cell::RefCell::new(Vec::new());
+        let sent = send_fresh(
+            &state,
+            &run,
+            &attempt,
+            &by,
+            &grant,
+            "delivery:f6",
+            |revision| {
+                asked.borrow_mut().push(revision);
+                if asked.borrow().len() == 1 {
+                    interleave(&state, &run, &attempt, 1);
+                    return dispatch(&state, &run, &attempt, revision);
+                }
+                Ok(revision)
+            },
+        );
+        let asked = asked.into_inner();
+        assert_eq!(
+            asked.len(),
+            2,
+            "decided again on the Run read again: {asked:?}"
+        );
+        assert_eq!(
+            sent.ok(),
+            Some(reading(&state, &run).unwrap().revision),
+            "the send goes on the reading that holds the other track's write"
+        );
+        // The Run moves under every reading: nothing goes, and the attempt is failed, never sent.
+        let (_dir, state, run, attempt) = started_task();
+        let tried = std::cell::Cell::new(0);
+        let refused = send_fresh(
+            &state,
+            &run,
+            &attempt,
+            &by,
+            &grant,
+            "delivery:f6",
+            |revision| {
+                tried.set(tried.get() + 1);
+                interleave(&state, &run, &attempt, tried.get());
+                dispatch(&state, &run, &attempt, revision)
+            },
+        )
+        .expect_err("nothing goes on a stale reading");
+        assert!(refused.to_string().contains("never sent"), "{refused}");
+        let now = reading(&state, &run).unwrap();
+        let record = record_of(&now, &attempt).unwrap();
+        assert_eq!(leg_status(&now, record), LegStatus::Failed, "{refused}");
+        assert!(record
+            .failure_evidence_refs
+            .contains("factory-session-unsent:delivery:f6"));
     }
 
     #[test]

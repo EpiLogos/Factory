@@ -7,8 +7,9 @@
 use crate::action_projection::{FactoryActionCaller, ProjectedFactoryActionAuthority};
 use crate::attempt_native_store::FileAttemptStore;
 use crate::attempt_runtime::{
-    FactoryAttemptActionRequest, FactoryAttemptOperation, FactoryAttemptReading,
-    FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt, FACTORY_ATTEMPT_ACTION,
+    FactoryAttemptActionRequest, FactoryAttemptError, FactoryAttemptOperation,
+    FactoryAttemptReading, FactoryAttemptRecord, OwnerOperationPhase, OwnerOperationReceipt,
+    FACTORY_ATTEMPT_ACTION,
 };
 use crate::core::run::RunRef;
 use crate::native_owner::{
@@ -184,6 +185,45 @@ impl AttemptOwnerError {
                 secondary,
             })),
         }
+    }
+}
+
+/// The Run moved under a send before anything was dispatched (O-I #1006, review F6): its revision was stale at the dispatch's
+/// check, or when its intent was to be recorded (the store's conflict, kept as its source). Nothing went, so the same send
+/// decided on the Run read again may go.
+#[derive(Debug)]
+struct StaleBeforeDispatch {
+    message: String,
+    conflict: Option<FactoryAttemptError>,
+}
+impl Display for StaleBeforeDispatch {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+impl Error for StaleBeforeDispatch {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        self.conflict
+            .as_ref()
+            .map(|conflict| conflict as &(dyn Error + 'static))
+    }
+}
+
+fn stale(message: impl Display, conflict: Option<FactoryAttemptError>) -> AttemptOwnerError {
+    let message = message.to_string();
+    AttemptOwnerError {
+        message: message.clone(),
+        cause: Some(Arc::new(StaleBeforeDispatch { message, conflict })),
+        native_result: None,
+    }
+}
+
+impl AttemptOwnerError {
+    /// Nothing was dispatched because the Run moved first ([`StaleBeforeDispatch`]).
+    pub(crate) fn stale_before_dispatch(&self) -> bool {
+        self.cause
+            .as_deref()
+            .is_some_and(|cause| cause.is::<StaleBeforeDispatch>())
     }
 }
 
@@ -654,7 +694,10 @@ pub fn execute_attempt_owner_action(
         return result(&store, &request, true, previous.clone(), owner, None);
     }
     if reading.revision != request.expected_revision {
-        return Err(error("stale Factory state revision before owner dispatch"));
+        return Err(stale(
+            "stale Factory state revision before owner dispatch",
+            None,
+        ));
     }
     let NativeOwnerInvocation::AikitEncounter {
         binary,
@@ -903,7 +946,13 @@ pub fn execute_attempt_owner_action(
                 receipt: intent.clone(),
             },
         ))
-        .map_err(native_error)?;
+        .map_err(|failure| match failure {
+            // The Run moved while the dispatch prepared: its intent is not recorded and nothing went.
+            FactoryAttemptError::RevisionConflict { .. } => {
+                stale(failure.to_string(), Some(failure))
+            }
+            failure => native_error(failure),
+        })?;
     let observation = if let Some(recovery) = &absence_request {
         absence::observe(attempt, recovery, &request.invocation, timeout_ms)
     } else {
