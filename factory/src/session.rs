@@ -886,16 +886,27 @@ fn workflow_source(
     serde_json::from_value(source).map_err(CliError::from_native)
 }
 
+/// git in the checkout, on its own repository (GIT_DIR and GIT_WORK_TREE from the caller's environment never aim it
+/// elsewhere), running nothing the checkout's git config or hooks name: its fsmonitor and its hooks are off, since an
+/// agent's write could have set them, and git runs them as the person.
+fn git_in(checkout: &Path) -> Command {
+    let mut git = Command::new("git");
+    git.args([
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.hooksPath=/dev/null",
+    ])
+    .arg("-C")
+    .arg(checkout)
+    .env_remove("GIT_DIR")
+    .env_remove("GIT_WORK_TREE")
+    .stdin(Stdio::null());
+    git
+}
+
 fn git(checkout: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(checkout)
-        .args(args)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
+    let output = git_in(checkout).args(args).output().ok()?;
     output
         .status
         .success()
@@ -1276,6 +1287,19 @@ fn task_run(
     let basis = store
         .launch_basis(&unit_ref)
         .map_err(CliError::from_native)?;
+    // A task runs on the session it was written on: its Return is addressed there, and Retry runs it again there, as the
+    // session's task (`retry`), so it is never sent to another.
+    if before.workflow_source_revision != SESSION_TASK {
+        return Err(refuse(format!(
+            "{run_ref} is no task written on a session: factory.task.run runs a task factory.task.write wrote on its session"
+        )));
+    }
+    if basis.unit.return_address != session_return(session) {
+        return Err(refuse(format!(
+            "{run_ref}'s task was not written on {session}: a task runs on the session it was written on, where its Return goes ({}) and Retry runs it again. Run it there, or write it again on {session}",
+            basis.unit.return_address
+        )));
+    }
     // Refused before AIKit is asked anything: launch refuses it too, after the task's NOW is prepared.
     if basis.journey_ref.is_none() {
         return Err(refuse(format!(
@@ -2003,20 +2027,128 @@ fn moved_to(input: &Value, into: &mut Vec<String>) {
     }
 }
 
-/// The places an edit says it writes: the file of each diff it carries (`content[]` of type `diff`, its `path`), and where its
-/// input moves a file. An edit that declares neither does not say where it writes: codex asks for a move (apply_patch's `***
-/// Move to:`) as an edit of the file it starts from, with no content.
-fn written_paths(call: &Value) -> Vec<String> {
-    let mut written: Vec<String> = call["content"]
+/// Python's whitespace (`str.isspace`, and `\s` in a `str` pattern), which hermes's executor reads a patch's file lines
+/// with: Rust's, and the four separators U+001C to U+001F.
+fn py_space(c: char) -> bool {
+    c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c)
+}
+
+/// A move's two files, `a -> b`, as hermes's executor reads them (`(.+?)\s*->\s*(.+)`): the shortest start before an
+/// arrow with something after it, and the rest.
+fn move_sides(text: &str) -> Option<(String, String)> {
+    text.char_indices().skip(1).find_map(|(end, _)| {
+        let to = text[end..]
+            .trim_start_matches(py_space)
+            .strip_prefix("->")
+            .filter(|to| !to.is_empty())?;
+        Some((
+            text[..end].trim_matches(py_space).to_owned(),
+            to.trim_matches(py_space).to_owned(),
+        ))
+    })
+}
+
+/// The files one line of a patch says it writes, or None for a line that is no file line. A file line is `***`, any space
+/// or none, then `Update`, `Add` or `Delete`, space, `File:` and the file; or `Move`, space, `File:` and `a -> b` (hermes's
+/// V4A executor, tools/patch_parser.py); or `Move`, space, `to:` and the file (codex's apply_patch). A file line whose
+/// file is not read names an empty one, which is no path.
+fn file_line(line: &str) -> Option<Vec<String>> {
+    let rest = line.strip_prefix("***")?.trim_start_matches(py_space);
+    let (word, rest) = ["Update", "Add", "Delete", "Move"]
+        .into_iter()
+        .find_map(|word| Some((word, rest.strip_prefix(word)?)))?;
+    let after = rest.trim_start_matches(py_space);
+    if after.len() == rest.len() {
+        return None;
+    }
+    match (word, after.strip_prefix("File:"), after.strip_prefix("to:")) {
+        ("Move", Some(sides), _) => Some(
+            move_sides(sides.trim_start_matches(py_space))
+                .map_or_else(|| vec![String::new()], |(from, to)| vec![from, to]),
+        ),
+        (_, Some(file), _) | ("Move", None, Some(file)) => {
+            Some(vec![file.trim_matches(py_space).to_owned()])
+        }
+        _ => None,
+    }
+}
+
+/// The patches an edit's input carries: each text under a `patch` key, anywhere in it (hermes's `patch` tool in mode
+/// `patch`).
+fn patches<'a>(input: &'a Value, into: &mut Vec<&'a str>) {
+    match input {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match value.as_str() {
+                    Some(text) if key == "patch" => into.push(text),
+                    _ => patches(value, into),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| patches(item, into)),
+        _ => {}
+    }
+}
+
+/// The files the patches in an edit's input write, every file line of each (`file_line`), the lines outside its
+/// `*** Begin Patch` and `*** End Patch` among them; None when its input carries no patch.
+fn patch_targets(input: &Value) -> Option<Vec<String>> {
+    let mut texts = Vec::new();
+    patches(input, &mut texts);
+    (!texts.is_empty()).then(|| {
+        texts
+            .iter()
+            .flat_map(|text| text.split('\n'))
+            .filter_map(|line| file_line(line.strip_suffix('\r').unwrap_or(line)))
+            .flatten()
+            .collect()
+    })
+}
+
+/// The path of each diff an edit carries (`content[]` of type `diff`).
+fn diff_paths(call: &Value) -> impl Iterator<Item = &str> {
+    call["content"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|item| item["type"] == "diff")
         .filter_map(|item| item["path"].as_str())
+}
+
+/// hermes joins the files of a patch of several into its one diff's path (acp_adapter/edit_approval.py): that path is read
+/// as the files it joins.
+const JOINED: &str = ", ";
+
+/// The places an edit says it writes: the file of each diff it carries, every file a patch in its input writes, and where
+/// its input moves a file. An edit that declares none does not say where it writes: codex asks for a move (apply_patch's
+/// `*** Move to:`) as an edit of the file it starts from, with no content. A diff of a patch of several files names them
+/// all in its one path, joined, and is read as each of them (`unread` leaves the ask whose path does not read so).
+fn written_paths(call: &Value) -> Vec<String> {
+    let targets = patch_targets(&call["rawInput"]);
+    let joined = targets.as_ref().is_some_and(|targets| targets.len() > 1);
+    let mut written: Vec<String> = diff_paths(call)
+        .flat_map(|path| match joined {
+            true => path.split(JOINED).collect::<Vec<_>>(),
+            false => vec![path],
+        })
         .map(str::to_owned)
         .collect();
+    written.extend(targets.into_iter().flatten());
     moved_to(&call["rawInput"], &mut written);
     written
+}
+
+/// Why an edit's paths cannot be read as one real path each, if they cannot: a patch in its input that names no file it
+/// writes, or one it does not name in full; or a diff of a patch of several files whose path does not join exactly as
+/// many (a file whose name holds ", " among them).
+fn unread(call: &Value) -> Option<&'static str> {
+    let targets = patch_targets(&call["rawInput"])?;
+    if targets.is_empty() || targets.iter().any(String::is_empty) {
+        return Some("left for you: the edit's patch does not name in full every file it writes");
+    }
+    (targets.len() > 1
+        && diff_paths(call).any(|path| path.split(JOINED).count() != targets.len()))
+    .then_some("left for you: the edit's diff names the files of its patch in one path that does not read as each of them")
 }
 
 /// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`) and the places an edit writes
@@ -2033,18 +2165,15 @@ fn declared_paths(call: &Value) -> Vec<String> {
     declared
 }
 
-/// Whether a declared path resolves inside the checkout, taken where the filesystem takes it: relative to the checkout, each
-/// part that exists followed as the filesystem follows it (a link to where it leads, and a `..` after it from there), and only
-/// the part still to be made taken as written. A link that leads nowhere is outside: a write through it lands wherever it
-/// points. `~` is the person's home: outside.
-fn resolves_inside(path: &str, checkout: &Path) -> bool {
+/// Where a declared path leads, taken where the filesystem takes it: relative to the checkout, each part that exists followed
+/// as the filesystem follows it (a link to where it leads, and a `..` after it from there), and only the part still to be
+/// made taken as written. None where it leads to no place a write could be judged at: an empty path, `~` (the person's
+/// home), a `..` above the root, or a link that leads nowhere (a write through it lands wherever it points).
+fn led_to(path: &str, checkout: &Path) -> Option<PathBuf> {
     use std::path::Component;
-    if path.starts_with('~') {
-        return false;
+    if path.is_empty() || path.starts_with('~') {
+        return None;
     }
-    let Ok(root) = checkout.canonicalize() else {
-        return false;
-    };
     let mut resolved = PathBuf::new();
     for component in checkout.join(path).components() {
         match component {
@@ -2052,30 +2181,84 @@ fn resolves_inside(path: &str, checkout: &Path) -> bool {
             Component::CurDir => {}
             Component::ParentDir => {
                 if !resolved.pop() {
-                    return false;
+                    return None;
                 }
             }
             Component::Normal(name) => {
                 resolved.push(name);
                 if std::fs::symlink_metadata(&resolved).is_ok() {
-                    match resolved.canonicalize() {
-                        Ok(real) => resolved = real,
-                        Err(_) => return false,
-                    }
+                    resolved = resolved.canonicalize().ok()?;
                 }
             }
         }
     }
-    resolved.starts_with(root)
+    Some(resolved)
+}
+
+/// Whether a declared path resolves inside the checkout (`led_to`).
+fn resolves_inside(path: &str, checkout: &Path) -> bool {
+    let Ok(root) = checkout.canonicalize() else {
+        return false;
+    };
+    led_to(path, checkout).is_some_and(|resolved| resolved.starts_with(root))
+}
+
+/// The checkout's own git directories, wherever git keeps them (`git rev-parse --absolute-git-dir --git-common-dir`): its
+/// gitdir (`.git`, one kept apart with `--separate-git-dir`, or a linked worktree's) and the common one its config and hooks
+/// live in. None for a checkout git does not read as a repository.
+fn git_dirs(checkout: &Path) -> Vec<std::fs::Metadata> {
+    git(
+        checkout,
+        &["rev-parse", "--absolute-git-dir", "--git-common-dir"],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter_map(|dir| std::fs::metadata(checkout.join(dir.trim())).ok())
+    .collect()
+}
+
+/// Whether two things on disk are one, whatever they are called.
+#[cfg(unix)]
+fn same_file(one: &std::fs::Metadata, other: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    one.dev() == other.dev() && one.ino() == other.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
+}
+
+/// Whether a path inside the checkout leads into a git directory: a folder named `.git` in any case (the Mac's disk reads
+/// `.GIT` as `.git`; a nested repository's among them, and `.git` itself, a linked worktree's file), or one of the checkout's
+/// own (`dirs`), met as the same folder on disk whatever it is called. git runs what a write there sets, core.fsmonitor in
+/// its config or a hook, as the person when it reads the checkout (`standing`).
+fn into_git(path: &str, checkout: &Path, dirs: &[std::fs::Metadata]) -> bool {
+    let (Ok(root), Some(resolved)) = (checkout.canonicalize(), led_to(path, checkout)) else {
+        return true;
+    };
+    resolved
+        .ancestors()
+        .take_while(|part| part.starts_with(&root) && *part != root.as_path())
+        .any(|part| {
+            part.file_name()
+                .is_some_and(|name| name.eq_ignore_ascii_case(".git"))
+                || std::fs::symlink_metadata(part)
+                    .is_ok_and(|meta| dirs.iter().any(|dir| same_file(dir, &meta)))
+        })
 }
 
 /// The kinds of ask that act only on the files they declare (ACP's ToolKind). A command, a fetch, a move or any other tool may
 /// act anywhere, whatever it declares.
 const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
 
+/// The kinds of ask among them that write the files they declare.
+const WRITE_KINDS: [&str; 2] = ["edit", "delete"];
+
 /// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files,
-/// declares every place it writes, and every path it declares resolves inside the session's checkout; else left for the person,
-/// who answers it where AIKit shows its asks, under Scope's Wait and On no answer, and why.
+/// declares every place it writes, each as one path, every path it declares resolves inside the session's checkout, and none it
+/// writes is in a git directory; else left for the person, who answers it where AIKit shows its asks, under Scope's Wait and On
+/// no answer, and why.
 fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     let call = &ask["tool_call"];
     let kind = call["kind"].as_str().unwrap_or_default();
@@ -2085,12 +2268,21 @@ fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     if kind == "edit" && written_paths(call).is_empty() {
         return Err("left for you: the edit does not say where it writes (a move names only the file it starts from)");
     }
+    if let Some(why) = unread(call) {
+        return Err(why);
+    }
     let paths = declared_paths(call);
     if paths.is_empty() {
         return Err("left for you: it declares no path in the session's checkout");
     }
     if !paths.iter().all(|path| resolves_inside(path, checkout)) {
         return Err("left for you: a path it declares resolves outside the session's checkout");
+    }
+    if WRITE_KINDS.contains(&kind) {
+        let dirs = git_dirs(checkout);
+        if paths.iter().any(|path| into_git(path, checkout, &dirs)) {
+            return Err("left for you: it writes into a git directory, whose config and hooks git runs as you");
+        }
     }
     ask["choices"]
         .as_array()
@@ -2176,15 +2368,7 @@ fn difference(checkout: &Path, before: &std::collections::BTreeMap<String, Strin
             vec!["diff", "--no-color", "--no-index", "--", "/dev/null", &path]
         };
         // `--no-index` exits 1 when the files differ, so its answer is read whatever its status.
-        if let Ok(output) = Command::new("git")
-            .arg("-C")
-            .arg(checkout)
-            .args(&args)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .stdin(Stdio::null())
-            .output()
-        {
+        if let Ok(output) = git_in(checkout).args(&args).output() {
             // A path git shows no difference at (its index alone moved) names no file.
             if !output.stdout.is_empty() {
                 diff.push_str(&String::from_utf8_lossy(&output.stdout));
@@ -3062,6 +3246,275 @@ mod tests {
             allowed(&ask_of(comment, &ONCE), &checkout),
             Some("yes".into())
         );
+    }
+
+    /// O-I #1006 (re-check 2, F322-1): hermes-acp asks for a V4A patch of several files as one edit whose one diff's path
+    /// joins every file with ", " (acp_adapter/edit_approval.py, `_proposal_for_patch_v4a`), and that is no file. Each file
+    /// the patch writes is read from the patch as hermes's executor reads it (tools/patch_parser.py: `***`, any space or
+    /// none, then `Update File:`, `Add File:`, `Delete File:` or `Move File: a -> b`) and judged as its own path, and the
+    /// diff's path as the files it joins, one each; a diff's path that does not read so leaves the ask for the person.
+    #[test]
+    fn each_file_a_patch_writes_is_judged_as_its_own_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let inside = |name: &str| format!("{}/{name}", checkout.display());
+        let outside = format!("{}/stolen.md", temp.path().display());
+        // hermes's ask for `patch` in mode `patch`, as build_acp_edit_tool_call builds it, `shown` its diff's path, and its
+        // two choices (make_acp_edit_approval_requester).
+        let hermes = |shown: &str, patch: &str| {
+            json!({"toolCallId": "edit-approval-1", "title": format!("Approve edit: {shown}"),
+                "kind": "edit", "status": "pending",
+                "content": [{"type": "diff", "path": shown, "oldText": null, "newText": patch}],
+                "rawInput": {"tool": "patch", "arguments": {"mode": "patch", "patch": patch}}})
+        };
+        let choices = [("allow_once", "allow_once"), ("deny", "reject_once")];
+        let at = |shown: &str, files: &[String]| {
+            let patch = format!("*** Begin Patch\n{}*** End Patch\n", files.concat());
+            allowed(&ask_of(hermes(shown, &patch), &choices), &checkout)
+        };
+        let update = |path: &str| format!("*** Update File: {path}\n@@\n-x\n+y\n");
+        let (a, b) = (inside("a.md"), inside("b.md"));
+        let yes = Some("allow_once".to_owned());
+        assert_eq!(at(&a, &[update(&a)]), yes, "one file inside");
+        assert_eq!(
+            at(&format!("{a}, {b}"), &[update(&a), update(&b)]),
+            yes,
+            "two files inside"
+        );
+        assert_eq!(
+            at(&format!("{a}, {outside}"), &[update(&a), update(&outside)]),
+            None,
+            "a file outside, in the join"
+        );
+        assert_eq!(
+            at(
+                &format!("{a}, {outside}"),
+                &[update(&a), format!("*** Add File: {outside}\n+z\n")]
+            ),
+            None,
+            "a file made outside"
+        );
+        assert_eq!(
+            at(
+                &format!("{a}, {outside}"),
+                &[update(&a), format!("*** Delete File: {outside}\n")]
+            ),
+            None,
+            "a file deleted outside"
+        );
+        assert_eq!(
+            at(
+                &format!("{a}, {b}"),
+                &[format!("*** Move File: {a} -> {b}\n")]
+            ),
+            yes,
+            "a move inside: hermes names both its files"
+        );
+        assert_eq!(
+            at(
+                &format!("{a}, {outside}"),
+                &[format!("*** Move File: {a} -> {outside}\n")]
+            ),
+            None,
+            "a move out"
+        );
+        // A file line with no space after `***`: the executor writes it, and hermes's own reading of the patch for its ask
+        // passes over it, so the ask names only the file inside.
+        assert_eq!(
+            at(
+                &a,
+                &[
+                    update(&a),
+                    format!("***Update File: {outside}\n@@\n-x\n+y\n")
+                ]
+            ),
+            None,
+            "a file the ask does not name"
+        );
+        // A relative file is written where the session stands, the checkout.
+        assert_eq!(
+            at(
+                &format!("{a}, {}", temp.path().join("x.md").display()),
+                &[update("a.md"), update("../x.md")]
+            ),
+            None,
+            "a `..` out of the checkout"
+        );
+        assert_eq!(
+            at(&a, &[update(&a), update(&b)]),
+            None,
+            "two files and one path"
+        );
+        assert_eq!(
+            at(&format!("{a}, {b}"), &[]),
+            None,
+            "a patch that names no file"
+        );
+    }
+
+    /// O-I #1006 (re-check 2, the .git hole): the follower never allows a write into the checkout's git directory, whose
+    /// config and hooks git runs as the person when `standing` reads the checkout at the task's end (core.fsmonitor, a
+    /// hook), outside any harness's sandbox. The git directory is any folder named `.git` in any case (the Mac's disk reads
+    /// `.GIT` as `.git`), a nested repository's among them, and the checkout's own wherever git keeps it (`git rev-parse
+    /// --git-dir`, `--git-common-dir`): a gitdir kept apart (`--separate-git-dir`), even inside the checkout under another name.
+    #[cfg(unix)]
+    #[test]
+    fn a_write_into_the_checkouts_git_directory_is_never_allowed() {
+        let temp = tempfile::tempdir().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        };
+        let write = |checkout: &Path, path: &str| {
+            let edit = edit_at(&format!("{}/{path}", checkout.display()));
+            allowed(&ask_of(edit, &ONCE), checkout)
+        };
+        let checkout = checkout_of(&temp);
+        git(&checkout, &["init", "--quiet"]);
+        assert_eq!(
+            write(&checkout, "NOTES.md"),
+            Some("yes".into()),
+            "a file of the checkout's"
+        );
+        for path in [
+            ".git/config",
+            ".git/hooks/post-index-change",
+            ".git",
+            ".GIT/config",
+            "vendor/.git/config",
+        ] {
+            assert_eq!(write(&checkout, path), None, "{path}");
+        }
+        std::os::unix::fs::symlink(checkout.join(".git"), checkout.join("store")).unwrap();
+        assert_eq!(write(&checkout, "store/config"), None, "a link into it");
+        let delete = json!({"kind": "delete",
+            "locations": [{"path": format!("{}/.git/index", checkout.display())}]});
+        assert_eq!(allowed(&ask_of(delete, &ONCE), &checkout), None, "a delete");
+        // A read there writes nothing.
+        let read = json!({"kind": "read",
+            "locations": [{"path": format!("{}/.git/HEAD", checkout.display())}]});
+        assert_eq!(allowed(&ask_of(read, &ONCE), &checkout), Some("yes".into()));
+        // A gitdir kept apart, inside the checkout under another name.
+        let apart = temp.path().join("apart");
+        std::fs::create_dir_all(&apart).unwrap();
+        let store = apart.join("gitstore");
+        git(
+            &apart,
+            &[
+                "init",
+                "--quiet",
+                "--separate-git-dir",
+                store.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(write(&apart, "gitstore/config"), None, "its gitdir");
+        if apart.join("GITSTORE").exists() {
+            assert_eq!(
+                write(&apart, "GITSTORE/hooks/x"),
+                None,
+                "its gitdir, as the disk reads another case"
+            );
+        }
+        assert_eq!(write(&apart, "notes.md"), Some("yes".into()));
+    }
+
+    /// O-I #1006 (re-check 2, the .git hole): reading how the checkout stands, and the difference a turn left, runs nothing
+    /// the checkout's git config or hooks name: git's fsmonitor and hooks are off, whatever was written there.
+    #[cfg(unix)]
+    #[test]
+    fn reading_the_checkout_runs_nothing_its_git_names() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(&checkout)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "--quiet", "--initial-branch", "main"]);
+        std::fs::write(checkout.join("README.md"), "notes\n").unwrap();
+        git(&["add", "README.md"]);
+        git(&["commit", "--quiet", "-m", "first"]);
+        let ran = temp.path().join("ran");
+        let script = temp.path().join("planted.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$0 $*\" >> '{}'\n", ran.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&["config", "core.fsmonitor", script.to_str().unwrap()]);
+        let hooks = checkout.join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        for hook in ["post-index-change", "pre-auto-gc", "reference-transaction"] {
+            std::fs::copy(&script, hooks.join(hook)).unwrap();
+        }
+        std::fs::write(checkout.join("README.md"), "notes\nmore\n").unwrap();
+        std::fs::write(checkout.join("new.md"), "new\n").unwrap();
+        let before = standing(&checkout);
+        let left = difference(&checkout, &std::collections::BTreeMap::new());
+        assert!(
+            !ran.exists(),
+            "git ran {}",
+            std::fs::read_to_string(&ran).unwrap_or_default()
+        );
+        assert!(before.contains_key("README.md") && before.contains_key("new.md"));
+        assert_eq!(left.files, ["README.md", "new.md"], "{}", left.text);
+    }
+
+    /// O-I #1006 (act 4 on claude-code, 14 Nov): claude-agent-acp 0.81.0 asks for Claude Code's Edit and Write as edits with
+    /// their diff at the file (permissions/presentation.js over tools.js `toolInfoFromToolUse`), and the follower allows them
+    /// once inside the checkout. A file changed by a shell command (`printf … >> NOTES.md`) is asked as `execute`, its
+    /// location the file the CLI saw it touch; a command can act anywhere, so it stays with the person.
+    #[test]
+    fn claude_codes_edits_inside_are_allowed_once_and_its_commands_left_for_the_person() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let notes = format!("{}/NOTES.md", checkout.display());
+        let choices = [
+            ("allow-once", "allow_once"),
+            ("allow-with-updates", "allow_always"),
+            ("reject", "reject_once"),
+        ];
+        let edit = json!({"toolCallId": "toolu_1", "name": "Edit", "status": "pending",
+            "rawInput": {"file_path": notes, "old_string": "# Notes\n", "new_string": "# Notes\nThe gate ran.\n"},
+            "title": "Edit NOTES.md", "kind": "edit",
+            "content": [{"type": "diff", "path": notes, "oldText": "# Notes\n", "newText": "# Notes\nThe gate ran.\n"}],
+            "locations": [{"path": notes}]});
+        assert_eq!(
+            allowed(&ask_of(edit, &choices), &checkout),
+            Some("allow-once".into())
+        );
+        let write = json!({"toolCallId": "toolu_2", "name": "Write", "status": "pending",
+            "rawInput": {"file_path": notes, "content": "# Notes\n"},
+            "title": "Write NOTES.md", "kind": "edit",
+            "content": [{"type": "diff", "path": notes, "oldText": null, "newText": "# Notes\n"}],
+            "locations": [{"path": notes}]});
+        assert_eq!(
+            allowed(&ask_of(write, &choices), &checkout),
+            Some("allow-once".into())
+        );
+        let command = "printf 'The foundation gate ran a task here.\\n' >> NOTES.md && git diff && git status --short";
+        let bash = json!({"toolCallId": "toolu_3", "name": "Bash", "status": "pending", "kind": "execute",
+            "title": command, "rawInput": {"command": command, "description": "Append line and read back diff"},
+            "content": [{"type": "content", "content": {"type": "text", "text": "Append line and read back diff"}}],
+            "locations": [{"path": notes}]});
+        assert_eq!(allowed(&ask_of(bash, &choices), &checkout), None);
     }
 
     #[test]

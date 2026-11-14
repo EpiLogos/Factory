@@ -568,6 +568,37 @@ fn a_task_runs_through_factorys_launch_on_the_receipt_aikit_answers_for_its_sess
     }
 }
 
+/// O-I #1006 (re-check 2, F322-2): a task runs on the session it was written on, where its Return is addressed and where
+/// Retry runs it again. factory.task.run refuses, in words, a session that is not the task's own, before AIKit is asked
+/// anything, and launches nothing: a task written on one session and run on another would leave Retry recording a Retry
+/// that sends nothing.
+#[cfg(unix)]
+#[test]
+fn a_task_runs_only_on_the_session_it_was_written_on() {
+    let selection: Value =
+        serde_json::from_str(include_str!("fixtures/aikit-seated-codex-selection.json")).unwrap();
+    let seat = Seat::new(&selection);
+    let (run_ref, _) = seat.written("Write the notes");
+    let other = "agent-session/another-track";
+    let ran = seat.act(
+        "factory.task.run",
+        &json!({"state": seat.state, "run_ref": run_ref, "session": other, "authority": GRANT}),
+    );
+    let words = String::from_utf8_lossy(&ran.stderr);
+    assert!(
+        !ran.status.success() && words.contains("was not written on") && words.contains(other),
+        "{} {words}",
+        String::from_utf8_lossy(&ran.stdout)
+    );
+    let calls = seat.calls();
+    assert!(!calls.contains("compose model selection"), "{calls}");
+    assert!(
+        seat.reading(&run_ref).attempts.is_empty(),
+        "{:?}",
+        seat.reading(&run_ref).attempts
+    );
+}
+
 /// O-I #1006 (re-check 2b): a task run on a session AIKit realised under a model policy (`aikit compose --session S --realise
 /// --model M`) launches on AIKit's explicit-pin receipt, not its seated-session one, and is still the session's task: Retry
 /// runs it again on the session, its words sent there. It never records a Retry that sends nothing and leaves its attempt
