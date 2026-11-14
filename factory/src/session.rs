@@ -583,6 +583,16 @@ fn task_write(
         .next()
         .map(ToString::to_string)
         .unwrap_or_default();
+    // The project is Factory's own from its first task: its placement (`project setup-central`, what Setup's Projects step runs,
+    // keyed by the state's first commission) lets Factory locate this state (`project locate`), so the World Model's factory slice
+    // and the window's Set read its tasks.
+    if !place.root.join(".factory/project.json").exists() {
+        crate::project_setup::setup_central(
+            &place.root,
+            &place.project_id,
+            &place.root.join("ProjectCentral/project.json"),
+        )?;
+    }
     Ok(json!({
         "contract": TASK_CONTRACT,
         "state": "written",
