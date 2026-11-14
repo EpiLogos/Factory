@@ -2047,16 +2047,7 @@ fn follow(
         .ok()
         .map(|held| held.sender);
     let by = follower(sender.as_deref());
-    let delivery_ref = record
-        .dispatch
-        .as_ref()
-        .and_then(|dispatch| find_text(&dispatch.payload, "delivery_ref"))
-        .or_else(|| {
-            record
-                .observations
-                .iter()
-                .find_map(|receipt| find_text(&receipt.payload, "deliveryRef"))
-        })
+    let delivery_ref = delivery_of(&record)
         .ok_or_else(|| refuse(format!("{attempt_ref} names no delivery to follow")))?;
     let begun = Instant::now();
     // The task's turn is read forward by block id from where the session stood as its words went (`send`); a follower started
@@ -2524,12 +2515,10 @@ fn task_stop(
     let log = task_file(&state, attempt_ref, "log.jsonl");
     // Stop records on the attempt why its turn stops before it stops the turn at AIKit (the session keeps what it had in mind),
     // so Factory's follower, finding the turn cancelled, finds the attempt paused or being cancelled and records no failure.
-    let stop_turn = || {
-        encounter(
-            &place.checkout,
-            json!({"action": "cancel", "agent_session": session}),
-        )
-    };
+    // Only the task's own turn: the session may run another task's turn by now (`stop_turn`).
+    let delivery = delivery_of(&record);
+    let read = |request: Value| encounter(&place.checkout, request);
+    let stop_turn = || stop_turn(&read, &session, delivery.as_deref());
     if paused(&record) || status == LegStatus::CancelRequested {
         act(
             &state,
@@ -2540,7 +2529,7 @@ fn task_stop(
                 attempt_ref: attempt_ref.to_owned(),
             },
         )?;
-        // The turn stops at AIKit either way.
+        // The task's turn stops at AIKit, if it still runs.
         let _ = stop_turn();
         act(
             &state,
@@ -2584,6 +2573,47 @@ fn task_stop(
         "turn_cancelled_by_aikit": cancelled.is_ok(), "aikit": words,
         "next": "Stop again cancels the task"}),
     )
+}
+
+/// Stop's word to AIKit for the task's turn (O-I #1006, review F4). AIKit's cancel stops whatever turn its session runs, so it
+/// is asked only while the task's own delivery holds the session's turn: AIKit keeps one active delivery a session, and the
+/// task's is the one dispatching, submitted or uncertain. Otherwise the session's turn, if it runs one, is another's (the
+/// task's own turn ended, or has not begun), and it is left running.
+fn stop_turn(read: Read<'_>, session: &str, delivery_ref: Option<&str>) -> Result<Value, String> {
+    let delivery_ref = delivery_ref
+        .ok_or("the task names no delivery, so AIKit was asked to stop no turn of the session's")?;
+    let phase = read(
+        json!({"action": "delivery", "agent_session": session, "delivery_ref": delivery_ref}),
+    )
+    .map(|answer| delivery_phase(&answer, delivery_ref))
+    .map_err(|words| {
+        format!("AIKit was asked to stop no turn: the task's delivery could not be read: {words}")
+    })?;
+    match phase.as_deref() {
+        Some("dispatching" | "submitted" | "uncertain") => {
+            read(json!({"action": "cancel", "agent_session": session}))
+        }
+        Some(phase) => Err(format!(
+            "the session's turn is not the task's (its delivery stands {phase}), so AIKit was asked to stop nothing"
+        )),
+        None => Err(format!(
+            "AIKit names no phase for the task's delivery {delivery_ref}, so it was asked to stop nothing"
+        )),
+    }
+}
+
+/// The delivery an attempt's words went as (`send`): its dispatch's, else the one AIKit's receipt observed.
+fn delivery_of(record: &FactoryAttemptRecord) -> Option<String> {
+    record
+        .dispatch
+        .as_ref()
+        .and_then(|dispatch| find_text(&dispatch.payload, "delivery_ref"))
+        .or_else(|| {
+            record
+                .observations
+                .iter()
+                .find_map(|receipt| find_text(&receipt.payload, "deliveryRef"))
+        })
 }
 
 /// The pause a press of Stop records on the Run as `reading` holds it, the turn stopped at AIKit and the session keeping what it
@@ -3049,6 +3079,55 @@ mod tests {
             leg_status(&now, record_of(&now, &attempt).unwrap()),
             LegStatus::CancellationAccepted
         );
+    }
+
+    /// O-I #1006 (review F4): Stop asks AIKit to cancel a session's turn only while the task's own delivery holds it. Task A
+    /// paused (its turn cancelled at the first press) and task B running on the same session: Stop pressed on A again cancels A
+    /// at Factory and leaves B's turn running; B's own Stop stops B's turn.
+    #[test]
+    fn a_second_stop_on_a_paused_task_leaves_the_next_task_on_its_session_running() {
+        let asked = std::cell::RefCell::new(Vec::<Value>::new());
+        // AIKit as it answers: A's delivery cancelled at the first press, B's dispatching (a session holds one active delivery).
+        let read = |request: Value| -> Result<Value, String> {
+            asked.borrow_mut().push(request.clone());
+            match request["action"].as_str() {
+                Some("delivery") => {
+                    let phase = if request["delivery_ref"] == "delivery:a" {
+                        "cancelled"
+                    } else {
+                        "dispatching"
+                    };
+                    Ok(
+                        json!({"delivery": {"delivery_ref": request["delivery_ref"], "phase": phase}}),
+                    )
+                }
+                Some("cancel") => Ok(json!({"commands": 1, "requested_at_sequence": 7})),
+                _ => Err(format!("AIKit was asked {request}")),
+            }
+        };
+        let cancels = || {
+            asked
+                .borrow()
+                .iter()
+                .filter(|request| request["action"] == "cancel")
+                .count()
+        };
+        assert!(
+            stop_turn(&read, "session:shared", Some("delivery:a")).is_err(),
+            "A's turn is not the session's"
+        );
+        assert_eq!(
+            cancels(),
+            0,
+            "B carries on: AIKit was asked to cancel nothing"
+        );
+        assert!(stop_turn(&read, "session:shared", Some("delivery:b")).is_ok());
+        assert_eq!(cancels(), 1, "B's own Stop stops B's turn");
+        assert!(
+            stop_turn(&read, "session:shared", None).is_err(),
+            "a task that names no delivery stops no turn"
+        );
+        assert_eq!(cancels(), 1);
     }
 
     #[test]
