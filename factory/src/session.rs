@@ -1950,45 +1950,94 @@ fn asks(answer: &Value, into: &mut Vec<Value>) {
     }
 }
 
-fn paths_in(value: &Value, into: &mut Vec<String>) {
-    match value {
-        Value::String(text) if text.starts_with('/') && !text.contains('\n') => {
-            into.push(text.clone())
-        }
-        Value::Object(map) => map.values().for_each(|inner| paths_in(inner, into)),
-        Value::Array(items) => items.iter().for_each(|inner| paths_in(inner, into)),
-        _ => {}
-    }
+/// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`) and an edit's target (`content[]` of
+/// type `diff`, its `path`). No other string of the call is read as a path: not a command, not an edit's text.
+fn declared_paths(call: &Value) -> Vec<String> {
+    let located = call["locations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|location| location["path"].as_str());
+    let edited = call["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|item| item["type"] == "diff")
+        .filter_map(|item| item["path"].as_str());
+    located.chain(edited).map(str::to_owned).collect()
 }
 
-/// The Scope's answer to one ask: allowed once when every path it names lies in the session's checkout, else refused once.
-fn scope_answer(ask: &Value, checkout: &Path) -> Option<(String, &'static str)> {
-    let mut paths = Vec::new();
-    paths_in(&ask["tool_call"], &mut paths);
-    let inside = paths
-        .iter()
-        .all(|path| Path::new(path).starts_with(checkout));
-    let choices = ask["choices"].as_array()?;
-    let pick = |wanted: &str| {
-        choices.iter().find_map(|choice| {
-            let kind = choice["kind"].as_str().unwrap_or_default();
-            (kind == wanted).then(|| {
-                choice["option_id"]
-                    .as_str()
-                    .or_else(|| choice["id"].as_str())
-                    .map(str::to_owned)
-            })?
-        })
-    };
-    if inside {
-        pick("allow_once")
-            .or_else(|| pick("allow_always"))
-            .map(|option| (option, "allowed: inside the session's checkout"))
-    } else {
-        pick("reject_once")
-            .or_else(|| pick("reject_always"))
-            .map(|option| (option, "refused: outside the session's checkout"))
+/// Whether a declared path resolves inside the checkout: taken relative to it, its `.` and `..` normalised, and every link of the
+/// part of it that exists followed, so a link leading out is outside. `~` is the person's home: outside.
+fn resolves_inside(path: &str, checkout: &Path) -> bool {
+    if path.starts_with('~') {
+        return false;
     }
+    let mut normal = PathBuf::new();
+    for component in checkout.join(path).components() {
+        match component {
+            std::path::Component::ParentDir => {
+                if !normal.pop() {
+                    return false;
+                }
+            }
+            std::path::Component::CurDir => {}
+            other => normal.push(other),
+        }
+    }
+    let mut existing = normal.as_path();
+    let mut rest = Vec::new();
+    let real = loop {
+        match existing.canonicalize() {
+            Ok(real) => break real,
+            Err(_) => match (existing.parent(), existing.file_name()) {
+                (Some(parent), Some(name)) => {
+                    rest.push(name.to_owned());
+                    existing = parent;
+                }
+                _ => return false,
+            },
+        }
+    };
+    let resolved = rest.iter().rev().fold(real, |path, name| path.join(name));
+    resolved.starts_with(
+        checkout
+            .canonicalize()
+            .unwrap_or_else(|_| checkout.to_path_buf()),
+    )
+}
+
+/// The kinds of ask that act only on the files they declare (ACP's ToolKind). A command, a fetch, a move or any other tool may
+/// act anywhere, whatever it declares.
+const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
+
+/// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files
+/// and every path it declares resolves inside the session's checkout; else left for the person, who answers it where AIKit shows
+/// its asks, under Scope's Wait and On no answer, and why.
+fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
+    let call = &ask["tool_call"];
+    if !FILE_KINDS.contains(&call["kind"].as_str().unwrap_or_default()) {
+        return Err("left for you: a command, a fetch or another tool can act outside the session's checkout");
+    }
+    let paths = declared_paths(call);
+    if paths.is_empty() {
+        return Err("left for you: it declares no path in the session's checkout");
+    }
+    if !paths.iter().all(|path| resolves_inside(path, checkout)) {
+        return Err("left for you: a path it declares resolves outside the session's checkout");
+    }
+    ask["choices"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|choice| choice["kind"] == "allow_once")
+        .and_then(|choice| {
+            choice["option_id"]
+                .as_str()
+                .or_else(|| choice["id"].as_str())
+        })
+        .map(str::to_owned)
+        .ok_or("left for you: its harness offers no one-time allow")
 }
 
 /// How the checkout stands, path by path, as git reads it (`git status --porcelain -z --untracked-files=all`): each changed or
@@ -2147,26 +2196,26 @@ fn follow(
                 if id.is_empty() || !answered.insert(id.clone()) {
                     continue;
                 }
-                let decision = match scope_answer(&ask, &place.checkout) {
-                    Some((option, why)) => {
+                // The follower allows only what acts on files inside the checkout; it answers nothing else for the person.
+                let option = match scope_answer(&ask, &place.checkout) {
+                    Ok(option) => option,
+                    Err(why) => {
                         append(
                             &log,
                             &json!({"at": now_rfc3339(), "kind": "ask", "request_id": id, "answer": why}),
                         );
-                        json!({"outcome": "selected", "option_id": option})
-                    }
-                    None => {
-                        append(
-                            &log,
-                            &json!({"at": now_rfc3339(), "kind": "ask", "request_id": id,
-                            "answer": "cancelled: the Scope finds no choice to give"}),
-                        );
-                        json!({"outcome": "cancelled"})
+                        continue;
                     }
                 };
+                append(
+                    &log,
+                    &json!({"at": now_rfc3339(), "kind": "ask", "request_id": id,
+                    "answer": "allowed once: every path it declares is inside the session's checkout"}),
+                );
                 if let Err(words) = encounter(
                     &place.checkout,
-                    json!({"action": "permission", "agent_session": session, "request_id": id, "decision": decision}),
+                    json!({"action": "permission", "agent_session": session, "request_id": id,
+                        "decision": {"outcome": "selected", "option_id": option}}),
                 ) {
                     append(
                         &log,
@@ -2605,20 +2654,101 @@ pub fn execute(args: &[String]) -> Result<String, CliError> {
 mod tests {
     use super::*;
 
+    // REPLACED (review F1): an ask outside the checkout was refused once on the person's behalf; now it is left for them.
     #[test]
-    fn the_scope_allows_an_ask_inside_the_checkout_and_refuses_one_outside() {
-        let checkout = Path::new("/w/worktrees/env-1/notes");
-        let ask = |path: &str| {
-            json!({"native_request_id": "r1", "tool_call": {"locations": [{"path": path}]},
-                "choices": [{"option_id": "yes", "kind": "allow_once"}, {"option_id": "no", "kind": "reject_once"}]})
-        };
+    fn the_follower_allows_once_an_ask_on_files_inside_the_checkout_and_leaves_the_rest_for_the_person(
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let file = |rest: &str| format!("{}/{rest}", checkout.display());
+        let read = |path: String| json!({"kind": "read", "locations": [{"path": path}]});
         assert_eq!(
-            scope_answer(&ask("/w/worktrees/env-1/notes/a.md"), checkout).map(|(o, _)| o),
-            Some("yes".into())
+            scope_answer(&ask_of(read(file("a.md")), &ONCE), &checkout),
+            Ok("yes".into())
         );
+        assert!(
+            scope_answer(&ask_of(read("/etc/passwd".into()), &ONCE), &checkout).is_err(),
+            "outside: left, not refused"
+        );
+        assert!(
+            scope_answer(&ask_of(read("~/notes/a.md".into()), &ONCE), &checkout).is_err(),
+            "the person's home"
+        );
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(temp.path(), checkout.join("out")).unwrap();
+            assert!(
+                scope_answer(&ask_of(read(file("out/x.md")), &ONCE), &checkout).is_err(),
+                "a link leading out"
+            );
+        }
+        assert!(
+            scope_answer(&ask_of(json!({"kind": "edit"}), &ONCE), &checkout).is_err(),
+            "no path declared"
+        );
+        assert!(
+            scope_answer(
+                &ask_of(read(file("a.md")), &[("always", "allow_always")]),
+                &checkout
+            )
+            .is_err(),
+            "never a standing allow"
+        );
+        let fetch = json!({"kind": "fetch", "locations": [{"path": file("a.md")}]});
+        assert!(
+            scope_answer(&ask_of(fetch, &ONCE), &checkout).is_err(),
+            "a fetch, whatever it declares"
+        );
+    }
+
+    /// One ask as AIKit carries it: the ACP toolCall unchanged, with the harness's choices.
+    fn ask_of(call: Value, choices: &[(&str, &str)]) -> Value {
+        json!({"native_request_id": "r1", "tool_call": call, "choices": choices.iter()
+            .map(|(id, kind)| json!({"option_id": id, "kind": kind})).collect::<Vec<_>>()})
+    }
+    const ONCE: [(&str, &str); 2] = [("yes", "allow_once"), ("no", "reject_once")];
+
+    /// The option the follower allows the ask with, if it allows it.
+    fn allowed(ask: &Value, checkout: &Path) -> Option<String> {
+        scope_answer(ask, checkout).ok()
+    }
+
+    /// A checkout of the test's own.
+    fn checkout_of(temp: &tempfile::TempDir) -> PathBuf {
+        let checkout = temp.path().join("notes");
+        std::fs::create_dir_all(&checkout).unwrap();
+        checkout
+    }
+
+    #[test]
+    fn a_shell_command_is_never_allowed_by_the_follower() {
+        // A command declares no path: whatever it touches, it is left for the person.
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let rm = json!({"kind": "execute", "title": "rm -rf ~/x", "rawInput": {"command": "rm -rf ~/x"}});
+        assert_eq!(allowed(&ask_of(rm, &ONCE), &checkout), None);
+    }
+
+    #[test]
+    fn an_edit_that_climbs_out_of_the_checkout_is_never_allowed() {
+        // `..` climbs out of the checkout, however the path begins.
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let climb = json!({"kind": "edit", "locations": [{"path": format!("{}/../../x", checkout.display())}]});
+        assert_eq!(allowed(&ask_of(climb, &ONCE), &checkout), None);
+    }
+
+    #[test]
+    fn an_edits_new_text_is_never_read_as_a_path() {
+        // An edit inside the checkout is allowed once, whatever its new text says.
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let file = format!("{}/a.rs", checkout.display());
+        let comment = json!({"kind": "edit", "locations": [{"path": file}],
+            "content": [{"type": "diff", "path": file, "oldText": "x", "newText": "// SAFETY: y"}]});
         assert_eq!(
-            scope_answer(&ask("/etc/passwd"), checkout).map(|(o, _)| o),
-            Some("no".into())
+            allowed(&ask_of(comment, &ONCE), &checkout),
+            Some("yes".into())
         );
     }
 
