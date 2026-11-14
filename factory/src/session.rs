@@ -3052,6 +3052,15 @@ mod tests {
         );
         assert!(moved.text.contains("+++ b/new.md"), "{}", moved.text);
         assert!(moved.text.contains("--- a/old.md"), "{}", moved.text);
+        // A deletion staged with `git rm` is read against HEAD, which still holds the file.
+        run(&["rm", "--quiet", "kept.md"]);
+        let removed = difference(&checkout, &before);
+        assert_eq!(
+            removed.files,
+            ["gone.md", "kept.md", "new.md", "old.md"],
+            "{}",
+            removed.text
+        );
     }
 
     #[test]
