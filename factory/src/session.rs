@@ -2248,6 +2248,23 @@ fn into_git(path: &str, checkout: &Path, dirs: &[std::fs::Metadata]) -> bool {
         })
 }
 
+/// Whether a path inside the checkout leads to a file with more than one name on disk (a hard link: a regular file whose
+/// link count is more than one). A harness writes an edit into the file it names in place, so the write lands at every name
+/// the file has, wherever it stands; where the others stand cannot be read from the file. Deleting one of its names leaves
+/// the file as it stands at the others.
+#[cfg(unix)]
+fn named_elsewhere(path: &str, checkout: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    led_to(path, checkout)
+        .and_then(|resolved| std::fs::symlink_metadata(resolved).ok())
+        .is_some_and(|meta| meta.is_file() && meta.nlink() > 1)
+}
+
+#[cfg(not(unix))]
+fn named_elsewhere(_: &str, _: &Path) -> bool {
+    false
+}
+
 /// The kinds of ask that act only on the files they declare (ACP's ToolKind). A command, a fetch, a move or any other tool may
 /// act anywhere, whatever it declares.
 const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
@@ -2256,9 +2273,9 @@ const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
 const WRITE_KINDS: [&str; 2] = ["edit", "delete"];
 
 /// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files,
-/// declares every place it writes, each as one path, every path it declares resolves inside the session's checkout, and none it
-/// writes is in a git directory; else left for the person, who answers it where AIKit shows its asks, under Scope's Wait and On
-/// no answer, and why.
+/// declares every place it writes, each as one path, every path it declares resolves inside the session's checkout, none it
+/// writes is in a git directory, and no file it edits has another name on disk; else left for the person, who answers it where
+/// AIKit shows its asks, under Scope's Wait and On no answer, and why.
 fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     let call = &ask["tool_call"];
     let kind = call["kind"].as_str().unwrap_or_default();
@@ -2283,6 +2300,9 @@ fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
         if paths.iter().any(|path| into_git(path, checkout, &dirs)) {
             return Err("left for you: it writes into a git directory, whose config and hooks git runs as you");
         }
+    }
+    if kind == "edit" && paths.iter().any(|path| named_elsewhere(path, checkout)) {
+        return Err("left for you: a file it edits has another name on disk (a hard link), and the edit lands at each of its names, wherever they stand");
     }
     ask["choices"]
         .as_array()
@@ -3423,6 +3443,44 @@ mod tests {
             );
         }
         assert_eq!(write(&apart, "notes.md"), Some("yes".into()));
+    }
+
+    /// O-I #1006 (re-check 2, the hard-link hole): a file with more than one name on disk (a hard link) is one file wherever
+    /// its names stand, and a harness writes an edit into the file in place, so the write lands at every name, one outside the
+    /// checkout among them. The follower leaves an edit of an existing file with more than one name for the person and says
+    /// why; a file of one name, or one still to be made, is allowed once as before, and a read of it writes nothing.
+    #[cfg(unix)]
+    #[test]
+    fn an_edit_of_a_file_with_another_name_on_disk_is_left_for_the_person() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let outside = temp.path().join("authorized_keys");
+        std::fs::write(&outside, "the person's own\n").unwrap();
+        std::fs::hard_link(&outside, checkout.join("keys.md")).unwrap();
+        std::fs::write(checkout.join("notes.md"), "notes\n").unwrap();
+        let inside = |name: &str| format!("{}/{name}", checkout.display());
+        let edit = |name: &str| scope_answer(&ask_of(edit_at(&inside(name)), &ONCE), &checkout);
+        let linked = edit("keys.md").unwrap_err();
+        assert!(linked.contains("hard link"), "{linked}");
+        assert_eq!(edit("notes.md"), Ok("yes".into()), "a file of one name");
+        assert_eq!(edit("new.md"), Ok("yes".into()), "a file still to be made");
+        std::os::unix::fs::symlink(checkout.join("keys.md"), checkout.join("alias.md")).unwrap();
+        assert!(edit("alias.md").is_err(), "a link to it is the same file");
+        // codex's apply_patch writes a moved file's text where it moves it: a move onto it writes it.
+        let mut moved = edit_at(&inside("notes.md"));
+        moved["rawInput"] = json!({"move_path": inside("keys.md")});
+        assert!(
+            scope_answer(&ask_of(moved, &ONCE), &checkout).is_err(),
+            "a move onto it"
+        );
+        let read = json!({"kind": "read", "locations": [{"path": inside("keys.md")}]});
+        assert_eq!(
+            scope_answer(&ask_of(read, &ONCE), &checkout),
+            Ok("yes".into())
+        );
+        // Its names are counted, wherever they stand: a second one inside the checkout counts too.
+        std::fs::hard_link(checkout.join("notes.md"), checkout.join("copy.md")).unwrap();
+        assert!(edit("notes.md").is_err(), "two names inside");
     }
 
     /// O-I #1006 (re-check 2, the .git hole): reading how the checkout stands, and the difference a turn left, runs nothing
