@@ -1971,74 +1971,112 @@ fn asks(answer: &Value, into: &mut Vec<Value>) {
     }
 }
 
-/// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`) and an edit's target (`content[]` of
-/// type `diff`, its `path`). No other string of the call is read as a path: not a command, not an edit's text.
-fn declared_paths(call: &Value) -> Vec<String> {
-    let located = call["locations"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|location| location["path"].as_str());
-    let edited = call["content"]
+/// The keys under which a harness's input names where an edit moves a file (codex's `move_path`, and its kin).
+const MOVED_TO: [&str; 5] = [
+    "move_path",
+    "movePath",
+    "destination",
+    "new_path",
+    "newPath",
+];
+
+/// Where an edit's input (ACP's `rawInput`) says it moves a file, anywhere in it.
+fn moved_to(input: &Value, into: &mut Vec<String>) {
+    match input {
+        Value::Object(map) => {
+            for (key, value) in map {
+                match value.as_str() {
+                    Some(path) if MOVED_TO.contains(&key.as_str()) => into.push(path.to_owned()),
+                    _ => moved_to(value, into),
+                }
+            }
+        }
+        Value::Array(items) => items.iter().for_each(|item| moved_to(item, into)),
+        _ => {}
+    }
+}
+
+/// The places an edit says it writes: the file of each diff it carries (`content[]` of type `diff`, its `path`), and where its
+/// input moves a file. An edit that declares neither does not say where it writes: codex asks for a move (apply_patch's `***
+/// Move to:`) as an edit of the file it starts from, with no content.
+fn written_paths(call: &Value) -> Vec<String> {
+    let mut written: Vec<String> = call["content"]
         .as_array()
         .into_iter()
         .flatten()
         .filter(|item| item["type"] == "diff")
-        .filter_map(|item| item["path"].as_str());
-    located.chain(edited).map(str::to_owned).collect()
+        .filter_map(|item| item["path"].as_str())
+        .map(str::to_owned)
+        .collect();
+    moved_to(&call["rawInput"], &mut written);
+    written
 }
 
-/// Whether a declared path resolves inside the checkout: taken relative to it, its `.` and `..` normalised, and every link of the
-/// part of it that exists followed, so a link leading out is outside. `~` is the person's home: outside.
+/// The paths an ask declares, as ACP carries its tool call: its locations (`locations[].path`) and the places an edit writes
+/// (`written_paths`). No other string of the call is read as a path: not a command, not an edit's text.
+fn declared_paths(call: &Value) -> Vec<String> {
+    let mut declared: Vec<String> = call["locations"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|location| location["path"].as_str())
+        .map(str::to_owned)
+        .collect();
+    declared.extend(written_paths(call));
+    declared
+}
+
+/// Whether a declared path resolves inside the checkout, taken where the filesystem takes it: relative to the checkout, each
+/// part that exists followed as the filesystem follows it (a link to where it leads, and a `..` after it from there), and only
+/// the part still to be made taken as written. A link that leads nowhere is outside: a write through it lands wherever it
+/// points. `~` is the person's home: outside.
 fn resolves_inside(path: &str, checkout: &Path) -> bool {
+    use std::path::Component;
     if path.starts_with('~') {
         return false;
     }
-    let mut normal = PathBuf::new();
+    let Ok(root) = checkout.canonicalize() else {
+        return false;
+    };
+    let mut resolved = PathBuf::new();
     for component in checkout.join(path).components() {
         match component {
-            std::path::Component::ParentDir => {
-                if !normal.pop() {
+            Component::Prefix(_) | Component::RootDir => resolved.push(component),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !resolved.pop() {
                     return false;
                 }
             }
-            std::path::Component::CurDir => {}
-            other => normal.push(other),
+            Component::Normal(name) => {
+                resolved.push(name);
+                if std::fs::symlink_metadata(&resolved).is_ok() {
+                    match resolved.canonicalize() {
+                        Ok(real) => resolved = real,
+                        Err(_) => return false,
+                    }
+                }
+            }
         }
     }
-    let mut existing = normal.as_path();
-    let mut rest = Vec::new();
-    let real = loop {
-        match existing.canonicalize() {
-            Ok(real) => break real,
-            Err(_) => match (existing.parent(), existing.file_name()) {
-                (Some(parent), Some(name)) => {
-                    rest.push(name.to_owned());
-                    existing = parent;
-                }
-                _ => return false,
-            },
-        }
-    };
-    let resolved = rest.iter().rev().fold(real, |path, name| path.join(name));
-    resolved.starts_with(
-        checkout
-            .canonicalize()
-            .unwrap_or_else(|_| checkout.to_path_buf()),
-    )
+    resolved.starts_with(root)
 }
 
 /// The kinds of ask that act only on the files they declare (ACP's ToolKind). A command, a fetch, a move or any other tool may
 /// act anywhere, whatever it declares.
 const FILE_KINDS: [&str; 4] = ["read", "edit", "delete", "search"];
 
-/// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files
-/// and every path it declares resolves inside the session's checkout; else left for the person, who answers it where AIKit shows
-/// its asks, under Scope's Wait and On no answer, and why.
+/// The follower's answer to one ask: allowed once (the harness's `allow_once`, never a standing allow) where the ask acts on files,
+/// declares every place it writes, and every path it declares resolves inside the session's checkout; else left for the person,
+/// who answers it where AIKit shows its asks, under Scope's Wait and On no answer, and why.
 fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
     let call = &ask["tool_call"];
-    if !FILE_KINDS.contains(&call["kind"].as_str().unwrap_or_default()) {
+    let kind = call["kind"].as_str().unwrap_or_default();
+    if !FILE_KINDS.contains(&kind) {
         return Err("left for you: a command, a fetch or another tool can act outside the session's checkout");
+    }
+    if kind == "edit" && written_paths(call).is_empty() {
+        return Err("left for you: the edit does not say where it writes (a move names only the file it starts from)");
     }
     let paths = declared_paths(call);
     if paths.is_empty() {
@@ -2906,13 +2944,103 @@ mod tests {
         assert_eq!(allowed(&ask_of(rm, &ONCE), &checkout), None);
     }
 
+    /// An edit as a harness declares what it writes: the file, and its diff at that path.
+    fn edit_at(path: &str) -> Value {
+        json!({"kind": "edit", "locations": [{"path": path}],
+            "content": [{"type": "diff", "path": path, "oldText": null, "newText": "x"}]})
+    }
+
     #[test]
     fn an_edit_that_climbs_out_of_the_checkout_is_never_allowed() {
         // `..` climbs out of the checkout, however the path begins.
         let temp = tempfile::tempdir().unwrap();
         let checkout = checkout_of(&temp);
-        let climb = json!({"kind": "edit", "locations": [{"path": format!("{}/../../x", checkout.display())}]});
+        let climb = edit_at(&format!("{}/../../x", checkout.display()));
         assert_eq!(allowed(&ask_of(climb, &ONCE), &checkout), None);
+    }
+
+    /// O-I #1006 (re-check 1a): codex's apply_patch with `*** Move to: <outside>` asks as an edit of the file the move
+    /// starts from, with no content, so where the file lands is nowhere in the ask. The follower allows only an ask that
+    /// declares every place it writes: an edit with no content stays with the person, unless the harness's input names
+    /// where it moves the file, and then that is read.
+    #[test]
+    fn a_move_out_of_the_checkout_is_never_allowed() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let inside = format!("{}/notes.md", checkout.display());
+        let kept = format!("{}/kept.md", checkout.display());
+        let outside = format!("{}/stolen.md", temp.path().display());
+        // codex-acp 1.13.1's ask for the move, as it builds it (fileChangeToolCall): the file it starts from, nothing else.
+        let codex = json!({"toolCallId": "c1", "kind": "edit", "status": "pending",
+            "title": "Edit files", "locations": [{"path": inside}]});
+        assert_eq!(allowed(&ask_of(codex, &ONCE), &checkout), None);
+        // Where the input names the move's target, it is read: out is left for the person, in is allowed once.
+        let moved = |to: &str| {
+            let mut call = edit_at(&inside);
+            call["rawInput"] =
+                json!({"changes": {inside.clone(): {"type": "update", "move_path": to}}});
+            call
+        };
+        assert_eq!(allowed(&ask_of(moved(&outside), &ONCE), &checkout), None);
+        assert_eq!(
+            allowed(&ask_of(moved(&kept), &ONCE), &checkout),
+            Some("yes".into())
+        );
+        let bare = |to: &str| json!({"kind": "edit", "locations": [{"path": inside}], "rawInput": {"move_path": to}});
+        assert_eq!(allowed(&ask_of(bare(&outside), &ONCE), &checkout), None);
+        assert_eq!(
+            allowed(&ask_of(bare(&kept), &ONCE), &checkout),
+            Some("yes".into())
+        );
+    }
+
+    /// O-I #1006 (re-check 1b): a path is judged where the filesystem takes it. A link is followed before a `..` after it
+    /// is taken, so the `..` climbs from where the link leads; a link that leads nowhere is outside, since a write through
+    /// it lands wherever it points.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_checkout_never_carries_a_write_out() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = checkout_of(&temp);
+        let outside = temp.path().join("outside");
+        std::fs::create_dir_all(outside.join("deeper")).unwrap();
+        std::fs::create_dir_all(checkout.join("documentation")).unwrap();
+        let link = |name: &str, to: &Path| {
+            std::os::unix::fs::symlink(to, checkout.join(name)).unwrap();
+        };
+        link("link", &outside.join("deeper"));
+        link("dangling", &outside.join("authorized_keys"));
+        link("docs", &checkout.join("documentation"));
+        let at = |path: &str| {
+            let edit = edit_at(&format!("{}/{path}", checkout.display()));
+            allowed(&ask_of(edit, &ONCE), &checkout)
+        };
+        assert_eq!(
+            at("link/../x.md"),
+            None,
+            "a `..` after a link climbs from where it leads"
+        );
+        assert_eq!(
+            at("dangling"),
+            None,
+            "a dangling link writes where it points"
+        );
+        assert_eq!(at("dangling/x"), None);
+        assert_eq!(
+            at("new/../link/x.md"),
+            None,
+            "a link past a folder still to be made"
+        );
+        assert_eq!(
+            at("docs/a.md"),
+            Some("yes".into()),
+            "a link that stays inside"
+        );
+        assert_eq!(
+            at("new/a.md"),
+            Some("yes".into()),
+            "a file still to be made"
+        );
     }
 
     #[test]
