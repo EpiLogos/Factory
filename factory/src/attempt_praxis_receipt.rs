@@ -26,7 +26,7 @@
 //! contract, not silently accepted.
 //!
 //! Retrieval is implemented against the read surface AIKit now serves —
-//! `aikit now context inspect` returns the owner's published prepared view,
+//! `aikit now-context inspect` returns the owner's published prepared view,
 //! and its `data.prepared.praxis` member is the exact receipt that view was
 //! published with (ai-kit commit 70fce4cb), never a re-derivation.
 //! [`inspect_admission_praxis_receipt`] invokes that one read-only surface
@@ -286,10 +286,10 @@ fn standing_name(standing: PraxisStanding) -> &'static str {
 }
 
 /// The schema of AIKit's read-only NOW-context inspection, the envelope
-/// `data` member `aikit now context inspect` answers with.
+/// `data` member `aikit now-context inspect` answers with.
 pub const AIKIT_NOW_CONTEXT_INSPECTION_SCHEMA: &str = "aikit.now-context-inspection/v1";
 
-/// The exact handles the read-only `aikit now context inspect` surface
+/// The exact handles the read-only `aikit now-context inspect` surface
 /// needs, carried by the caller that holds them. Nothing here is derived or
 /// discovered: the binary/cwd/transport follow the same declared native
 /// owner route as Task inspection, the config file is the owner's Redis NOW
@@ -331,7 +331,7 @@ pub fn retrieve_admission_receipt(
 /// Inspect one prepared NOW context through the declared native AIKit route
 /// and return its published praxis receipt verbatim (`Ok(None)` when the
 /// view is unpublished or receipt-less). The invocation is exactly
-/// `aikit -C <cwd> --json now context inspect --config-file <path>
+/// `aikit -C <cwd> --json now-context inspect --config-file <path>
 /// --participant-ref <ref>`; a non-success exit, a non-JSON response, a
 /// failure envelope or a wrong inspection schema is a named error carrying
 /// the bounded native response.
@@ -354,8 +354,7 @@ pub fn inspect_admission_praxis_receipt(
     }
     let arguments = [
         "--json".to_owned(),
-        "now".to_owned(),
-        "context".to_owned(),
+        "now-context".to_owned(),
         "inspect".to_owned(),
         "--config-file".to_owned(),
         config_file.to_owned(),
@@ -647,18 +646,18 @@ mod tests {
         const CONFIG_FILE: &str = "now-config.json";
 
         // The double refuses any argv that is not exactly the canonical
-        // `aikit -C <cwd> --json now context inspect --config-file <path>
+        // `aikit -C <cwd> --json now-context inspect --config-file <path>
         // --participant-ref <ref>` read-only surface, records the call, and
         // serves the prepared envelope (or the scripted refusal).
         const INSPECT: &str = r#"#!/bin/sh
-if [ "$#" -ne 10 ] || [ "$1" != "-C" ] || case "$2" in /*) false ;; *) true ;; esac \
-   || [ "$3" != "--json" ] || [ "$4" != "now" ] || [ "$5" != "context" ] \
-   || [ "$6" != "inspect" ] || [ "$7" != "--config-file" ] || [ "$9" != "--participant-ref" ]; then
+if [ "$#" -ne 9 ] || [ "$1" != "-C" ] || case "$2" in /*) false ;; *) true ;; esac \
+   || [ "$3" != "--json" ] || [ "$4" != "now-context" ] \
+   || [ "$5" != "inspect" ] || [ "$6" != "--config-file" ] || [ "$8" != "--participant-ref" ]; then
     printf '%s\n' '{"schema":1,"ok":false,"error":{"code":"test.wrong_argv","message":"not the canonical read-only inspection","details":{}}}'
     exit 2
 fi
 dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-printf '%s %s\n' "$8" "${10}" >> "$dir/calls.jsonl"
+printf '%s %s\n' "$7" "$9" >> "$dir/calls.jsonl"
 mode=$(cat "$dir/mode")
 case "$mode" in
     fail)

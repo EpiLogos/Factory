@@ -75,6 +75,7 @@ pub mod run_lifecycle;
 pub mod sensing;
 pub mod sensing_cli;
 pub mod sensing_sources;
+pub mod session;
 pub mod shown_work;
 pub mod song_clip;
 pub mod song_take;

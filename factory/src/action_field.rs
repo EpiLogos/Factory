@@ -34,6 +34,14 @@ const STATE: (&str, &str) = (
     "the Factory state document (a developmental or build provider state)",
 );
 
+const AGENT: (&str, &str) = (
+    "agent",
+    "the agent's census slug (the World Model's agents slice)",
+);
+const WORLD: (&str, &str) = ("world", "the World's folder, absolute");
+const PROJECT: (&str, &str) = ("project", "the project: one folder of the World's Work");
+const SESSION: (&str, &str) = ("session", "the agent's session (its AIKit AgentSession)");
+
 const FIELD: &[FieldAction] = &[
     FieldAction {
         id: "factory.development.commission",
@@ -149,6 +157,73 @@ const FIELD: &[FieldAction] = &[
         )),
         mutation_class: "externally-mutating",
         output: crate::attempt_receiving::RECEIVING_RECEIPT,
+    },
+    FieldAction {
+        id: "factory.session.start",
+        title: "Seat an agent on a track: start its session",
+        route: &["session", "start"],
+        positionals: &[AGENT, WORLD, PROJECT],
+        document: None,
+        mutation_class: "externally-mutating",
+        output: crate::session::SESSION_CONTRACT,
+    },
+    FieldAction {
+        id: "factory.session.end",
+        title: "End a session",
+        route: &["session", "end"],
+        positionals: &[WORLD, PROJECT, SESSION],
+        document: None,
+        mutation_class: "externally-mutating",
+        output: crate::session::SESSION_CONTRACT,
+    },
+    FieldAction {
+        id: "factory.task.write",
+        title: "Write a task on a session",
+        route: &["session", "task-write"],
+        positionals: &[
+            WORLD,
+            PROJECT,
+            SESSION,
+            ("instruction", "the task, in the person's words"),
+        ],
+        document: None,
+        mutation_class: "locally-mutating",
+        output: crate::session::TASK_CONTRACT,
+    },
+    FieldAction {
+        id: "factory.task.run",
+        title: "Run a task on its session",
+        route: &["session", "task-run"],
+        positionals: &[STATE, ("run_ref", "the task's Run"), SESSION],
+        document: None,
+        mutation_class: "externally-mutating",
+        output: crate::session::TASK_CONTRACT,
+    },
+    FieldAction {
+        id: "factory.task.stop",
+        title: "Stop a task: pause it, and again to cancel it",
+        route: &["session", "task-stop"],
+        positionals: &[
+            STATE,
+            ("run_ref", "the task's Run"),
+            ("attempt_ref", "the running attempt"),
+        ],
+        document: None,
+        mutation_class: "externally-mutating",
+        output: crate::session::TASK_CONTRACT,
+    },
+    FieldAction {
+        id: "factory.task.log",
+        title: "Read a task's log as it streams, and Factory's record of its attempt",
+        route: &["session", "task-log"],
+        positionals: &[
+            STATE,
+            ("run_ref", "the task's Run"),
+            ("attempt_ref", "the task's attempt"),
+        ],
+        document: None,
+        mutation_class: "read-only",
+        output: crate::session::TASK_CONTRACT,
     },
     FieldAction {
         id: "factory.attempt.admission",
@@ -431,6 +506,38 @@ mod tests {
             let refused = route_argv(id, &input).unwrap_err();
             assert!(refused.contains(words), "{id}: {refused}");
         }
+    }
+
+    #[test]
+    fn a_session_starts_from_the_census_slug_and_its_tasks_run_by_their_refs() {
+        let (argv, stdin) = route_argv(
+            "factory.session.start",
+            &json!({"agent": "claude-code", "world": "/w/Central", "project": "notes"}),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            [
+                "session",
+                "start",
+                "claude-code",
+                "/w/Central",
+                "notes",
+                "--json"
+            ]
+        );
+        assert_eq!(stdin, None);
+        let (argv, _) = route_argv(
+            "factory.task.stop",
+            &json!({"state": "/s", "run_ref": "run:1", "attempt_ref": "attempt:1"}),
+        )
+        .unwrap();
+        assert_eq!(
+            argv,
+            ["session", "task-stop", "/s", "run:1", "attempt:1", "--json"]
+        );
+        let refused = route_argv("factory.session.start", &json!({"agent": "pi"})).unwrap_err();
+        assert!(refused.contains("needs its input `world`"), "{refused}");
     }
 
     #[test]
