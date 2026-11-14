@@ -1078,8 +1078,6 @@ fn task_file(state: &Path, attempt_ref: &str, suffix: &str) -> PathBuf {
         .join(format!("{name}.{suffix}"))
 }
 
-/// `factory session task-run <state> <run-ref> <session>`: the task started on the session under the person's grant, its
-/// words sent to the agent, and its follower started.
 /// One of Central's Actions in the World (`ctrl --json --root <World> action run <id> <input>`), with the person's token the
 /// host handed on the press: its data, or its refusal in its words.
 fn central(place: &Place, action: &str, input: Value) -> Result<Value, CliError> {
