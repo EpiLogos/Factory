@@ -1392,14 +1392,14 @@ fn send(
     let started = reading(state, run_ref)?;
     let execution_ref = minted("execution");
     let delivery_ref = minted("delivery");
-    // Where the session's view stands as the words go: the task's log streams what comes after it.
-    let blocks_before = encounter(
-        &place.checkout,
-        json!({"action": "view", "agent_session": session}),
-    )
-    .ok()
-    .and_then(|view| view["blocks"].as_array().map(Vec::len))
-    .unwrap_or(0);
+    // Where the session stands as the words go: the task's turn is read forward from this block, by id (its log streams the
+    // turn, its Return's summary is said in it).
+    let after_block = turn_mark(&|request| encounter(&place.checkout, request), session)
+        .map_err(|error| {
+            refuse(format!(
+                "the session's view could not be read before the task's words went, so they were not sent: {error}"
+            ))
+        })?;
     // How the checkout stands as the words go: what the turn leaves is read against it.
     let before = task_file(state, attempt_ref, "before.json");
     std::fs::create_dir_all(before.parent().unwrap_or(Path::new(".")))
@@ -1454,7 +1454,7 @@ fn send(
     append(
         &log,
         &json!({"at": now_rfc3339(), "kind": "sent", "delivery_ref": delivery_ref,
-            "text": words, "blocks_before": blocks_before}),
+            "text": words, "after_block": after_block}),
     );
     let follower = follow_in_background(state, run_ref, attempt_ref, &authority.authority_ref)?;
     Ok(json!({
@@ -2059,14 +2059,25 @@ fn follow(
         })
         .ok_or_else(|| refuse(format!("{attempt_ref} names no delivery to follow")))?;
     let begun = Instant::now();
-    // The view's blocks before the task's words went belong to earlier turns.
-    let mut seen = std::fs::read_to_string(&log)
+    // The task's turn is read forward by block id from where the session stood as its words went (`send`); a follower started
+    // again streams on from what the log holds.
+    let sent = sent_of(&log);
+    let mut streamed: std::collections::BTreeMap<u64, String> = std::fs::read_to_string(&log)
         .unwrap_or_default()
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .find(|line| line["kind"] == "sent")
-        .and_then(|line| line["blocks_before"].as_u64())
-        .unwrap_or(0) as usize;
+        .filter(|line| line["kind"] == "turn")
+        .filter_map(|line| {
+            Some((
+                line["block"]["id"].as_u64()?,
+                line["block"]["text"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ))
+        })
+        .collect();
+    let read = |request: Value| encounter(&place.checkout, request);
     let mut answered: BTreeSet<String> = BTreeSet::new();
     loop {
         let now = reading(&state, &run_ref)?;
@@ -2077,18 +2088,21 @@ fn follow(
             );
         }
         // The turn, streamed into the task's log as AIKit shows it.
-        if let Ok(view) = encounter(
-            &place.checkout,
-            json!({"action": "view", "agent_session": session}),
-        ) {
-            let blocks = view["blocks"].as_array().cloned().unwrap_or_default();
-            for block in blocks.iter().skip(seen) {
-                append(
-                    &log,
-                    &json!({"at": now_rfc3339(), "kind": "turn", "block": block}),
-                );
+        let view = match &sent {
+            Some((mark, words)) => {
+                turn(&read, &session, *mark, Some(words)).map(|(blocks, view)| {
+                    for block in to_stream(&blocks, &mut streamed) {
+                        append(
+                            &log,
+                            &json!({"at": now_rfc3339(), "kind": "turn", "block": block}),
+                        );
+                    }
+                    view
+                })
             }
-            seen = seen.max(blocks.len());
+            None => read(json!({"action": "view", "agent_session": session})),
+        };
+        if let Ok(view) = view {
             let mut pending = Vec::new();
             asks(&view, &mut pending);
             if let Ok(status) = encounter(
@@ -2305,7 +2319,16 @@ fn settle(
         )?;
         return Ok(json!({"followed": attempt_ref, "ended": "failed", "reason": reason}));
     }
-    let said = said_since(&place.checkout, session);
+    let said = sent_of(log)
+        .map(|(mark, words)| {
+            said_in_turn(
+                &|request| encounter(&place.checkout, request),
+                session,
+                mark,
+                Some(&words),
+            )
+        })
+        .unwrap_or_default();
     let artifact_ref = minted("artifact");
     let unit = FileAttemptStore::open_run(state, run_ref.clone())
         .and_then(|store| store.launch_basis(&record.workflow_unit_ref))
@@ -2361,23 +2384,118 @@ fn plural(count: usize) -> String {
     }
 }
 
-/// The agent's words in its session, as AIKit shows them.
-fn said_since(checkout: &Path, session: &str) -> String {
-    encounter(
-        checkout,
-        json!({"action": "view", "agent_session": session}),
-    )
-    .ok()
-    .and_then(|view| view["blocks"].as_array().cloned())
-    .map(|blocks| {
-        blocks
-            .iter()
-            .filter(|block| block["kind"] == "assistant")
-            .filter_map(|block| block["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("")
-    })
-    .unwrap_or_default()
+/// One read of a session's encounter: AIKit's (`encounter`), or a test's stand-in for it.
+type Read<'a> = &'a dyn Fn(Value) -> Result<Value, String>;
+
+/// Where the session stands as a task's words go (O-I #1006, review F5): the id of the newest block AIKit holds, after which the
+/// task's turn is read forward by id, however many blocks the session held before. 0: it holds none.
+fn turn_mark(read: Read<'_>, session: &str) -> Result<u64, String> {
+    let view = read(json!({"action": "view", "agent_session": session}))?;
+    Ok(view["blocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|block| block["id"].as_u64())
+        .max()
+        .unwrap_or(0))
+}
+
+/// The task's turn as AIKit holds it, and the last view read (the asks pending on the session ride on it): every block after
+/// `mark`, read forward by id a view at a time (AIKit's view holds 16 blocks), from the task's own words (the first user block
+/// that says them, else the first user block) up to the next turn's words.
+fn turn(
+    read: Read<'_>,
+    session: &str,
+    mark: u64,
+    words: Option<&str>,
+) -> Result<(Vec<Value>, Value), String> {
+    let mut blocks: Vec<Value> = Vec::new();
+    let mut after = mark;
+    let view = loop {
+        let view = read(json!({"action": "view", "agent_session": session, "after": after}))?;
+        let mut last = after;
+        for block in view["blocks"].as_array().into_iter().flatten() {
+            last = block["id"].as_u64().filter(|id| *id > last).ok_or_else(|| {
+                format!(
+                    "AIKit's view of {session} did not read forward from block {after}: it answered block {} after {last}",
+                    block["id"]
+                )
+            })?;
+            blocks.push(block.clone());
+        }
+        if view["more"] != true || last == after {
+            break view;
+        }
+        after = last;
+    };
+    let user = |block: &Value| block["kind"] == "user";
+    let Some(start) = words
+        .and_then(|words| {
+            blocks
+                .iter()
+                .position(|block| user(block) && block["text"] == words)
+        })
+        .or_else(|| blocks.iter().position(user))
+    else {
+        return Ok((Vec::new(), view));
+    };
+    let end = blocks[start + 1..]
+        .iter()
+        .position(user)
+        .map_or(blocks.len(), |at| start + 1 + at);
+    blocks.truncate(end);
+    blocks.drain(..start);
+    Ok((blocks, view))
+}
+
+/// The agent's words in the task's turn: its Return's summary.
+fn said_in_turn(read: Read<'_>, session: &str, mark: u64, words: Option<&str>) -> String {
+    turn(read, session, mark, words)
+        .map(|(blocks, _)| said_in(&blocks))
+        .unwrap_or_default()
+}
+
+/// The task's send as its log records it (`send`): the block the session stood at as the words went, and the words.
+fn sent_of(log: &Path) -> Option<(u64, String)> {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|line| line["kind"] == "sent")
+        .and_then(|line| {
+            Some((
+                line["after_block"].as_u64()?,
+                line["text"].as_str().unwrap_or_default().to_owned(),
+            ))
+        })
+}
+
+/// The agent's words among a turn's blocks: its messages, joined.
+fn said_in(turn: &[Value]) -> String {
+    turn.iter()
+        .filter(|block| block["kind"] == "assistant")
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// What the follower streams of the turn: each block it has not streamed yet, or whose text has changed since it did (AIKit
+/// writes a message's chunks into one block as they come), each noted in `streamed`.
+fn to_stream(turn: &[Value], streamed: &mut std::collections::BTreeMap<u64, String>) -> Vec<Value> {
+    turn.iter()
+        .filter(|block| {
+            let Some(id) = block["id"].as_u64() else {
+                return false;
+            };
+            let text = block["text"].as_str().unwrap_or_default();
+            if streamed.get(&id).is_some_and(|held| held == text) {
+                return false;
+            }
+            streamed.insert(id, text.to_owned());
+            true
+        })
+        .cloned()
+        .collect()
 }
 
 /// `factory session task-stop <state> <run-ref> <attempt-ref>`: Stop pauses the task's turn; pressed again it cancels.
@@ -2971,6 +3089,88 @@ mod tests {
         )
         .unwrap();
         (temp, world)
+    }
+
+    /// O-I #1006 (review F5): a session that already holds 20 blocks streams the task's turn, each block once and again as it
+    /// grows, through a turn longer than one view, and the turn's Return summary holds that turn's words alone: the turn is read
+    /// forward by block id from where the session stood as the words went, never by a count over AIKit's 16-block view.
+    #[test]
+    fn a_session_holding_twenty_blocks_streams_the_tasks_turn_and_its_summary_holds_only_that_turn()
+    {
+        let held = std::cell::RefCell::new(Vec::<Value>::new());
+        // Block ids are AIKit's store rowids, shared by every session: one session's run with gaps.
+        let next = std::cell::Cell::new(100u64);
+        let add = |kind: &str, text: &str| {
+            held.borrow_mut()
+                .push(json!({"id": next.get(), "kind": kind, "text": text}));
+            next.set(next.get() + 3);
+        };
+        // AIKit's view as its store reads it (aikit-store encounter.rs `view_page`): the newest 16 blocks, oldest first, or
+        // with `after` the 16 after that block, oldest first; `more` when a 17th stands.
+        let read = |request: Value| -> Result<Value, String> {
+            let blocks = held.borrow();
+            let mut page: Vec<Value> = match request["after"].as_u64() {
+                Some(after) => blocks
+                    .iter()
+                    .filter(|block| block["id"].as_u64().unwrap() > after)
+                    .take(17)
+                    .cloned()
+                    .collect(),
+                None => blocks.iter().rev().take(17).cloned().collect(),
+            };
+            let more = page.len() > 16;
+            page.truncate(16);
+            if request["after"].as_u64().is_none() {
+                page.reverse();
+            }
+            Ok(json!({"blocks": page, "more": more, "permissions": []}))
+        };
+        for turn in 0..10 {
+            add("user", &format!("earlier question {turn}"));
+            add("assistant", &format!("earlier answer {turn}. "));
+        }
+        let words = "Append one line to NOTES.md. Change no other file.";
+        let mark = turn_mark(&read, "session").unwrap();
+        add("user", words);
+        add("assistant", "Appending");
+        let texts = |blocks: Vec<Value>| -> Vec<String> {
+            blocks
+                .iter()
+                .map(|block| block["text"].as_str().unwrap_or_default().to_owned())
+                .collect()
+        };
+        let mut streamed = std::collections::BTreeMap::new();
+        let (blocks, _) = turn(&read, "session", mark, Some(words)).unwrap();
+        assert_eq!(
+            texts(to_stream(&blocks, &mut streamed)),
+            [words, "Appending"],
+            "the task's words and the first of the answer stream, nothing of the 20 blocks before"
+        );
+        held.borrow_mut().last_mut().unwrap()["text"] = json!("Appending the line now.");
+        for edit in 0..17 {
+            add("tool", &format!("{{\"title\":\"edit {edit}\"}}"));
+        }
+        add("completed", "");
+        let (blocks, _) = turn(&read, "session", mark, Some(words)).unwrap();
+        let streamed_now = texts(to_stream(&blocks, &mut streamed));
+        assert_eq!(
+            streamed_now.len(),
+            19,
+            "the grown answer, 17 edits over two views, the turn's end: {streamed_now:?}"
+        );
+        assert_eq!(streamed_now[0], "Appending the line now.");
+        assert_eq!(streamed_now[18], "");
+        assert!(
+            texts(to_stream(&blocks, &mut streamed)).is_empty(),
+            "streamed once"
+        );
+        add("user", "and what else did you see?");
+        add("assistant", "Nothing else.");
+        assert_eq!(
+            said_in_turn(&read, "session", mark, Some(words)),
+            "Appending the line now.",
+            "the summary holds the task's turn alone: no earlier answer, and not the person's next turn"
+        );
     }
 
     /// The session's Agency binding as AIKit answers it (`encounter-agency-read`).
