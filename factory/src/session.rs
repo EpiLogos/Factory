@@ -2190,7 +2190,7 @@ fn follow(
     let begun = Instant::now();
     // The task's turn is read forward by block id from where the session stood as its words went (`send`); a follower started
     // again streams on from what the log holds.
-    let sent = sent_of(&log);
+    let mark = mark_of(&log);
     let mut streamed: std::collections::BTreeMap<u64, String> = std::fs::read_to_string(&log)
         .unwrap_or_default()
         .lines()
@@ -2217,18 +2217,16 @@ fn follow(
             );
         }
         // The turn, streamed into the task's log as AIKit shows it.
-        let view = match &sent {
-            Some((mark, words)) => {
-                turn(&read, &session, *mark, Some(words)).map(|(blocks, view)| {
-                    for block in to_stream(&blocks, &mut streamed) {
-                        append(
-                            &log,
-                            &json!({"at": now_rfc3339(), "kind": "turn", "block": block}),
-                        );
-                    }
-                    view
-                })
-            }
+        let view = match mark {
+            Some(mark) => turn(&read, &session, mark).map(|(blocks, view)| {
+                for block in to_stream(&blocks, &mut streamed) {
+                    append(
+                        &log,
+                        &json!({"at": now_rfc3339(), "kind": "turn", "block": block}),
+                    );
+                }
+                view
+            }),
             None => read(json!({"action": "view", "agent_session": session})),
         };
         if let Ok(view) = view {
@@ -2444,13 +2442,12 @@ fn settle(
         )?;
         return Ok(json!({"followed": attempt_ref, "ended": "failed", "reason": reason}));
     }
-    let said = sent_of(log)
-        .map(|(mark, words)| {
+    let said = mark_of(log)
+        .map(|mark| {
             said_in_turn(
                 &|request| encounter(&place.checkout, request),
                 session,
                 mark,
-                Some(&words),
             )
         })
         .unwrap_or_default();
@@ -2525,74 +2522,58 @@ fn turn_mark(read: Read<'_>, session: &str) -> Result<u64, String> {
         .unwrap_or(0))
 }
 
-/// The task's turn as AIKit holds it, and the last view read (the asks pending on the session ride on it): every block after
-/// `mark`, read forward by id a view at a time (AIKit's view holds 16 blocks), from the task's own words (the first user block
-/// that says them, else the first user block) up to the next turn's words.
-fn turn(
-    read: Read<'_>,
-    session: &str,
-    mark: u64,
-    words: Option<&str>,
-) -> Result<(Vec<Value>, Value), String> {
+/// The task's turn as AIKit holds it, and the last view read (the asks pending on the session ride on it): the blocks after
+/// `mark`, read forward by id a view at a time (AIKit's view holds 16 blocks), up to the turn's end (its completed, cancelled or
+/// error block) or the person's next words, whichever stands first. The task's words are an addressed send, which AIKit
+/// journals as the machine's request and shows as no block, so the turn opens on the agent's first block after the mark.
+fn turn(read: Read<'_>, session: &str, mark: u64) -> Result<(Vec<Value>, Value), String> {
     let mut blocks: Vec<Value> = Vec::new();
     let mut after = mark;
-    let view = loop {
+    loop {
         let view = read(json!({"action": "view", "agent_session": session, "after": after}))?;
+        let page = view["blocks"].as_array().cloned().unwrap_or_default();
         let mut last = after;
-        for block in view["blocks"].as_array().into_iter().flatten() {
+        for block in page {
             last = block["id"].as_u64().filter(|id| *id > last).ok_or_else(|| {
                 format!(
                     "AIKit's view of {session} did not read forward from block {after}: it answered block {} after {last}",
                     block["id"]
                 )
             })?;
-            blocks.push(block.clone());
+            if block["kind"] == "user" {
+                return Ok((blocks, view));
+            }
+            let ends = matches!(
+                block["kind"].as_str(),
+                Some("completed" | "cancelled" | "error")
+            );
+            blocks.push(block);
+            if ends {
+                return Ok((blocks, view));
+            }
         }
         if view["more"] != true || last == after {
-            break view;
+            return Ok((blocks, view));
         }
         after = last;
-    };
-    let user = |block: &Value| block["kind"] == "user";
-    let Some(start) = words
-        .and_then(|words| {
-            blocks
-                .iter()
-                .position(|block| user(block) && block["text"] == words)
-        })
-        .or_else(|| blocks.iter().position(user))
-    else {
-        return Ok((Vec::new(), view));
-    };
-    let end = blocks[start + 1..]
-        .iter()
-        .position(user)
-        .map_or(blocks.len(), |at| start + 1 + at);
-    blocks.truncate(end);
-    blocks.drain(..start);
-    Ok((blocks, view))
+    }
 }
 
 /// The agent's words in the task's turn: its Return's summary.
-fn said_in_turn(read: Read<'_>, session: &str, mark: u64, words: Option<&str>) -> String {
-    turn(read, session, mark, words)
+fn said_in_turn(read: Read<'_>, session: &str, mark: u64) -> String {
+    turn(read, session, mark)
         .map(|(blocks, _)| said_in(&blocks))
         .unwrap_or_default()
 }
 
-/// The task's send as its log records it (`send`): the block the session stood at as the words went, and the words.
-fn sent_of(log: &Path) -> Option<(u64, String)> {
+/// The block the session stood at as the task's words went, as its log records the send (`send`).
+fn mark_of(log: &Path) -> Option<u64> {
     std::fs::read_to_string(log)
         .unwrap_or_default()
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|line| line["kind"] == "sent")
-        .and_then(|line| {
-            Some((
-                line["after_block"].as_u64()?,
-                line["text"].as_str().unwrap_or_default().to_owned(),
-            ))
-        })
+        .and_then(|line| line["after_block"].as_u64())
 }
 
 /// The agent's words among a turn's blocks: its messages, joined.
@@ -3478,7 +3459,10 @@ mod tests {
 
     /// O-I #1006 (review F5): a session that already holds 20 blocks streams the task's turn, each block once and again as it
     /// grows, through a turn longer than one view, and the turn's Return summary holds that turn's words alone: the turn is read
-    /// forward by block id from where the session stood as the words went, never by a count over AIKit's 16-block view.
+    /// forward by block id from where the session stood as the words went, never by a count over AIKit's 16-block view. A task's
+    /// words are an addressed send, which AIKit journals as the machine's request and shows as no block (aikit-store
+    /// encounter_delivery.rs `reserve_with_phase`, encounter.rs `project_block`): the turn opens on the agent's first block and
+    /// closes on its end, before the next task's turn or the person's next words.
     #[test]
     fn a_session_holding_twenty_blocks_streams_the_tasks_turn_and_its_summary_holds_only_that_turn()
     {
@@ -3510,13 +3494,15 @@ mod tests {
             }
             Ok(json!({"blocks": page, "more": more, "permissions": []}))
         };
-        for turn in 0..10 {
+        for turn in 0..5 {
             add("user", &format!("earlier question {turn}"));
+            add("thinking", &format!("earlier thought {turn}"));
             add("assistant", &format!("earlier answer {turn}. "));
+            add("completed", "");
         }
-        let words = "Append one line to NOTES.md. Change no other file.";
+        // The task's words go: AIKit shows no block for them.
         let mark = turn_mark(&read, "session").unwrap();
-        add("user", words);
+        add("thinking", "Reading NOTES.md");
         add("assistant", "Appending");
         let texts = |blocks: Vec<Value>| -> Vec<String> {
             blocks
@@ -3525,18 +3511,18 @@ mod tests {
                 .collect()
         };
         let mut streamed = std::collections::BTreeMap::new();
-        let (blocks, _) = turn(&read, "session", mark, Some(words)).unwrap();
+        let (blocks, _) = turn(&read, "session", mark).unwrap();
         assert_eq!(
             texts(to_stream(&blocks, &mut streamed)),
-            [words, "Appending"],
-            "the task's words and the first of the answer stream, nothing of the 20 blocks before"
+            ["Reading NOTES.md", "Appending"],
+            "the turn's first blocks stream, nothing of the 20 blocks before"
         );
         held.borrow_mut().last_mut().unwrap()["text"] = json!("Appending the line now.");
         for edit in 0..17 {
             add("tool", &format!("{{\"title\":\"edit {edit}\"}}"));
         }
         add("completed", "");
-        let (blocks, _) = turn(&read, "session", mark, Some(words)).unwrap();
+        let (blocks, _) = turn(&read, "session", mark).unwrap();
         let streamed_now = texts(to_stream(&blocks, &mut streamed));
         assert_eq!(
             streamed_now.len(),
@@ -3549,12 +3535,21 @@ mod tests {
             texts(to_stream(&blocks, &mut streamed)).is_empty(),
             "streamed once"
         );
+        // The next task's turn on the session (an addressed send again: no block for its words), then the person's.
+        add("assistant", "Renamed the file.");
+        add("completed", "");
         add("user", "and what else did you see?");
         add("assistant", "Nothing else.");
+        add("completed", "");
+        let (blocks, _) = turn(&read, "session", mark).unwrap();
+        assert!(
+            texts(to_stream(&blocks, &mut streamed)).is_empty(),
+            "nothing after the turn's end streams as the task's"
+        );
         assert_eq!(
-            said_in_turn(&read, "session", mark, Some(words)),
+            said_in_turn(&read, "session", mark),
             "Appending the line now.",
-            "the summary holds the task's turn alone: no earlier answer, and not the person's next turn"
+            "the summary holds the task's turn alone: no earlier answer, not the next task's, not the person's next turn"
         );
     }
 
