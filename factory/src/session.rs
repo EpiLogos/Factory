@@ -1950,21 +1950,32 @@ fn scope_answer(ask: &Value, checkout: &Path) -> Result<String, &'static str> {
 }
 
 /// How the checkout stands, path by path, as git reads it (`git status --porcelain -z --untracked-files=all`): each changed or
-/// untracked path with a digest of what it holds (a link's target, a file's bytes, or its absence).
+/// untracked path with a digest of what it holds (a link's target, a file's bytes, or its absence). A rename stands at both
+/// its paths, the one it left and the one it made; a copy at the one it made (its source stands as it was).
 fn standing(checkout: &Path) -> std::collections::BTreeMap<String, String> {
     let listed = git(
         checkout,
         &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
     )
     .unwrap_or_default();
-    let mut entries = listed.split('\0').filter(|entry| entry.len() > 3);
-    let mut held = std::collections::BTreeMap::new();
+    // An entry is `XY path`; a rename's or a copy's is followed by the path it came from, alone.
+    let mut entries = listed.split('\0').filter(|entry| !entry.is_empty());
+    let mut paths = Vec::new();
     while let Some(entry) = entries.next() {
-        let (code, path) = entry.split_at(3);
+        let Some((code, path)) = entry.split_at_checked(3) else {
+            continue;
+        };
+        paths.push(path.to_owned());
         if code.starts_with('R') || code.starts_with('C') {
-            entries.next();
+            let origin = entries.next();
+            if let Some(origin) = origin.filter(|_| code.starts_with('R')) {
+                paths.push(origin.to_owned());
+            }
         }
-        let at = checkout.join(path);
+    }
+    let mut held = std::collections::BTreeMap::new();
+    for path in paths {
+        let at = checkout.join(&path);
         let digest = match std::fs::symlink_metadata(&at) {
             Ok(meta) if meta.file_type().is_symlink() => std::fs::read_link(&at)
                 .map(|target| format!("link:{}", target.display()))
@@ -1975,22 +1986,33 @@ fn standing(checkout: &Path) -> std::collections::BTreeMap<String, String> {
             Ok(_) => "other".into(),
             Err(_) => "absent".into(),
         };
-        held.insert(path.to_owned(), digest);
+        held.insert(path, digest);
     }
     held
 }
 
 /// The difference the turn left in the checkout, read from git: every path whose standing moved since the task was sent
-/// (`before`, kept beside the task's log when it was sent), tracked paths against HEAD and new ones in whole. What stood there
-/// already (the person's own edits, the seat's build pool link, the harness roots AIKit projects into a checkout) is never the
-/// agent's.
-fn difference(checkout: &Path, before: &std::collections::BTreeMap<String, String>) -> String {
+/// (`before`, kept beside the task's log when it was sent), tracked paths against HEAD and new ones in whole, and the files it
+/// names are those paths, as git's porcelain reads them: a file made, changed, deleted, or renamed (both its paths). What stood
+/// there already (the person's own edits, the seat's build pool link, the harness roots AIKit projects into a checkout) is never
+/// the agent's.
+/// The difference a turn left: git's text of it, and the files it names.
+#[derive(Debug, PartialEq)]
+struct Difference {
+    text: String,
+    files: Vec<String>,
+}
+
+fn difference(checkout: &Path, before: &std::collections::BTreeMap<String, String>) -> Difference {
     let mut diff = String::new();
+    let mut files = Vec::new();
     for (path, digest) in standing(checkout) {
         if before.get(&path) == Some(&digest) || pool_link(checkout, &path) {
             continue;
         }
-        let tracked = git(checkout, &["ls-files", "--error-unmatch", "--", &path]).is_some();
+        // Tracked: HEAD holds it (a deleted file, a rename's old path) or the index does (a file added); else new and untracked.
+        let tracked = git(checkout, &["cat-file", "-e", &format!("HEAD:{path}")]).is_some()
+            || git(checkout, &["ls-files", "--error-unmatch", "--", &path]).is_some();
         let args: Vec<&str> = if tracked {
             vec!["diff", "HEAD", "--no-color", "--", &path]
         } else {
@@ -2006,10 +2028,14 @@ fn difference(checkout: &Path, before: &std::collections::BTreeMap<String, Strin
             .stdin(Stdio::null())
             .output()
         {
-            diff.push_str(&String::from_utf8_lossy(&output.stdout));
+            // A path git shows no difference at (its index alone moved) names no file.
+            if !output.stdout.is_empty() {
+                diff.push_str(&String::from_utf8_lossy(&output.stdout));
+                files.push(path);
+            }
         }
     }
-    diff
+    Difference { text: diff, files }
 }
 
 /// How the checkout stood when the task was sent, as kept beside its log (empty when none was kept).
@@ -2260,7 +2286,8 @@ fn settle(
         };
         return Ok(json!({"followed": attempt_ref, "ended": end}));
     }
-    let diff = difference(&place.checkout, &standing_before(state, attempt_ref));
+    let Difference { text: diff, files } =
+        difference(&place.checkout, &standing_before(state, attempt_ref));
     let digest = blake3::hash(diff.as_bytes()).to_hex().to_string();
     let kept = task_file(state, attempt_ref, "diff");
     std::fs::write(&kept, &diff).map_err(CliError::from_native)?;
@@ -2268,11 +2295,6 @@ fn settle(
         format!("factory-session-diff:blake3:{digest}"),
         format!("aikit-delivery:{delivery_ref}"),
     ]);
-    let files: Vec<String> = diff
-        .lines()
-        .filter_map(|line| line.strip_prefix("+++ b/"))
-        .map(str::to_owned)
-        .collect();
     act(
         state,
         run_ref,
@@ -2841,7 +2863,10 @@ mod tests {
         let nothing = std::collections::BTreeMap::new();
         assert_eq!(
             difference(&checkout, &nothing),
-            "",
+            Difference {
+                text: String::new(),
+                files: Vec::new()
+            },
             "the pool link alone is no difference"
         );
         // What stood in the checkout when the task was sent is not the agent's.
@@ -2850,7 +2875,7 @@ mod tests {
         let before = standing(&checkout);
         std::fs::write(checkout.join("README.md"), "notes\nmore\n").unwrap();
         std::fs::write(checkout.join("new.md"), "new\n").unwrap();
-        let diff = difference(&checkout, &before);
+        let diff = difference(&checkout, &before).text;
         assert!(diff.contains("+more"), "{diff}");
         assert!(diff.contains("+new"), "{diff}");
         assert!(!diff.contains("target"), "{diff}");
@@ -2864,7 +2889,57 @@ mod tests {
             "the person's own\nand the agent's\n",
         )
         .unwrap();
-        assert!(difference(&checkout, &before).contains("+and the agent's"));
+        assert!(difference(&checkout, &before)
+            .text
+            .contains("+and the agent's"));
+    }
+
+    /// O-I #1006 (review F7): a turn's difference names every file it moved, as git's porcelain reads it: one that only deletes
+    /// a tracked file returns that deletion, and a rename names the file it left and the file it made.
+    #[cfg(unix)]
+    #[test]
+    fn a_task_that_only_deletes_or_renames_tracked_files_leaves_a_difference() {
+        let temp = tempfile::tempdir().unwrap();
+        let checkout = temp.path().join("notes");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let run = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(&checkout)
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
+                .stdout(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?}");
+        };
+        run(&["init", "--quiet", "--initial-branch", "main"]);
+        for file in ["gone.md", "old.md", "kept.md"] {
+            std::fs::write(checkout.join(file), format!("{file}\n")).unwrap();
+        }
+        run(&["add", "."]);
+        run(&["commit", "--quiet", "-m", "first"]);
+        let before = standing(&checkout);
+        std::fs::remove_file(checkout.join("gone.md")).unwrap();
+        let deleted = difference(&checkout, &before);
+        assert_eq!(deleted.files, ["gone.md"], "{}", deleted.text);
+        assert!(
+            deleted.text.contains("deleted file mode"),
+            "{}",
+            deleted.text
+        );
+        run(&["mv", "old.md", "new.md"]);
+        let moved = difference(&checkout, &before);
+        assert_eq!(
+            moved.files,
+            ["gone.md", "new.md", "old.md"],
+            "{}",
+            moved.text
+        );
+        assert!(moved.text.contains("+++ b/new.md"), "{}", moved.text);
+        assert!(moved.text.contains("--- a/old.md"), "{}", moved.text);
     }
 
     #[test]
